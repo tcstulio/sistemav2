@@ -41,6 +41,7 @@ describe('rateLimiters (#1540 infrastructure)', () => {
         void rateLimiters.scheduler;
         void rateLimiters.strict;
         void rateLimiters.default;
+        void rateLimiters.sync;
     });
 
     beforeEach(() => {
@@ -48,9 +49,9 @@ describe('rateLimiters (#1540 infrastructure)', () => {
         // é determinística e validada uma vez no describe `exports`.
     });
 
-    it('exports exactly 6 named presets (login, ai, banking, scheduler, strict, default)', () => {
+    it('exports exactly 7 named presets (login, ai, banking, scheduler, strict, default, sync)', () => {
         const keys = Object.keys(rateLimiters).sort();
-        expect(keys).toEqual(['ai', 'banking', 'default', 'login', 'scheduler', 'strict']);
+        expect(keys).toEqual(['ai', 'banking', 'default', 'login', 'scheduler', 'strict', 'sync']);
     });
 
     it('each preset is a function (Express middleware)', () => {
@@ -222,6 +223,38 @@ describe('rateLimiters (#1540 infrastructure)', () => {
             expect(err.code).toBe('RATE_LIMIT');
             expect(err.details.limit).toBe(100);
             expect(err.details.retryAfter).toBe(15 * 60);
+        });
+    });
+
+    describe('sync preset (#1569 — 30/1min, Dolibarr sync overload defense)', () => {
+        it('configures 1min window with max 30', () => {
+            // Ordem: [0]login, [1]ai, [2]banking, [3]scheduler, [4]strict, [5]default, [6]sync
+            const opts = rateLimitCalls[6];
+            expect(opts.windowMs).toBe(ONE_MIN_MS);
+            expect(opts.max).toBe(30);
+        });
+
+        it('does NOT skip any HTTP method (sync writes e GETs de status contam — proteção total)', () => {
+            const opts = rateLimitCalls[6];
+            expect(opts.skip).toBeUndefined();
+        });
+
+        it('uses standardHeaders and disables legacy headers', () => {
+            const opts = rateLimitCalls[6];
+            expect(opts.standardHeaders).toBe(true);
+            expect(opts.legacyHeaders).toBe(false);
+        });
+
+        it('handler builds RATE_LIMIT error mentioning sync', () => {
+            const opts = rateLimitCalls[6];
+            const next = vi.fn();
+            opts.handler({}, {}, next, opts);
+            const err = next.mock.calls[0][0];
+            expect(err.status).toBe(429);
+            expect(err.code).toBe('RATE_LIMIT');
+            expect(err.isOperational).toBe(true);
+            expect(err.message).toMatch(/sync/i);
+            expect(err.details).toMatchObject({ retryAfter: 60, limit: 30 });
         });
     });
 

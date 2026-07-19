@@ -16,6 +16,7 @@ import { channelRouter } from '../services/channelRouter';
 import { syncService } from '../services/syncService';
 import { FEATURES, getAllFeatures, isUsingMoltbot } from '../config/features';
 import { createLogger } from '../utils/logger';
+import { ok, fail } from '../utils/apiResponse';
 
 const log = createLogger('Integration');
 const router = Router();
@@ -411,6 +412,93 @@ router.post('/features/provider', (req, res) => {
 // ========================================
 
 /**
+ * #1569 — Schema de validação do /sync/run.
+ *
+ * `entity` é obrigatório e restringe quais entidades o sync pode tocar
+ * (apenas 'customer' é efetivamente suportado hoje pelo syncService; as
+ * demais são aceitas no enum para validar o contrato e logar a chamada).
+ *
+ * Regra (refine): quando `autoCreate=false` o handler NÃO pode gravar nada
+ * "no escuro" — o caller precisa explicitar `dryRun=true` para ao menos
+ * simular. Caso contrário o erro 400 abaixo força o caller a ser intencional,
+ * evitando criação acidental de clientes no Dolibarr.
+ */
+const syncRunSchema = z.object({
+    entity: z.enum(['customer', 'product', 'invoice', 'order', 'proposal']),
+    autoCreate: z.boolean().default(false),
+    autoLink: z.boolean().default(true),
+    dryRun: z.boolean().default(false),
+    limit: z.number().int().min(1).max(500).optional()
+}).refine(
+    (data) => data.autoCreate === true || data.dryRun === true,
+    {
+        message: 'Quando autoCreate=false, dryRun deve ser true',
+        path: ['dryRun']
+    }
+);
+
+/**
+ * #1569 — Computa um preview (dryRun) do sync SEM gravar nada.
+ *
+ * Para 'customer', usa syncService.getPeopleWithMatches() (read-only) e
+ * classifica cada pessoa segundo as opções (autoLink/autoCreate). Para as
+ * demais entidades o syncService ainda não tem fonte de dados — retorna
+ * zeros + nota explícita para o cliente saber que nada foi simulado.
+ */
+async function buildSyncPreview(
+    entity: string,
+    opts: { autoCreate: boolean; autoLink: boolean; limit?: number }
+): Promise<{
+    totalAvailable: number;
+    totalConsidered: number;
+    wouldMatch: number;
+    wouldCreate: number;
+    wouldSkip: number;
+    note?: string;
+}> {
+    if (entity !== 'customer') {
+        return {
+            totalAvailable: 0,
+            totalConsidered: 0,
+            wouldMatch: 0,
+            wouldCreate: 0,
+            wouldSkip: 0,
+            note: `Preview não disponível para entity='${entity}' (sem fonte de dados implementada).`
+        };
+    }
+
+    const matches = await syncService.getPeopleWithMatches();
+    const considered = typeof opts.limit === 'number' ? matches.slice(0, opts.limit) : matches;
+
+    let wouldMatch = 0;
+    let wouldCreate = 0;
+    let wouldSkip = 0;
+
+    for (const m of considered) {
+        if (m.brainPerson.linkedCustomerId) {
+            wouldMatch++;
+            continue;
+        }
+        if (m.dolibarrCustomer && m.confidence === 'high') {
+            if (opts.autoLink) wouldMatch++;
+            else wouldSkip++;
+        } else if (!m.dolibarrCustomer && opts.autoCreate) {
+            wouldCreate++;
+        } else {
+            wouldSkip++;
+        }
+    }
+
+    return {
+        totalAvailable: matches.length,
+        totalConsidered: considered.length,
+        wouldMatch,
+        wouldCreate,
+        wouldSkip
+    };
+}
+
+/**
  * POST /api/integration/sync/brain
  * Trigger brain sync
  */
@@ -539,26 +627,45 @@ router.post('/sync/create-customer', async (req, res) => {
 
 /**
  * POST /api/integration/sync/run
- * Run full sync (with options)
+ * Run sync (with options).
+ *
+ * #1569: validado por Zod (syncRunSchema), protegido por rate limiter
+ * dedicado (rateLimiters.sync — montado em /api/integration/sync no
+ * server.ts), com modo dryRun (simula sem persistir) e envelope padrão.
  */
 router.post('/sync/run', async (req, res) => {
     try {
         if (!syncService.isEnabled()) {
-            return res.status(400).json({ error: 'CRM sync not enabled. Set TULIPA_ENABLED=true and CRM_SYNC_ENABLED=true' });
+            return fail(
+                res,
+                'BAD_REQUEST',
+                'CRM sync not enabled. Set TULIPA_ENABLED=true and CRM_SYNC_ENABLED=true',
+                400
+            );
         }
 
-        const options = z.object({
-            autoCreate: z.boolean().optional(),
-            autoLink: z.boolean().optional()
-        }).parse(req.body);
+        const options = syncRunSchema.parse(req.body);
+        const { entity, autoCreate, autoLink, dryRun, limit } = options;
+        const userId = (req as any).user?.login || (req as any).user?.id || 'unknown';
 
-        const result = await syncService.syncAll(options);
-        res.json(result);
+        // Auditoria (#1569): loga toda chamada com os parâmetros relevantes.
+        log.info('sync/run invoked', { entity, autoCreate, autoLink, dryRun, limit, userId });
+
+        if (dryRun) {
+            // SIMULAÇÃO: nada é persistido — apenas computa o que FARIA.
+            const preview = await buildSyncPreview(entity, { autoCreate, autoLink, limit });
+            log.info('sync/run dry-run preview', { entity, userId, preview });
+            return ok(res, { dryRun: true, entity, autoCreate, autoLink, limit, preview });
+        }
+
+        // Execução real: só chega aqui quando autoCreate=true (refine do schema).
+        const result = await syncService.syncAll({ autoCreate, autoLink });
+        return ok(res, { dryRun: false, entity, autoCreate, autoLink, result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: 'Validation Error', details: error.issues });
+            return fail(res, 'VALIDATION_ERROR', 'Validation failed', 400, error.issues);
         }
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 

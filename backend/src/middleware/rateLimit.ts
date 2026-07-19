@@ -158,6 +158,21 @@ const defaultLimiter: RequestHandler = rateLimit({
 });
 
 // =============================================
+// 7. sync — sincronização com Dolibarr (#1569)
+// =============================================
+// 30/min protege o backend de sobrecarga no sync com o Dolibarr (cada run
+// dispara N chamadas AJAX ao ERP). É o teto recomendado pela issue #1569
+// para os endpoints de /sync/* — cobre operadores múltiplos disparando
+// runs manualmente e trava automação descontrolada.
+const sync: RequestHandler = rateLimit({
+    windowMs: ONE_MIN_MS,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: rateLimitHandler(ONE_MIN_MS, 30, 'Sync rate limit exceeded. Please wait before retrying.'),
+});
+
+// =============================================
 // Public API
 // =============================================
 
@@ -168,6 +183,7 @@ export const rateLimiters = {
     scheduler,
     strict,
     default: defaultLimiter,
+    sync,
 };
 
 export default rateLimiters;

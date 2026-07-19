@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
-const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
+const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, _res: any, next: any) => {
+    // #1569: authMiddleware real popula req.user — replicamos para que o log de
+    // userId em /sync/run tenha um valor determinístico nos testes.
+    (req as any).user = { id: 'u-1', login: 'tester' };
+    next();
+}));
 
 const mockMoltbotGateway = vi.hoisted(() => ({
     getStatus: vi.fn(() => ({ connected: true })),
@@ -87,6 +92,10 @@ vi.mock('../../config/features', () => ({
 }));
 
 import integrationRoutes from '../../routes/integrationRoutes';
+// #1569: preset REAL de middleware/rateLimit.ts + errorHandler global — mesmas
+// instâncias usadas em server.ts, para validar o rate limit de sync end-to-end.
+import { errorHandler } from '../../middleware/errorHandler';
+import { rateLimiters } from '../../middleware/rateLimit';
 
 function createApp() {
     const app = express();
@@ -246,12 +255,200 @@ describe('integrationRoutes', () => {
         });
     });
 
-    describe('POST /api/integration/sync/run', () => {
-        it('returns 200', async () => {
+    describe('POST /api/integration/sync/run (#1569)', () => {
+        beforeEach(() => {
+            mockSyncService.isEnabled.mockReturnValue(true);
+            mockSyncService.getPeopleWithMatches.mockResolvedValue([]);
+            mockSyncService.syncAll.mockResolvedValue({
+                success: true, matched: 0, created: 0, updated: 0, failed: 0, errors: [], details: []
+            });
+        });
+
+        // ADAPTADO (#1569): o body mínimo válido agora exige `entity` + (autoCreate=true
+        // OU dryRun=true). A asserção equivalente (request válido → 200) é preservada com
+        // um payload que satisfaz o novo schema.
+        it('returns 200 with a valid body (dryRun preview)', async () => {
             const res = await request(app)
                 .post('/api/integration/sync/run')
-                .send({});
+                .send({ entity: 'customer', dryRun: true });
             expect(res.status).toBe(200);
         });
+
+        // Critério de aceite #1569: dryRun=true retorna preview SEM persistir.
+        it('dryRun=true returns preview envelope and does NOT persist (syncAll not called)', async () => {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'customer', dryRun: true });
+
+            expect(res.status).toBe(200);
+            // #1569: envelope padrão { success, data }.
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.dryRun).toBe(true);
+            expect(res.body.data.entity).toBe('customer');
+            // Preview computado via getPeopleWithMatches (read-only).
+            expect(mockSyncService.getPeopleWithMatches).toHaveBeenCalledTimes(1);
+            // dryRun JAMAIS persiste — syncAll não pode ser chamado.
+            expect(mockSyncService.syncAll).not.toHaveBeenCalled();
+        });
+
+        // Critério de aceite #1569: { entity:'customer', autoCreate:false } (sem dryRun) → 400.
+        it('returns 400 when autoCreate=false and dryRun omitted (refine rule)', async () => {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'customer', autoCreate: false });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            // Mensagem exigida pelo critério de aceite.
+            const refineDetail = res.body.error.details.find((d: any) => /autoCreate=false/i.test(d.message));
+            expect(refineDetail).toBeDefined();
+            expect(refineDetail.message).toMatch(/Quando autoCreate=false, dryRun deve ser true/);
+            expect(mockSyncService.syncAll).not.toHaveBeenCalled();
+        });
+
+        // Critério de aceite #1569: entity fora do enum → 400.
+        it('returns 400 when entity is outside the enum', async () => {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'unknown', dryRun: true });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when entity is missing', async () => {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ dryRun: true });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when limit is out of range (> 500)', async () => {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'customer', dryRun: true, limit: 501 });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        // autoCreate=true satisfaz o refine (dryRun pode ficar default false) → executa sync real.
+        it('executes real sync when autoCreate=true (dryRun defaults to false)', async () => {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'customer', autoCreate: true });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.dryRun).toBe(false);
+            expect(mockSyncService.syncAll).toHaveBeenCalledWith({ autoCreate: true, autoLink: true });
+            // syncAll chamado, preview NÃO.
+            expect(mockSyncService.getPeopleWithMatches).not.toHaveBeenCalled();
+        });
+
+        it('`limit` caps the number of records considered in dryRun preview', async () => {
+            mockSyncService.getPeopleWithMatches.mockResolvedValue([
+                { brainPerson: { id: '1' }, dolibarrCustomer: null, confidence: 'none' },
+                { brainPerson: { id: '2' }, dolibarrCustomer: null, confidence: 'none' },
+                { brainPerson: { id: '3' }, dolibarrCustomer: null, confidence: 'none' },
+            ]);
+
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'customer', dryRun: true, limit: 2 });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.preview.totalAvailable).toBe(3);
+            expect(res.body.data.preview.totalConsidered).toBe(2);
+            // Sem autoCreate/autoLink match → todos skipped.
+            expect(res.body.data.preview.wouldSkip).toBe(2);
+        });
+
+        it('non-customer entity returns preview with note (no data source yet)', async () => {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'product', dryRun: true });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.preview.totalAvailable).toBe(0);
+            expect(res.body.data.preview.note).toMatch(/product/i);
+        });
+
+        it('logs the call with entity/autoCreate/autoLink/dryRun/userId (#1569)', async () => {
+            // O mock de logger descarta a chamada, mas garantimos que a rota não lança
+            // ao acessar req.user — coberto pelo 200 acima. Aqui validamos o envelope.
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'invoice', autoCreate: true, autoLink: false });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.entity).toBe('invoice');
+            expect(res.body.data.autoCreate).toBe(true);
+            expect(res.body.data.autoLink).toBe(false);
+        });
+
+        it('returns 400 (envelope) when sync is not enabled', async () => {
+            mockSyncService.isEnabled.mockReturnValue(false);
+
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'customer', dryRun: true });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+        });
+    });
+});
+
+// =====================================================
+// #1569: syncLimiter — 31ª chamada em 1min retorna 429.
+// O limiter é montado em /api/integration/sync no server.ts. Aqui replicamos o
+// mount com a MESMA instância `rateLimiters.sync` (single source) + errorHandler
+// global para validar o critério de aceite end-to-end (envelope RATE_LIMIT).
+// =====================================================
+describe('#1569: syncLimiter — 31ª chamada em 1min → 429', () => {
+    function createAppWithSyncLimiter() {
+        const app = express();
+        app.use(express.json());
+        // Mesmo mount order de server.ts: limiter no prefixo /sync antes do router.
+        app.use('/api/integration/sync', rateLimiters.sync);
+        app.use('/api/integration', integrationRoutes);
+        app.use(errorHandler);
+        return app;
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockSyncService.isEnabled.mockReturnValue(true);
+        mockSyncService.getPeopleWithMatches.mockResolvedValue([]);
+        mockSyncService.syncAll.mockResolvedValue({
+            success: true, matched: 0, created: 0, updated: 0, failed: 0, errors: [], details: []
+        });
+    });
+
+    it('30 chamadas OK; a 31ª retorna 429 (envelope RATE_LIMIT)', async () => {
+        const app = createAppWithSyncLimiter();
+
+        for (let i = 0; i < 30; i++) {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'customer', dryRun: true });
+            expect(res.status).toBe(200);
+        }
+
+        const blocked = await request(app)
+            .post('/api/integration/sync/run')
+            .send({ entity: 'customer', dryRun: true });
+
+        expect(blocked.status).toBe(429);
+        // #1569: 429 renderizado pelo errorHandler no envelope padronizado.
+        expect(blocked.body.success).toBe(false);
+        expect(blocked.body.error.code).toBe('RATE_LIMIT');
+        expect(typeof blocked.body.error.message).toBe('string');
+        expect(blocked.body.error.message.length).toBeGreaterThan(0);
     });
 });
