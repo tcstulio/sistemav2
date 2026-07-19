@@ -567,6 +567,71 @@ describe('AiService', () => {
                 vi.useRealTimers();
             }
         });
+
+        // #1577: quando o job é cancelado pelo usuário, o GET /jobs/:id devolve
+        // { status: 'cancelled', alive: false, partialSummary }. O pollChatJob deve
+        // encerrar IMEDIATAMENTE (não esperar o teto de 40min) lançando um erro tipado
+        // ChatJobCancelledError — distinto de erro genérico — para o chamador tratar
+        // silenciosamente (a UI de cancelamento já foi renderizada via socket event).
+        it('#1577: lança ChatJobCancelledError quando o job é cancelado (status: "cancelled")', async () => {
+            vi.useFakeTimers();
+            try {
+                mockAxios.get.mockResolvedValue({
+                    data: { status: 'cancelled', alive: false, partialSummary: 'Resumo parcial.' },
+                });
+
+                const settled = AiService.resumeChatJob('job-cancelled').then(() => null, (e: any) => e);
+                await vi.advanceTimersByTimeAsync(2500);
+                const err = await settled;
+
+                const { ChatJobCancelledError } = await import('../../services/aiService');
+                expect(err).toBeInstanceOf(ChatJobCancelledError);
+                expect((err as any).partialSummary).toBe('Resumo parcial.');
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('#1577: ChatJobCancelledError carrega partialSummary null quando backend não envia', async () => {
+            vi.useFakeTimers();
+            try {
+                mockAxios.get.mockResolvedValue({
+                    data: { status: 'cancelled', alive: false, partialSummary: null },
+                });
+
+                const settled = AiService.resumeChatJob('job-cancelled').then(() => null, (e: any) => e);
+                await vi.advanceTimersByTimeAsync(2500);
+                const err = await settled;
+
+                const { ChatJobCancelledError } = await import('../../services/aiService');
+                expect(err).toBeInstanceOf(ChatJobCancelledError);
+                expect((err as any).partialSummary).toBeNull();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('#1577: NÃO estende o prazo quando o job está cancelled (encerra no primeiro poll)', async () => {
+            vi.useFakeTimers();
+            try {
+                let polls = 0;
+                mockAxios.get.mockImplementation(async () => {
+                    polls++;
+                    return { data: { status: 'cancelled', alive: false, partialSummary: 'fim.' } };
+                });
+
+                const settled = AiService.resumeChatJob('job-cancelled').then(() => null, (e: any) => e);
+                await vi.advanceTimersByTimeAsync(2500);
+                const err = await settled;
+
+                const { ChatJobCancelledError } = await import('../../services/aiService');
+                expect(err).toBeInstanceOf(ChatJobCancelledError);
+                // Apenas 1 poll foi necessário — encerrou imediatamente.
+                expect(polls).toBe(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
     });
 
     describe('analyzeSystemLogs', () => {

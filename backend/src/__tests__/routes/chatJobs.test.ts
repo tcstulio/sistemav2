@@ -87,7 +87,7 @@ describe('chatJobsRoutes #1577 — POST /api/chat/jobs/:id/cancel', () => {
             partialSummary: 'partial text from job',
             finishedAt: 12345,
         });
-        expect(mockCancelJob).toHaveBeenCalledWith('job-running');
+        expect(mockCancelJob).toHaveBeenCalledWith('job-running', undefined);
     });
 
     it('emite evento socket "chat:job:cancelled" com jobId, status e partialSummary', async () => {
@@ -114,6 +114,9 @@ describe('chatJobsRoutes #1577 — POST /api/chat/jobs/:id/cancel', () => {
 
         expect(res.body.data.partialSummary).toBe('texto do cliente');
         expect(mockSocketEmit.mock.calls[0][1].partialSummary).toBe('texto do cliente');
+        // #1577: repassa o partialSummary do body para cancelJob persistir no job (assim
+        // o GET /jobs/:id devolve o resumo oficial mesmo se o socket event se perder).
+        expect(mockCancelJob).toHaveBeenCalledWith('job-running', 'texto do cliente');
     });
 
     it('retorna 404 JOB_NOT_FOUND para id desconhecido', async () => {

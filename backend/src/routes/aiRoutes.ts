@@ -319,6 +319,18 @@ router.get('/jobs/:id', asyncHandler(async (req, res, next) => {
     const job = lookup.job;
     if (job.status === 'done') return ok(res, { status: 'done', alive: true, ...(job.result || {}) });
     if (job.status === 'error') return ok(res, { status: 'error', alive: true, error: job.error });
+    // #1577: job cancelado pelo usuário — devolve status 'cancelled' + o resumo parcial
+    // (se houver) e alive:false para o cliente PARAR o polling imediatamente. Sem este
+    // branch o fluxo caía no default abaixo (alive:true) e o pollChatJob ficava em loop
+    // até o teto de 40min quando o socket 'chat:job:cancelled' se perdia.
+    if (job.status === 'cancelled') {
+        return ok(res, {
+            status: 'cancelled',
+            alive: false,
+            partialSummary: job.partialSummary ?? null,
+            ...(job.result || {}),
+        });
+    }
     return ok(res, { status: job.status, alive: true, queueAhead: lookup.queueAhead });
 }));
 

@@ -24,7 +24,7 @@ import axios from 'axios';
 import io, { Socket } from 'socket.io-client';
 import { Send, Loader2, X, Bell, BellOff } from 'lucide-react';
 import { toast } from 'sonner';
-import { AiService, ChatJobProgress } from '../../services/aiService';
+import { AiService, ChatJobProgress, ChatJobCancelledError } from '../../services/aiService';
 import { usePageVisibility } from '../../hooks/usePageVisibility';
 import { safeStorage } from '../../utils/safeStorage';
 import { logger } from '../../utils/logger';
@@ -109,6 +109,24 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
         activeJobRef.current = activeJob;
     }, [activeJob]);
 
+    // #1577: notificationsEnabled também é lido dentro do listener de socket registrada
+    // UMA vez no mount ([]). Sem este ref, o handler capturaria o valor inicial de mount
+    // e ignoraria toggles feitos durante a sessão (bug do tipo "desativei notificações,
+    // mas o toast de cancelamento continua aparecendo").
+    const notificationsEnabledRef = useRef<boolean>(notificationsEnabled);
+    useEffect(() => {
+        notificationsEnabledRef.current = notificationsEnabled;
+    }, [notificationsEnabled]);
+
+    // #1577: cancelledSummary também é consultado no catch do handleSend. Como o handleSend
+    // é estável (não muda a cada render) e a chamada chatWithData é assíncrona, o closure
+    // capturado no momento do click pode estar stale no momento do catch — precisamos do
+    // valor MAIS RECENTE para decidir se o socket já exibiu o resumo (evitar duplicar).
+    const cancelledSummaryRef = useRef<string | null>(cancelledSummary);
+    useEffect(() => {
+        cancelledSummaryRef.current = cancelledSummary;
+    }, [cancelledSummary]);
+
     const isProcessing = !!activeJob;
 
     // ---- Socket: assina 'chat:job:cancelled' --------------------------------------
@@ -146,7 +164,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                 },
             ]);
             setActiveJob(null);
-            if (notificationsEnabled) {
+            if (notificationsEnabledRef.current) {
                 toast.info('Operação cancelada', { description: summary.slice(0, 120) });
             }
         };
@@ -263,6 +281,30 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                 { id: newBubbleId(), role: 'model', text: replyText },
             ]);
         } catch (err) {
+            // #1577: cancelamento é tratamento dedicado — não é um "erro" de UX. O handler
+            // do socket 'chat:job:cancelled' já adiciona o bubble de resumo parcial; se o
+            // socket falhou e o pollChatJob detectou o status 'cancelled' via polling, este
+            // ramo garante que o usuário ainda veja o resumo (sem duplicar caso o socket
+            // também tenha despachado — verificamos cancelledSummaryRef antes de repetir).
+            if (err instanceof ChatJobCancelledError) {
+                if (!cancelledSummaryRef.current) {
+                    const summary = err.partialSummary || 'Operação cancelada.';
+                    setCancelledSummary(summary);
+                    setMessages((prev) => [
+                        ...prev,
+                        {
+                            id: newBubbleId(),
+                            role: 'system',
+                            text: summary,
+                            isCancelledSummary: true,
+                        },
+                    ]);
+                    if (notificationsEnabledRef.current) {
+                        toast.info('Operação cancelada', { description: summary.slice(0, 120) });
+                    }
+                }
+                return;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             setMessages((prev) => [
                 ...prev,

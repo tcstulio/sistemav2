@@ -1210,6 +1210,62 @@ describe('#1011: heartbeat do job via reportProgress (tool-call = progresso)', (
 });
 
 // =====================================================
+// #1577: GET /api/jobs/:id com status 'cancelled' — devolve alive:false + partialSummary
+// para o cliente PARAR o polling imediatamente quando o socket 'chat:job:cancelled' se perde.
+// Sem este branch o fluxo caía no default (alive:true) e o pollChatJob ficava em loop
+// até o teto de 40min.
+// =====================================================
+describe('#1577: GET /api/jobs/:id com status "cancelled"', () => {
+    let app: express.Application;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Job que nunca resolve (simula agente em pleno processamento) — mantém o job
+        // vivo para podermos cancelá-lo manualmente e observar o GET /jobs/:id.
+        mockAiService.generateReply.mockImplementation(() => new Promise(() => {}));
+        app = createApp();
+    });
+
+    it('devolve { status: "cancelled", alive: false, partialSummary } após cancelJob(id, summary)', async () => {
+        const { aiJobService } = await import('../../services/aiJobService');
+
+        const start = await request(app)
+            .post('/api/generate-reply-async')
+            .send({ message: 'processa', module: 'chat' });
+        const jobId = start.body.data.jobId;
+
+        // Cancela passando um partialSummary (igualzinho ao POST /chat/jobs/:id/cancel).
+        aiJobService.cancelJob(jobId, 'Resumo parcial até aqui.');
+
+        const res = await request(app).get(`/api/jobs/${jobId}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(res.body.data.status).toBe('cancelled');
+        // CRÍTICO: alive:false é o sinal que faz o pollChatJob parar.
+        expect(res.body.data.alive).toBe(false);
+        expect(res.body.data.partialSummary).toBe('Resumo parcial até aqui.');
+    });
+
+    it('devolve partialSummary:null quando o job foi cancelado sem resumo acumulado', async () => {
+        const { aiJobService } = await import('../../services/aiJobService');
+
+        const start = await request(app)
+            .post('/api/generate-reply-async')
+            .send({ message: 'processa', module: 'chat' });
+        const jobId = start.body.data.jobId;
+
+        aiJobService.cancelJob(jobId);
+
+        const res = await request(app).get(`/api/jobs/${jobId}`);
+
+        expect(res.body.data.status).toBe('cancelled');
+        expect(res.body.data.alive).toBe(false);
+        expect(res.body.data.partialSummary).toBeNull();
+    });
+});
+
+// =====================================================
 // #1566: envelope + asyncHandler + AppError — validação de contrato
 // =====================================================
 describe('#1566: handlers sem try/catch — erros via AppError/ZodError no errorHandler', () => {

@@ -95,6 +95,31 @@ export interface ChatJobProgress {
     progressPct?: number;
 }
 
+/**
+ * #1577: erro tipado lançado pelo pollChatJob quando o job foi cancelado pelo usuário
+ * (GET /jobs/:id devolve { status: 'cancelled', alive: false, partialSummary }). Distinto
+ * de um erro genérico para que o chamador (ChatMessages) saiba tratar silenciosamente:
+ * o handler do socket 'chat:job:cancelled' já exibiu o resumo na UI — réplicas do
+ * pollChatJob via polling só precisam encerrar o ciclo "isSending" sem mostrar "Erro:".
+ */
+export class ChatJobCancelledError extends Error {
+    /** Resumo parcial devolvido pelo backend (texto acumulado até o cancelamento). */
+    public readonly partialSummary: string | null;
+
+    constructor(partialSummary: string | null) {
+        super('Job cancelado pelo usuário.');
+        this.name = 'ChatJobCancelledError';
+        this.partialSummary = partialSummary;
+        // Mantém o stack trace em V8/Node (em jsdom é no-op seguro).
+        const ErrorCtor = Error as unknown as {
+            captureStackTrace?: (target: object, ctor: unknown) => void;
+        };
+        if (typeof ErrorCtor.captureStackTrace === 'function') {
+            ErrorCtor.captureStackTrace(this, ChatJobCancelledError);
+        }
+    }
+}
+
 // #1011/#1013: consulta o heartbeat leve do job (GET /api/ai-jobs/:id/status). Retorna
 // { alive, lastHeartbeatMs, progressPct } ou { alive: false } se indisponível/expirado.
 // Usado quando o endpoint principal do job devolve 404 (job evictado da memória sob
@@ -166,6 +191,14 @@ async function pollChatJob(jobId: string, onProgress?: (p: ChatJobProgress) => v
         }
         if (job.status === 'error') {
             throw new Error(job.error || 'O assistente falhou ao processar.');
+        }
+        // #1577: job cancelado pelo usuário — encerra o polling imediatamente. O backend
+        // devolve alive:false + partialSummary neste caso. Lançamos ChatJobCancelledError
+        // (tipado) para o chamador distinguir cancelamento de falha real e suprimir o
+        // bubble de "Erro:" — a UI de cancelamento já foi renderizada pelo handler do
+        // socket 'chat:job:cancelled' (ou será renderizada por quem capturar este erro).
+        if (job.status === 'cancelled') {
+            throw new ChatJobCancelledError(job.partialSummary ?? null);
         }
         // queued/running → job vivo: alonga o prazo (cap 40min) e notifica a UI.
         if (job.alive) {

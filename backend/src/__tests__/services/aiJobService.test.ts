@@ -539,6 +539,51 @@ describe('aiJobService #1577 — cancelJob + recordVisibility', () => {
         if (!lookup.ok) expect(lookup.reason).toBe('expired');
     });
 
+    it('cancelJob(id, partialSummary) persiste o resumo no job (write-through em disco)', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(() => new Promise(() => {}), 'chat');
+        await flush();
+
+        const lookup = svc.cancelJob(id, 'Resumo parcial acumulado até o cancelamento.');
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) {
+            expect(lookup.job.status).toBe('cancelled');
+            expect(lookup.job.partialSummary).toBe('Resumo parcial acumulado até o cancelamento.');
+        }
+
+        // Persistiu em disco (GET /jobs/:id expõe este campo após F5 / perda de socket).
+        const persisted = storage.disk.get(id);
+        expect(persisted?.partialSummary).toBe('Resumo parcial acumulado até o cancelamento.');
+
+        // E o get() subsequente também enxerga o resumo (contrato do GET /jobs/:id).
+        const after = svc.get(id);
+        expect(after.ok).toBe(true);
+        if (after.ok) expect(after.job.partialSummary).toBe('Resumo parcial acumulado até o cancelamento.');
+    });
+
+    it('cancelJob(id) SEM partialSummary mantém o campo undefined (não preenche vazio)', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(() => new Promise(() => {}));
+        await flush();
+
+        const lookup = svc.cancelJob(id);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) expect(lookup.job.partialSummary).toBeUndefined();
+    });
+
+    it('cancelJob NÃO sobrescreve partialSummary de cancelamento anterior (idempotência de resumo)', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(() => new Promise(() => {}));
+        await flush();
+
+        svc.cancelJob(id, 'Primeiro resumo.');
+        // Segunda chamada (tardia) tenta sobrescrever — não deve, porque o job já está
+        // terminal e a idempotência preserva o primeiro resumo.
+        const second = svc.cancelJob(id, 'Segundo resumo (deve ser ignorado).');
+        expect(second.ok).toBe(true);
+        if (second.ok) expect(second.job.partialSummary).toBe('Primeiro resumo.');
+    });
+
     it('recordVisibility registra hidden=true e devolve true (job existe)', async () => {
         const svc = await fresh();
         const id = svc.enqueue(() => new Promise(() => {}));

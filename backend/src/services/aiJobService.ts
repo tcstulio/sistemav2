@@ -315,8 +315,14 @@ export const aiJobService = {
      * Retorna o lookup do job p/ o caller (rota) montar o payload do evento 'cancelled'
      * com o partialSummary (se houver). Não aborta a fn em execução (o contrato do
      * enqueue não permite); o cliente apenas para de polling ao receber o evento.
+     *
+     * `partialSummary` (opcional): resumo parcial enviado pelo cliente no momento do
+     * cancelamento (texto do streaming acumulado até então). Persistido no job para
+     * que o GET /jobs/:id devolva o resumo oficial quando o cliente reconsulta (ex.:
+     * após F5, ou quando o socket 'chat:job:cancelled' se perde). Jobs já terminais
+     * NÃO são sobrescritos (preserva o partialSummary de um cancelamento anterior).
      */
-    cancelJob(id: string): AiJobLookup {
+    cancelJob(id: string, partialSummary?: string): AiJobLookup {
         const job = jobs.get(id);
         if (!job) return { ok: false, reason: 'missing' };
         if (isExpired(job)) return { ok: false, reason: 'expired' };
@@ -327,6 +333,9 @@ export const aiJobService = {
                 status: 'cancelled',
                 finishedAt,
                 expiresAt: finishedAt + TTL_MS,
+                // Registra o partialSummary passado pelo cliente (write-through em disco)
+                // para o GET /jobs/:id devolver o resumo oficial mesmo sem o socket event.
+                ...(partialSummary !== undefined ? { partialSummary } : {}),
             });
         }
         const refreshed = jobs.get(id);

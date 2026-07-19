@@ -52,7 +52,7 @@ router.post(
                 ? req.body.partialSummary
                 : undefined;
 
-        const lookup = aiJobService.cancelJob(jobId);
+        const lookup = aiJobService.cancelJob(jobId, incomingSummary);
         if (!lookup.ok) {
             // 404 com reason explícita — o cliente diferencia "nunca existiu"
             // (missing) de "existiu mas expirou" (expired), igual ao GET /jobs/:id.

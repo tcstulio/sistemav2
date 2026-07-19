@@ -52,14 +52,21 @@ vi.mock('socket.io-client', () => ({
 }));
 
 // AiService mock: chatWithData enfileira e chama onJobStarted imediatamente.
+// #1577: preserva ChatJobCancelledError do módulo real (a classe é usada pelo componente
+// para distinguir cancelamento de erro genérico via `instanceof` — se a mock substituir
+// o módulo por completo, a classe viraria undefined e o instanceof lançaria TypeError).
 const mockChatWithData = vi.hoisted(() => vi.fn());
 const mockResumeChatJob = vi.hoisted(() => vi.fn());
-vi.mock('../../services/aiService', () => ({
-    AiService: {
-        chatWithData: mockChatWithData,
-        resumeChatJob: mockResumeChatJob,
-    },
-}));
+vi.mock('../../services/aiService', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../services/aiService')>();
+    return {
+        ...actual,
+        AiService: {
+            chatWithData: mockChatWithData,
+            resumeChatJob: mockResumeChatJob,
+        },
+    };
+});
 
 vi.mock('sonner', () => ({
     toast: {
@@ -263,6 +270,120 @@ describe('ChatMessages (#1577) — evento cancelled', () => {
         });
 
         expect(screen.getByText('Operação cancelada.')).toBeInTheDocument();
+    });
+});
+
+// #1577: resiliência — quando o socket 'chat:job:cancelled' se perde (server restart,
+// problema de transporte), o pollChatJob detecta o status 'cancelled' via GET /jobs/:id
+// e lança ChatJobCancelledError. O ChatMessages deve tratar isso silenciosamente,
+// exibindo o resumo parcial sem mostrar bubble de "Erro:".
+describe('ChatMessages (#1577) — cancelled detectado via polling (fallback de socket)', () => {
+    it('exibe o resumo parcial quando chatWithData rejeita com ChatJobCancelledError', async () => {
+        const { ChatJobCancelledError } = await import('../../services/aiService');
+        mockChatWithData.mockImplementation(
+            (_msg: string, _h: unknown, _i: unknown, _s: unknown, _p: unknown, onJobStarted?: (id: string) => void) => {
+                if (onJobStarted) onJobStarted('job-poll-1');
+                return Promise.reject(new ChatJobCancelledError('Resumo via polling.'));
+            },
+        );
+        const user = userEvent.setup();
+        render(<ChatMessages />);
+
+        await user.type(screen.getByTestId('chat-messages-input'), 'x');
+        await user.click(screen.getByTestId('chat-messages-send'));
+
+        await waitFor(() => {
+            expect(screen.getByText(/Resumo parcial do cancelamento:/)).toBeInTheDocument();
+        });
+        expect(screen.getByText('Resumo via polling.')).toBeInTheDocument();
+        // NÃO mostra bubble de erro genérico.
+        expect(screen.queryByText(/Erro:/)).toBeNull();
+        // Job encerra — botão cancelar some.
+        expect(screen.queryByTestId('cancel-job-btn')).toBeNull();
+    });
+
+    it('usa fallback "Operação cancelada." quando ChatJobCancelledError vem sem partialSummary', async () => {
+        const { ChatJobCancelledError } = await import('../../services/aiService');
+        mockChatWithData.mockImplementation(
+            () => Promise.reject(new ChatJobCancelledError(null)),
+        );
+        const user = userEvent.setup();
+        render(<ChatMessages />);
+
+        await user.type(screen.getByTestId('chat-messages-input'), 'x');
+        await user.click(screen.getByTestId('chat-messages-send'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Operação cancelada.')).toBeInTheDocument();
+        });
+    });
+
+    it('NÃO duplica o bubble quando socket E polling ambos reportam cancelamento', async () => {
+        const { ChatJobCancelledError } = await import('../../services/aiService');
+        // chatWithData rejeita DEPOIS de o socket emitir (race comum: o evento chega
+        // primeiro porque o polling tem atraso de POLL_MS).
+        let socketEmit: (() => void) | null = null;
+        mockChatWithData.mockImplementation(
+            (_msg: string, _h: unknown, _i: unknown, _s: unknown, _p: unknown, onJobStarted?: (id: string) => void) => {
+                if (onJobStarted) onJobStarted('job-poll-2');
+                return new Promise<void>((_, reject) => {
+                    socketEmit = () => {
+                        // Socket dispara primeiro; depois o polling rejeita com o erro tipado.
+                        fakeSocket.socket.__emit('chat:job:cancelled', {
+                            jobId: 'job-poll-2',
+                            partialSummary: 'Resumo do socket.',
+                        });
+                        setTimeout(() => reject(new ChatJobCancelledError('Resumo do polling.')), 0);
+                    };
+                });
+            },
+        );
+        const user = userEvent.setup();
+        render(<ChatMessages />);
+
+        await user.type(screen.getByTestId('chat-messages-input'), 'x');
+        await user.click(screen.getByTestId('chat-messages-send'));
+        await screen.findByTestId('cancel-job-btn');
+
+        act(() => socketEmit?.());
+
+        await waitFor(() => {
+            expect(screen.getByText('Resumo do socket.')).toBeInTheDocument();
+        });
+        // O resumo do polling NÃO deve aparecer (cancelledSummary já estava setado).
+        await waitFor(() => {
+            expect(screen.queryByText('Resumo do polling.')).toBeNull();
+        });
+    });
+
+    it('respeita o toggle de notificações feito DEPOIS do mount (closure bug fix)', async () => {
+        // Regressão: o listener de socket é registrado 1x no mount; sem o ref, ele
+        // captura notificationsEnabled inicial e ignora toggles posteriores.
+        const { toast } = await import('sonner');
+        hangChatWithData();
+        const user = userEvent.setup();
+        render(<ChatMessages />);
+
+        await user.type(screen.getByTestId('chat-messages-input'), 'x');
+        await user.click(screen.getByTestId('chat-messages-send'));
+        await screen.findByTestId('cancel-job-btn');
+
+        // Desativa notificações DEPOIS do mount (valor inicial era true).
+        await user.click(screen.getByTestId('notifications-toggle'));
+        expect(toast.success).toHaveBeenCalledWith('Notificações desativadas');
+
+        (toast.info as ReturnType<typeof vi.fn>).mockClear();
+        act(() => {
+            fakeSocket.socket.__emit('chat:job:cancelled', {
+                jobId: 'job-123',
+                partialSummary: 'Resumo.',
+            });
+        });
+
+        // O toast NÃO deve disparar (config atual = false, graças ao ref).
+        expect(toast.info).not.toHaveBeenCalled();
+        // Mas o bubble do resumo aparece normalmente.
+        expect(screen.getByText('Resumo.')).toBeInTheDocument();
     });
 });
 
