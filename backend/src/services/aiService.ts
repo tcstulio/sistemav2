@@ -1993,6 +1993,68 @@ export interface RunWithChainOptions {
 }
 
 /**
+ * Erro IRRECUPERÁVEL dentro de runWithChain (#1551): mensagem corrompida,
+ * schema incompatível entre providers, payload inválido, etc. Quando lançado
+ * por `exec` (ou sinalizado via `err.unrecoverable = true` / status HTTP 400|422),
+ * o estado acumulado da cadeia é RESETADO antes do próximo provider. Erros
+ * transientes (429/5xx/timeout) continuam PRESERVANDO o estado.
+ */
+export class UnrecoverableChainError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'UnrecoverableChainError';
+        // Mantém o stack do V8 (quando disponível) sem vazar o construtor.
+        if (typeof (Error as any).captureStackTrace === 'function') {
+            (Error as any).captureStackTrace(this, UnrecoverableChainError);
+        }
+    }
+}
+
+/**
+ * Marcadores de erro IRRECUPERÁVEL (#1551): indicam que o histórico acumulado
+ * está corrompido/incompatível com o próximo provider e deve ser descartado
+ * (reset total) em vez de preservado. Apenas erros de schema/mensagem inválida
+ * entram aqui; 429/5xx/timeout são transientes e NÃO resetam a cadeia.
+ * 'unexpected token' cobre JSON.parse de resposta corrompida (mensagem
+ * ilegível vinda do provider — também é "mensagem corrompida" per spec (e)).
+ */
+const CHAIN_UNRECOVERABLE_MARKERS = [
+    'schema',
+    'malformed',
+    'corrupt',
+    'unprocessable',
+    'invalid_request_error',
+    'invalid format',
+    'invalid message',
+    'bad schema',
+    'unexpected token',
+];
+
+/**
+ * True se o erro indica condição IRRECUPERÁVEL que justifica resetar o estado
+ * da cadeia (ex.: schema incompatível, mensagem corrompida) antes do próximo
+ * provider. Caso contrário o erro é transiente (429/5xx/timeout) e o histórico
+ * + `seenToolCalls` são PRESERVADOS (#1551).
+ */
+function isUnrecoverableChainError(err: any): boolean {
+    if (!err) return false;
+    if (err instanceof UnrecoverableChainError) return true;
+    if (err?.unrecoverable === true) return true;
+    const status = err?.response?.status;
+    // 400/422 indicam request/schema inválido — provider seguinte não vai aceitar
+    // o mesmo payload. Reset total é o caminho seguro.
+    if (status === 400 || status === 422) return true;
+    // Mensagem/detail com marcadores de corrupção/schema (case-insensitive).
+    // Inspeciona message, response.data, code — cobre erros sem status HTTP.
+    const parts: string[] = [err?.message, err?.code];
+    if (err?.response?.data) {
+        parts.push(typeof err.response.data === 'string' ? err.response.data : JSON.stringify(err.response.data));
+    }
+    const detail = String(parts.filter(Boolean).join(' | ')).toLowerCase();
+    return CHAIN_UNRECOVERABLE_MARKERS.some((k) => detail.includes(k));
+}
+
+/**
  * Executa `exec(provider, state)` percorrendo a cadeia de fallback do módulo.
  * Pula providers indisponíveis (em cooldown no LlmHealthService).
  * Em erro de cota/infra registra no LlmHealthService e tenta o próximo.
@@ -2061,9 +2123,28 @@ async function runWithChain<T>(
                 llmHealthService.recordTransientError(provider, err);
             }
             lastErr = err;
-            // #1010: preserva o estado acumulado (messages/seenToolCalls/contexto)
-            // para o próximo provider — NÃO reinicia a cadeia do zero.
-            log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo (preservando ${state.messages.length} mensagens, ${state.seenToolCalls.size} tool_call(s) já vista(s)).`);
+            const hasNext = i < chain.length - 1;
+            // #1551: distinguir erro RECUPERÁVEL (429/5xx/timeout) de IRRECUPERÁVEL
+            // (schema incompatível, mensagem corrompida). Transiente → o próximo
+            // provider recebe o histórico acumulado e o mesmo `seenToolCalls`
+            // (por referência — ferramentas já executadas NÃO repetem). Irrecuperável
+            // → reset total do estado antes do próximo provider (compat legado).
+            if (isUnrecoverableChainError(err)) {
+                const motivo = String(err?.message || detail).slice(0, 200);
+                state.messages = [];
+                state.seenToolCalls.clear();
+                state.context = '';
+                log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — chain reset: ${motivo.slice(0, 120)}.`);
+            } else {
+                // #1010: preserva o estado acumulado (messages/seenToolCalls/contexto)
+                // para o próximo provider — NÃO reinicia a cadeia do zero.
+                log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo (preservando ${state.messages.length} mensagens, ${state.seenToolCalls.size} tool_call(s) já vista(s)).`);
+            }
+            // #1551 (c): log INFO explícito ao alternar de provider — visibilidade
+            // clara de quanto do contexto acumulado está sendo reaproveitado.
+            if (hasNext) {
+                log.info(`runWithChain[${moduleName}]: chain resumed with ${state.messages.length} messages, ${state.seenToolCalls.size} tool calls seen.`);
+            }
         }
     }
 
