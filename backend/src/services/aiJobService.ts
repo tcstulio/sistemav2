@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { EventEmitter } from 'events';
 import { createLogger } from '../utils/logger';
 import { saveJob, deleteJob, loadAll } from './aiJobStorage';
 
@@ -69,6 +70,21 @@ export type AiJobStatusLookup =
     | { ok: true; status: AiJobStatusInfo }
     | { ok: false; reason: 'expired' | 'missing' };
 
+/** #1578: payload do evento 'transition' (mudança de status do job). */
+export interface AiJobTransition {
+    jobId: string;
+    from: AiJobStatus;
+    to: AiJobStatus;
+    job: AiJob;
+}
+
+// #1578: emitter interno para mudanças de status. O agentCompletionNotifier
+// assina para decidir a notificação "Pronto" (notify_person) quando a aba do
+// cliente está oculta. Isolado num EventEmitter próprio para não acoplar
+// consumidores (notifier, testes, métricas) às entranhas do módulo.
+const transitions = new EventEmitter();
+transitions.setMaxListeners(50); // cabe múltiplos assinantes (notifier + testes + debug)
+
 const jobs = new Map<string, AiJob>();
 const TTL_MS = 30 * 60 * 1000; // mantém o resultado 30min p/ o cliente buscar
 const MAX_CONCURRENT = 3;
@@ -118,9 +134,26 @@ function toStatusInfo(job: AiJob): AiJobStatusInfo {
 
 /** Write-through: atualiza o Map e persiste atomicamente no storage durável. */
 function setJob(job: AiJob): void {
+    const prev = jobs.get(job.id);
+    const prevStatus = prev?.status;
     jobs.set(job.id, job);
     saveJob(job);
     lastWriteAt.set(job.id, Date.now());
+    // #1578: emite transição apenas quando o STATUS muda (não em cada write-through
+    // de metadados tipo lastHeartbeat/progressPct). Assinantes filtram por terminal.
+    if (prevStatus && prevStatus !== job.status) {
+        try {
+            transitions.emit('transition', {
+                jobId: job.id,
+                from: prevStatus,
+                to: job.status,
+                job,
+            } satisfies AiJobTransition);
+        } catch (e) {
+            // Listener com bug não pode quebrar o write-through do job.
+            log.warn('Listener de transição lançou — isolado e ignorado.', e);
+        }
+    }
 }
 
 function patchJob(id: string, changes: Partial<AiJob>): void {
@@ -294,6 +327,20 @@ export const aiJobService = {
     /** Reidrata jobs do disco (read-on-startup). Exposto p/ testes/restart manual. */
     restore() {
         restore();
+    },
+
+    /**
+     * #1578: assina mudanças de STATUS do job (running -> done/error).
+     * Retorna um unsubscribe() para o caller remover o listener (testes, shutdown).
+     *
+     * Eventos NÃO-terminais (queued -> running) também são emitidos; o listener
+     * deve filtrar pelo status final que lhe interessa. Eventos de metadados
+     * (lastHeartbeat, progressPct) NÃO disparam 'transition' — apenas mudança
+     * de `status`.
+     */
+    onTransition(listener: (e: AiJobTransition) => void): () => void {
+        transitions.on('transition', listener);
+        return () => { transitions.off('transition', listener); };
     },
 };
 

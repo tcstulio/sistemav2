@@ -167,6 +167,7 @@ import adminRoutes from './routes/adminRoutes';
 import groupsRoutes from './routes/groupsRoutes';
 import aiRoutes from './routes/aiRoutes';
 import aiJobsRoutes from './routes/aiJobs';
+import chatRoutes from './routes/chatRoutes';
 import authRoutes from './routes/authRoutes';
 import { authMiddleware, requireDolibarrLogin } from './middleware/authMiddleware';
 // Middleware that skips auth for webhook paths (incoming bank notifications must be public)
@@ -180,6 +181,10 @@ app.use('/api/ai', aiLimiter, aiRoutes);
 // #1011: heartbeat leve de jobs do assistente (GET /api/ai-jobs/:id/status). Os GETs
 // do aiLimiter são skipados (leves/frequentes), então só o limiter global os cobre.
 app.use('/api/ai-jobs', requireDolibarrLogin, aiJobsRoutes);
+// #1578: estado de UX por job do chat (visibilidade da aba) + opt-out de notificação.
+// Mesmo limiter global do ai; sem rate-limit dedicado (POST de visibility é leve e
+// raro — dispara só em visibilitychange, não a cada polling).
+app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', groupsRoutes); // grupos/direitos (sistemav2#820) — mesmo prefixo, paths distintos
 app.use('/api/auth', authLimiter, authRoutes);
@@ -333,6 +338,13 @@ if (!IS_PREVIEW) {
     // defesa-em-profundidão. Config via env: GC_SCHEDULE_ENABLED / GC_SCHEDULE_TIME (default "03:00").
     gcSchedulerService.start();
     log.info('GcSchedulerService started (issue #1112)');
+
+    // #1578: conecta o agentCompletionNotifier ao aiJobService para disparar
+    // notify_person quando um job do chat termina com a aba oculta. Preview-safe:
+    // preview não dispara notificações reais (jobIds de preview não têm usuário real).
+    import('./services/agentCompletionNotifier')
+        .then(({ agentCompletionNotifier }) => agentCompletionNotifier.start())
+        .catch((e) => log.error('Falha ao iniciar agentCompletionNotifier', e));
 }
 
 // Initialize Banking Services

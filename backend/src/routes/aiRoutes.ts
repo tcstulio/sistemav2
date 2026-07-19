@@ -10,6 +10,7 @@ import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMi
 import { agentActivityService } from '../services/agentActivityService';
 import { agentBootstrapConfigStore } from '../services/agentBootstrapConfigStore';
 import { aiJobService } from '../services/aiJobService';
+import { jobState } from '../agent/jobState';
 import { financialAnalysisStore } from '../services/financialAnalysisStore';
 import { voiceConfigStore } from '../services/voiceConfigStore';
 import { minimaxService } from '../services/minimaxService';
@@ -303,6 +304,16 @@ router.post('/generate-reply-async', asyncHandler(async (req, res) => {
     // heartbeat. O closure lê `jobId` no microtask (após o assign abaixo retornar).
     let jobId = '';
     jobId = aiJobService.enqueue(() => runChatReply(body, user, jobId), body.module);
+    // #1578: inicializa o jobState com o contexto do usuário, para que o
+    // agentCompletionNotifier saiba para quem enviar o notify_person no fim
+    // do job (quando a aba estiver oculta). tabHidden começa false — o cliente
+    // reporta o estado real via POST /api/chat/jobs/:id/visibility.
+    jobState.init(jobId, {
+        userId: String(user?.id || ''),
+        userLogin: user?.login,
+        userName: [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login,
+        label: body.module,
+    });
     // 202 Accepted: job enfileirado (não há helper p/ 202 em apiResponse; envelope manual).
     return res.status(202).json({ success: true, data: { jobId, status: 'queued' } });
 }));
