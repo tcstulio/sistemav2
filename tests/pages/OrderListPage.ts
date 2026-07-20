@@ -194,10 +194,15 @@ export class OrderListPage extends CommercialBasePage {
      * ever nests deeper or the MasterDetailLayout classes change.
      */
     protected detailPanel(ref: string): Locator {
+        // #render-fix (red-team): `.last()` pegava a div MAIS INTERNA que contém o <h1> do ref — a que
+        // envolve só o título, SEM a barra de abas (as Tabs são IRMÃS do header). Resultado: a aba
+        // "Faturas (N)" resolvia a 0 → click em timeout. `.first()` pega a div MAIS EXTERNA que contém
+        // o <h1> = o painel inteiro (header + abas + corpo). A isolação por-pedido segue ancorada no
+        // detailHeader(ref) do filtro.
         return this.page
             .locator('div')
             .filter({ has: this.detailHeader(ref) })
-            .last();
+            .first();
     }
 
     /**

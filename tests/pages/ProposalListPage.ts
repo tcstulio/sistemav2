@@ -41,18 +41,16 @@ export class ProposalListPage extends CommercialBasePage {
      * `ref`. Matches the row in either the list or kanban view.
      */
     proposalRow(ref: string): Locator {
-        const byTestId = this.page.locator(
+        // #render-fix (red-team): o `.or(byRole)` antigo casava DOIS elementos aninhados (o
+        // div[data-testid="proposal-row"] E o Card role="button" DENTRO dele) → strict-mode
+        // violation ("resolved to 2 elements"). O DOM real sempre emite data-testid="proposal-row"
+        // com data-ref, então o byTestId sozinho já identifica a linha (1 elemento). O 3º seletor
+        // cobre a variante em tabela. `.first()` mantém a robustez.
+        return this.page.locator(
             `[data-testid="proposal-row"][data-ref="${ref}"], ` +
             `[data-testid="proposal-row"]:has(span:text-is("${ref}")), ` +
             `[data-testid="table-row"]:has-text("${ref}")`
         ).first();
-        // Fallback for the current Card-based UI: the bold ref span inside the
-        // nearest clickable Card (Card renders as role="button" when onClick set).
-        const byRole = this.page
-            .locator(`span:text-is("${ref}")`)
-            .locator('xpath=ancestor::*[@role="button"][1]')
-            .first();
-        return byTestId.or(byRole);
     }
 
     /**
