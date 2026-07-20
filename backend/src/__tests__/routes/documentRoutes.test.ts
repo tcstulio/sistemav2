@@ -2,7 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
-const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
+// Usuário autenticado mockado. Mutável por teste para alternar admin/não-admin.
+const mockUser = vi.hoisted(() => ({ current: { login: 'tester', admin: '0' } as any }));
+
+const mockRequireDolibarrLogin = vi.hoisted(() =>
+    vi.fn((req: any, _res: any, next: any) => {
+        req.user = { ...mockUser.current };
+        next();
+    })
+);
+
+const mockAudit = vi.hoisted(() => ({
+    documentSkipApproval: vi.fn(),
+}));
 
 const mockDocumentService = vi.hoisted(() => ({
     sendDocument: vi.fn(() => ({ success: true, messageId: 'msg-1' })),
@@ -13,6 +25,11 @@ const mockDocumentService = vi.hoisted(() => ({
 
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
+}));
+
+vi.mock('../../middleware/auditMiddleware', () => ({
+    audit: mockAudit,
+    auditMiddleware: vi.fn((_req: any, _res: any, next: any) => next()),
 }));
 
 vi.mock('../../services/documentService', () => ({
@@ -68,6 +85,7 @@ describe('documentRoutes', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockUser.current = { login: 'tester', admin: '0' };
         app = createApp();
     });
 
@@ -132,6 +150,228 @@ describe('documentRoutes', () => {
                 });
 
             expect(res.status).toBe(202);
+        });
+    });
+
+    describe('POST /api/documents (issue #1570)', () => {
+        const validBase = {
+            documentType: 'invoice',
+            entityType: 'invoice',
+            entityId: 10,
+        };
+
+        it('returns 201 when admin sends skipApproval:true and logs audit', async () => {
+            mockUser.current = { login: 'boss', admin: '1' };
+
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, skipApproval: true });
+
+            expect(res.status).toBe(201);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.skipApproval).toBe(true);
+            expect(mockAudit.documentSkipApproval).toHaveBeenCalledTimes(1);
+            const entry = mockAudit.documentSkipApproval.mock.calls[0][0];
+            expect(entry).toMatchObject({
+                userId: 'boss',
+                userRole: 'admin',
+                documentType: 'invoice',
+                entityType: 'invoice',
+                entityId: 10,
+            });
+            expect(entry.timestamp).toBeTruthy();
+            expect(entry.ip).toBeTruthy();
+        });
+
+        it('returns 403 when non-admin sends skipApproval:true', async () => {
+            mockUser.current = { login: 'regular', admin: '0' };
+
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, skipApproval: true });
+
+            expect(res.status).toBe(403);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.message).toBe('Apenas administradores podem pular aprovação');
+            expect(mockAudit.documentSkipApproval).not.toHaveBeenCalled();
+        });
+
+        it('returns 403 when user is missing (unauthenticated edge)', async () => {
+            mockUser.current = undefined as any;
+
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, skipApproval: true });
+
+            expect(res.status).toBe(403);
+        });
+
+        it('returns 201 for non-admin without skipApproval and does NOT audit', async () => {
+            mockUser.current = { login: 'regular', admin: '0' };
+
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.skipApproval).toBe(false);
+            expect(mockAudit.documentSkipApproval).not.toHaveBeenCalled();
+        });
+
+        it('honors req.user.role === "admin" convention', async () => {
+            mockUser.current = { login: 'alice', role: 'admin' };
+
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, skipApproval: true });
+
+            expect(res.status).toBe(201);
+            expect(mockAudit.documentSkipApproval).toHaveBeenCalledTimes(1);
+            expect(mockAudit.documentSkipApproval.mock.calls[0][0].userRole).toBe('admin');
+        });
+
+        it('returns 400 when documentType is outside enum', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, documentType: 'unknown' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when entityType is outside enum', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, entityType: 'unknown' });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when entityId is zero', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, entityId: 0 });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when entityId is negative', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, entityId: -5 });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when entityId is a non-integer', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase, entityId: 1.5 });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when required fields are missing', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ template: 'tmpl' });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('accepts optional template and data fields', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({
+                    ...validBase,
+                    template: 'custom-tmpl',
+                    data: { foo: 'bar', n: 42 },
+                });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.template).toBe('custom-tmpl');
+        });
+
+        it('defaults skipApproval to false when omitted', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBase });
+
+            expect(res.body.data.skipApproval).toBe(false);
+        });
+    });
+
+    describe('PUT /api/documents/:id (issue #1570)', () => {
+        const validBase = {
+            documentType: 'proposal',
+            entityType: 'project',
+            entityId: 7,
+        };
+
+        it('returns 403 when non-admin sends skipApproval:true', async () => {
+            mockUser.current = { login: 'regular', admin: '0' };
+
+            const res = await request(app)
+                .put('/api/documents/42')
+                .send({ ...validBase, skipApproval: true });
+
+            expect(res.status).toBe(403);
+            expect(mockAudit.documentSkipApproval).not.toHaveBeenCalled();
+        });
+
+        it('returns 200 and audits when admin sends skipApproval:true', async () => {
+            mockUser.current = { id: 'u9', login: 'boss', admin: '1' };
+
+            const res = await request(app)
+                .put('/api/documents/42')
+                .send({ ...validBase, skipApproval: true });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.id).toBe('42');
+            expect(mockAudit.documentSkipApproval).toHaveBeenCalledTimes(1);
+        });
+
+        it('returns 400 when documentType is invalid', async () => {
+            const res = await request(app)
+                .put('/api/documents/42')
+                .send({ ...validBase, documentType: 'nope' });
+
+            expect(res.status).toBe(400);
+        });
+    });
+
+    describe('POST /api/documents/send (skipApproval policy, issue #1570)', () => {
+        const sendBase = {
+            documentType: 'boleto',
+            documentId: '1',
+            phone: '5511999999999',
+            sessionId: 'default',
+        };
+
+        it('returns 403 when non-admin sends skipApproval:true', async () => {
+            mockUser.current = { login: 'regular', admin: '0' };
+
+            const res = await request(app)
+                .post('/api/documents/send')
+                .send({ ...sendBase, skipApproval: true });
+
+            expect(res.status).toBe(403);
+            expect(res.body.error.message).toBe('Apenas administradores podem pular aprovação');
+            expect(mockDocumentService.sendDocument).not.toHaveBeenCalled();
+        });
+
+        it('allows admin to send with skipApproval:true and audits', async () => {
+            mockUser.current = { login: 'boss', admin: '1' };
+            mockDocumentService.sendDocument.mockResolvedValue({ success: true, messageId: 'msg-1' });
+
+            const res = await request(app)
+                .post('/api/documents/send')
+                .send({ ...sendBase, skipApproval: true });
+
+            expect(res.status).toBe(200);
+            expect(mockAudit.documentSkipApproval).toHaveBeenCalledTimes(1);
         });
     });
 

@@ -43,6 +43,20 @@ interface AuditEntry {
 }
 
 /**
+ * Entrada de auditoria para pulo de aprovação na geração/envio de
+ * documentos (issue #1570). Registrada sempre que skipApproval=true.
+ */
+export interface DocumentSkipApprovalEntry {
+    userId: string;
+    userRole: string;
+    documentType: string;
+    entityType: string;
+    entityId: number;
+    timestamp: string;
+    ip: string;
+}
+
+/**
  * Recursively redact sensitive fields from an object
  */
 function redactSensitive(obj: unknown, depth = 0): unknown {
@@ -173,6 +187,17 @@ export const audit = {
 
     suspiciousActivity: (ip: string, reason: string) => {
         auditLog.warn(`SUSPICIOUS_ACTIVITY ip=${ip} reason=${reason}`);
+    },
+
+    /**
+     * Registra toda requisição de documento que pula a aprovação.
+     * Nível warn pois é uma ação sensível (issue #1570).
+     */
+    documentSkipApproval: (entry: DocumentSkipApprovalEntry) => {
+        auditLog.warn(
+            `DOCUMENT_SKIP_APPROVAL user=${entry.userId} role=${entry.userRole} docType=${entry.documentType} entity=${entry.entityType}/${entry.entityId} ip=${entry.ip} ts=${entry.timestamp}`,
+            entry
+        );
     }
 };
 
