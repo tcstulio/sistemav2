@@ -16,7 +16,7 @@
  * Estes testes NÃO tocam em rede, DB ou no agentLoop real — operam apenas no
  * `ProgressStream` (infraestrutura de streaming). O agentLoop tem teste separado.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import {
     ProgressStream,
@@ -30,7 +30,13 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
 
     beforeEach(() => {
         // Cada teste usa uma instância nova (evita interferência entre suites).
-        stream = new ProgressStream({ ttlMs: 60_000, maxBufferSize: 100 });
+        // autoCleanupIntervalMs: 0 desliga o timer interno — a purga de TTL é exercida
+        // deterministicamente via cleanup(now) manual nos testes de TTL abaixo.
+        stream = new ProgressStream({ ttlMs: 60_000, maxBufferSize: 100, autoCleanupIntervalMs: 0 });
+    });
+
+    afterEach(() => {
+        stream.stopAutoCleanup();
     });
 
     describe('emit + getBuffer', () => {
@@ -351,6 +357,47 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
         });
     });
 
+    describe('auto-cleanup timer (setInterval interno)', () => {
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('varre jobs expirados automaticamente (sem cleanup() manual)', () => {
+            vi.useFakeTimers();
+            const s = new ProgressStream({ ttlMs: 10, autoCleanupIntervalMs: 50 });
+            s.emit('job', 'thinking', { phase: 'start' });
+            expect(s.size()).toBe(1);
+
+            // Avança além do TTL E além do intervalo de varredura — o timer purga sozinho,
+            // sem nenhuma chamada manual a cleanup().
+            vi.advanceTimersByTime(120);
+            expect(s.size()).toBe(0);
+            s.stopAutoCleanup();
+        });
+
+        it('autoCleanupIntervalMs: 0 desliga o timer (nada é purgado sozinho)', () => {
+            vi.useFakeTimers();
+            const s = new ProgressStream({ ttlMs: 10, autoCleanupIntervalMs: 0 });
+            s.emit('job', 'thinking', { phase: 'start' });
+            vi.advanceTimersByTime(1000);
+            // Sem timer, o job expirado permanece até um cleanup() manual.
+            expect(s.size()).toBe(1);
+            expect(s.cleanup(Date.now() + 100)).toBe(1);
+            s.stopAutoCleanup();
+        });
+
+        it('stopAutoCleanup() interrompe a varredura e é idempotente', () => {
+            vi.useFakeTimers();
+            const s = new ProgressStream({ ttlMs: 10, autoCleanupIntervalMs: 50 });
+            s.emit('job', 'thinking', { phase: 'start' });
+            s.stopAutoCleanup();
+            vi.advanceTimersByTime(200);
+            // Timer parado → job expirado NÃO foi purgado automaticamente.
+            expect(s.size()).toBe(1);
+            expect(() => s.stopAutoCleanup()).not.toThrow();
+        });
+    });
+
     describe('dispose', () => {
         it('dispose() remove o job do Map (sem fechar via close)', () => {
             stream.emit('job', 'thinking', { phase: 'start' });
@@ -374,6 +421,17 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
         it('rejeita maxBufferSize <= 0', () => {
             expect(() => new ProgressStream({ maxBufferSize: 0 })).toThrow(/maxBufferSize/);
             expect(() => new ProgressStream({ maxBufferSize: -10 })).toThrow(/maxBufferSize/);
+        });
+        it('rejeita maxListeners <= 0', () => {
+            expect(() => new ProgressStream({ maxListeners: 0 })).toThrow(/maxListeners/);
+            expect(() => new ProgressStream({ maxListeners: -1 })).toThrow(/maxListeners/);
+        });
+        it('rejeita autoCleanupIntervalMs negativo (0 é permitido = desligado)', () => {
+            expect(() => new ProgressStream({ autoCleanupIntervalMs: -1 })).toThrow(/autoCleanupIntervalMs/);
+            // 0 é válido (desliga o timer) — não deve jogar.
+            const s = new ProgressStream({ autoCleanupIntervalMs: 0 });
+            expect(s.size()).toBe(0);
+            s.stopAutoCleanup();
         });
     });
 
