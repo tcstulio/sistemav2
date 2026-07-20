@@ -66,6 +66,13 @@ export function runOpencode(
     task: RunOpencodeTask,
     timeoutMs: number,
     onSample?: (sample: CpuMemSample) => void,
+    // #parallel (red-team Fable P0): getter dos needles das OUTRAS runs VIVAS. Os backstops deste util
+    // (kill/timeout) chamam killOpencodeOrphans SEM discriminar slot — com 2 coders, matariam o vizinho
+    // (o coder do outro slot casa RUN_MARKER_PREFIX). Passando os protectNeedles, o backstop poupa os
+    // vizinhos vivos e mata só o órfão DESTE run. É um GETTER (não valor): resolvido no instante do
+    // backstop (cancel/timeout pode disparar muito depois do dispatch, com o conjunto de runs mudado).
+    // Em serial não é passado → protect vazio → comportamento byte-idêntico ao de hoje.
+    opts?: { protectNeedles?: () => string[] },
 ): Promise<string> {
     return new Promise((resolve, reject) => {
         const child: ChildProcess = spawn(GIT_BASH, ['-lc', command], {
@@ -106,9 +113,10 @@ export function runOpencode(
                 }
                 // Backstop de órfão (árvore do bash quebrada): mata o opencode DESTA run por needle,
                 // sem atingir um opencode manual/vizinho. killTree(child.pid) já cobre o caminho normal
-                // (taskkill /T é recursivo); aqui pegamos o órfão. Enum-fail sem proteção ativa cai no
-                // /IM via fallback do killOpencodeOrphans (excludePids/protect vazios) — cobertura #335 mantida.
-                killOpencodeOrphans('opencode', OPENCODE_ORPHAN_NEEDLES).catch(() => { /* ignore */ });
+                // (taskkill /T é recursivo); aqui pegamos o órfão. #parallel: protectNeedles poupa os
+                // coders VIZINHOS vivos (Fase 2). Enum-fail SEM proteção ativa cai no /IM via fallback
+                // (cobertura #335 mantida); COM proteção ativa, o killOpencodeOrphans aborta estrito.
+                killOpencodeOrphans('opencode', OPENCODE_ORPHAN_NEEDLES, [], opts?.protectNeedles?.() ?? []).catch(() => { /* ignore */ });
                 // ⚠️ SETTLE FORÇADO (#644): se o kill falhar e o filho NUNCA emitir 'exit', a
                 // promise ficaria pendurada para sempre → execChain congela → pendingExecs preso.
                 // Após a grace, força o settle para a cadeia avançar (pendingExecs-- e autoPlayNext).
@@ -167,8 +175,9 @@ export function runOpencode(
             if (child.pid) killTree(child.pid).catch(() => { /* ignore */ });
             // Backstop: mata o opencode na FONTE do timeout p/ não virar órfão (causa do ciclo
             // vicioso no #335) — por needle, poupando opencode manual/vizinho. Enum-fail sem proteção
-            // ativa cai no /IM via fallback do killOpencodeOrphans (cobertura #335 mantida).
-            killOpencodeOrphans('opencode', OPENCODE_ORPHAN_NEEDLES).catch(() => { /* ignore */ });
+            // ativa cai no /IM via fallback do killOpencodeOrphans (cobertura #335 mantida). #parallel:
+            // protectNeedles poupa os coders vizinhos vivos.
+            killOpencodeOrphans('opencode', OPENCODE_ORPHAN_NEEDLES, [], opts?.protectNeedles?.() ?? []).catch(() => { /* ignore */ });
         }, timeoutMs);
 
         child.on('exit', (code, signal) => {
