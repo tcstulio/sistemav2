@@ -225,6 +225,17 @@ export function toolCallSignature(tool: string, args: any): string {
     return `${tool}:${stableStringify(args ?? {})}`;
 }
 
+function recordChainToolExchange(state: ChainState | undefined, assistantContent: string, tool: string, args: any, result: unknown): void {
+    if (!state) return;
+    const toolCallId = `chain-tool-${state.messages.length}`;
+    state.messages.push({
+        role: 'assistant',
+        content: assistantContent,
+        tool_calls: [{ id: toolCallId, type: 'function', function: { name: tool, arguments: stableStringify(args ?? {}) } }],
+    });
+    state.messages.push({ role: 'tool', tool_call_id: toolCallId, name: tool, content: String(result) });
+}
+
 // #957/#955: teto de quantas vezes o gate de conclusão cutuca um "anuncia e para" antes de
 // desistir e forçar síntese. Substitui o "dispara no máximo 1x" do nudge lexical #954.
 export const MAX_CONCLUSION_NUDGES = 2;
@@ -295,6 +306,7 @@ export interface GenerateReplyOptions {
     origin?: string;
     approvedTools?: string[];
     isAdmin?: boolean;
+    chainState?: ChainState;
 }
 
 // #1408: mensagem EXPLÍCITA de teto de tool-calls atingido. Antes o loop caía em síntese
@@ -401,18 +413,25 @@ class GoogleProvider implements AIProvider {
         const toolsPrompt = getToolsPrompt({ isAdmin: isAdminExplicit });
 
         let currentHistory = [...conversationHistory];
-        let currentContext = context;
+        const chainState = options?.chainState;
+        let currentContext = chainState?.context || context;
+        const updateContext = (next: string) => {
+            currentContext = next;
+            if (chainState) chainState.context = next;
+        };
+        if (chainState && !chainState.context) chainState.context = context;
         let iterations = 0;
         const MAX_ITERATIONS = 5;
-        const seenToolCalls = new Set<string>();
+        const seenToolCalls = chainState?.seenToolCalls ?? new Set<string>();
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
         while (iterations < MAX_ITERATIONS) {
 
             // Format history
-            const historyText = currentHistory.map(msg =>
-                `${msg.role.toUpperCase()}: ${msg.parts}`
-            ).join('\n');
+            const historyText = [
+                ...currentHistory.map(msg => `${msg.role.toUpperCase()}: ${msg.parts}`),
+                ...(chainState?.messages ?? []).map(msg => `${String(msg.role || 'assistant').toUpperCase()}: ${msg.content || stableStringify(msg.tool_calls || '')}`),
+            ].join('\n');
 
             const agentPrompt = agentConfigService.getSystemPrompt();
             const prompt = `
@@ -471,7 +490,7 @@ class GoogleProvider implements AIProvider {
                         // #957: duplicata não aborta o turno — avisa o modelo e segue (deixa
                         // variar os parâmetros ou concluir). O teto MAX_ITERATIONS garante término.
                         log.warn(`GoogleProvider: tool call duplicada ignorada (turno continua): ${callSig}`);
-                        currentContext += `\n\n[SISTEMA] Você já chamou ${toolCall.tool} com esses mesmos argumentos. Varie os parâmetros ou responda ao usuário com o que já tem.`;
+                        updateContext(`${currentContext}\n\n[SISTEMA] Você já chamou ${toolCall.tool} com esses mesmos argumentos. Varie os parâmetros ou responda ao usuário com o que já tem.`);
                         iterations++;
                         continue;
                     }
@@ -482,7 +501,7 @@ class GoogleProvider implements AIProvider {
                     const confirmBlock = confirmationBlock(toolCall.tool, options?.approvedTools);
                     if (confirmBlock) {
                         log.warn(`GoogleProvider #1408: tool "${toolCall.tool}" exige confirmação e não foi aprovada — execução barrada.`);
-                        currentContext += `\n\n[CONFIRMAÇÃO NECESSÁRIA ${toolCall.tool}]: ${confirmBlock}`;
+                        updateContext(`${currentContext}\n\n[CONFIRMAÇÃO NECESSÁRIA ${toolCall.tool}]: ${confirmBlock}`);
                         iterations++;
                         continue;
                     }
@@ -494,7 +513,8 @@ class GoogleProvider implements AIProvider {
                         return { text: toolResult, usage: accUsage, contextWindow: ctxWindow };
                     }
 
-                    currentContext += `\n\n[DADOS OBTIDOS VIA ${toolCall.tool}]:\n${toolResult}\n`;
+                    recordChainToolExchange(chainState, textResponse, toolCall.tool, toolCall.args || {}, toolResult);
+                    updateContext(`${currentContext}\n\n[DADOS OBTIDOS VIA ${toolCall.tool}]:\n${toolResult}\n`);
 
                     iterations++;
                     continue;
@@ -504,7 +524,8 @@ class GoogleProvider implements AIProvider {
                         return { text: e.question, usage: accUsage, contextWindow: ctxWindow };
                     }
                     log.error("Tool execution failed", e);
-                    currentContext += `\n\n[ERRO NA EXECUÇÃO]: ${e.message}\n`;
+                    recordChainToolExchange(chainState, textResponse, toolCall.tool, toolCall.args || {}, `[ERRO]: ${e.message}`);
+                    updateContext(`${currentContext}\n\n[ERRO NA EXECUÇÃO]: ${e.message}\n`);
                     iterations++;
                     continue;
                 }
@@ -1222,7 +1243,13 @@ export class LocalProvider implements AIProvider {
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         let currentHistory = [...conversationHistory];
-        let currentContext = context;
+        const chainState = options?.chainState;
+        let currentContext = chainState?.context || context;
+        const updateContext = (next: string) => {
+            currentContext = next;
+            if (chainState) chainState.context = next;
+        };
+        if (chainState && !chainState.context) chainState.context = context;
         let iterations = 0;
         // #1408: teto de TOOL CALLS por conversa — agora vindo do CONFIG SERVICE
         // (`maxToolCallsPerConversation`, editável pelo admin em runtime), NÃO mais de
@@ -1243,7 +1270,7 @@ export class LocalProvider implements AIProvider {
         // currentContext (a parte que mais cresce — TOOL RESULTs) fica limitada a ~metade do
         // orçamento em caracteres; system prompt (tools) + histórico usam o resto.
         const contextCharBudget = Math.floor(contextBudgetTokens * 0.5 * 4);
-        const seenToolCalls = new Set<string>();
+        const seenToolCalls = chainState?.seenToolCalls ?? new Set<string>();
         let nudgedCount = 0; // #957/#955: gate de conclusão conta quantos nudges já aplicou.
         // #1332: trava anti-alucinação de escrita — rastreia se ALGUMA tool MUTANTE (classifyTool
         // ≠ read) executou COM SUCESSO neste turno, e quantos retries a trava já usou.
@@ -1312,9 +1339,9 @@ export class LocalProvider implements AIProvider {
                 return d ? `${tag}${d}` : `${tag}[não foi possível analisar esta imagem]`;
             }).join('\n\n');
             const anyOk = descriptions.some(Boolean);
-            currentContext += anyOk
+            updateContext(currentContext + (anyOk
                 ? `\n\n[${label} — conteúdo extraído pela visão (${this.visionConfig?.model}), trate como o que o usuário enviou]:\n${body}`
-                : `\n\n[${label}]: não foi possível analisá-la(s) (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`;
+                : `\n\n[${label}]: não foi possível analisá-la(s) (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`));
         }
 
         while (iterations < MAX_ITERATIONS) {
@@ -1332,7 +1359,8 @@ export class LocalProvider implements AIProvider {
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,
                     content: msg.parts
-                }))
+                })),
+                ...(chainState?.messages ?? []),
             ];
 
             while (messages.length > 1 && messages[1].role === 'assistant') {
@@ -1383,7 +1411,7 @@ export class LocalProvider implements AIProvider {
                         const confirmBlock = confirmationBlock(tc.tool, options?.approvedTools);
                         if (confirmBlock) {
                             log.warn(`#1408: tool "${tc.tool}" exige confirmação e não foi aprovada — execução barrada.`);
-                            currentContext += `\n\n[CONFIRMAÇÃO NECESSÁRIA ${tc.tool}]: ${confirmBlock}`;
+                            updateContext(`${currentContext}\n\n[CONFIRMAÇÃO NECESSÁRIA ${tc.tool}]: ${confirmBlock}`);
                             confirmationBlocked = true;
                             continue;
                         }
@@ -1404,10 +1432,8 @@ export class LocalProvider implements AIProvider {
                             if (classifyTool(tc.tool).reversibility !== 'read' && !/confirm-action\?token=/.test(String(toolResult))) {
                                 mutantToolRan = true;
                             }
-                            currentContext += `\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`;
-                            // #956: poda de contexto — mantém o currentContext dentro do orçamento
-                            // (TOOL RESULTs antigos viram sumário; os recentes ficam inteiros).
-                            currentContext = pruneContext(currentContext, contextCharBudget, 2);
+                            recordChainToolExchange(chainState, rawContent, tc.tool, tc.args || {}, toolResult);
+                            updateContext(pruneContext(`${currentContext}\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`, contextCharBudget, 2));
                             ranAny = true;
                         } catch (e: any) {
                             if (e.name === 'AskUserInterrupt') {
@@ -1416,8 +1442,8 @@ export class LocalProvider implements AIProvider {
                             // erro de tool não aborta o turno — injeta e segue.
                             const detail = e?.message || String(e);
                             log.warn(`Local LLM Tool Error (injeta e continua): ${detail}`);
-                            currentContext += `\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`;
-                            currentContext = pruneContext(currentContext, contextCharBudget, 2);
+                            recordChainToolExchange(chainState, rawContent, tc.tool, tc.args || {}, `[ERRO]: ${detail}`);
+                            updateContext(pruneContext(`${currentContext}\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`, contextCharBudget, 2));
                             ranAny = true;
                         }
                     }
@@ -1437,7 +1463,7 @@ export class LocalProvider implements AIProvider {
                     // ferramenta repetida e dá ao modelo outra chance de variar os parâmetros ou
                     // concluir. O teto MAX_ITERATIONS (#956) garante a terminação do loop.
                     const dupList = Array.from(new Set(duplicates)).join(', ') || 'a ferramenta';
-                    currentContext += `\n\n[SISTEMA] Você já chamou ${dupList} com esses mesmos argumentos. Varie os parâmetros (ex.: outro termo de busca, outro filtro) ou, se já tem dados suficientes, responda ao usuário com o que já coletou.`;
+                    updateContext(`${currentContext}\n\n[SISTEMA] Você já chamou ${dupList} com esses mesmos argumentos. Varie os parâmetros (ex.: outro termo de busca, outro filtro) ou, se já tem dados suficientes, responda ao usuário com o que já coletou.`);
                     iterations++;
                     continue;
                 }
@@ -1454,7 +1480,7 @@ export class LocalProvider implements AIProvider {
                 });
                 if (gate.action === 'nudge') {
                     nudgedCount++;
-                    currentContext += `\n\n[SISTEMA] Sua resposta anterior apenas ANUNCIOU uma ação ("${reply.slice(0, 160).replace(/\s+/g, ' ')}") mas NÃO executou ferramenta nem entregou uma resposta final. Decida AGORA: (a) se precisa de dados, emita o JSON {"tool":"nome","args":{...}} — nada de texto antes; (b) se já tem o suficiente, responda DIRETAMENTE ao usuário, sem apenas anunciar.`;
+                    updateContext(`${currentContext}\n\n[SISTEMA] Sua resposta anterior apenas ANUNCIOU uma ação ("${reply.slice(0, 160).replace(/\s+/g, ' ')}") mas NÃO executou ferramenta nem entregou uma resposta final. Decida AGORA: (a) se precisa de dados, emita o JSON {"tool":"nome","args":{...}} — nada de texto antes; (b) se já tem o suficiente, responda DIRETAMENTE ao usuário, sem apenas anunciar.`);
                     iterations++;
                     continue;
                 }
@@ -1468,7 +1494,7 @@ export class LocalProvider implements AIProvider {
                 // não é entregue: 1 retry com instrução dura; persistindo, disclaimer prefixado.
                 const guarded = guardWriteClaim(reply);
                 if (guarded.retry) {
-                    currentContext += `\n\n${WRITE_CLAIM_RETRY_INSTRUCTION}`;
+                    updateContext(`${currentContext}\n\n${WRITE_CLAIM_RETRY_INSTRUCTION}`);
                     iterations++;
                     continue;
                 }
@@ -1992,6 +2018,37 @@ export interface RunWithChainOptions {
     initialState?: Partial<ChainState>;
 }
 
+export class UnrecoverableChainError extends Error {
+    public readonly reason: string;
+
+    constructor(reason: string, message?: string) {
+        super(message || reason);
+        this.name = 'UnrecoverableChainError';
+        this.reason = reason;
+    }
+}
+
+const UNRECOVERABLE_CHAIN_ERROR_PATTERN = /(?:schema|malformed|corrupt(?:ed|ion)?|corrompid[ao]|invalid[_\s-](?:message|payload|format|schema|request)|mensagem\s+inv[aá]lid[ao]|unexpected token|unprocessable)/i;
+const TRANSIENT_CHAIN_ERROR_CODES = new Set(['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED']);
+
+function getChainResetReason(err: any, detail: string): string | null {
+    if (err instanceof UnrecoverableChainError) return err.reason || err.message || detail;
+    if (err?.unrecoverable === true) return err?.reason || err?.message || detail;
+
+    const status = Number(err?.response?.status);
+    const code = String(err?.code || '').toUpperCase();
+    const isTransient = status === 429
+        || (status >= 500 && status < 600)
+        || TRANSIENT_CHAIN_ERROR_CODES.has(code)
+        || /(?:timeout|timed out)/i.test(detail);
+    if (isTransient) return null;
+
+    if (status === 400 || status === 422 || UNRECOVERABLE_CHAIN_ERROR_PATTERN.test(detail)) {
+        return err?.reason || err?.message || detail;
+    }
+    return null;
+}
+
 /**
  * Executa `exec(provider, state)` percorrendo a cadeia de fallback do módulo.
  * Pula providers indisponíveis (em cooldown no LlmHealthService).
@@ -2024,12 +2081,17 @@ async function runWithChain<T>(
     };
     let lastErr: any;
     let activeIndex = -1;
+    let resumePending = false;
 
     for (let i = 0; i < chain.length; i++) {
         const provider = chain[i];
         if (!llmHealthService.isAvailable(provider)) {
             log.warn(`runWithChain[${moduleName}]: provider '${provider}' em cooldown — pulando.`);
             continue;
+        }
+        if (resumePending) {
+            log.info(`runWithChain[${moduleName}]: chain resumed with ${state.messages.length} messages, ${state.seenToolCalls.size} tool calls seen`);
+            resumePending = false;
         }
         log.debug(`runWithChain[${moduleName}]: tentando provider '${provider}' (messages.length=${state.messages.length}, seenToolCalls=${state.seenToolCalls.size}).`);
         try {
@@ -2061,9 +2123,17 @@ async function runWithChain<T>(
                 llmHealthService.recordTransientError(provider, err);
             }
             lastErr = err;
-            // #1010: preserva o estado acumulado (messages/seenToolCalls/contexto)
-            // para o próximo provider — NÃO reinicia a cadeia do zero.
-            log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo (preservando ${state.messages.length} mensagens, ${state.seenToolCalls.size} tool_call(s) já vista(s)).`);
+
+            const resetReason = getChainResetReason(err, detail);
+            if (resetReason) {
+                state.messages.length = 0;
+                state.seenToolCalls.clear();
+                state.context = '';
+                log.warn(`runWithChain[${moduleName}]: chain reset: ${String(resetReason).slice(0, 200)}`);
+            } else {
+                log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — estado preservado para fallback.`);
+            }
+            resumePending = true;
         }
     }
 
@@ -2160,15 +2230,15 @@ export const aiService = {
         const configService = _configService;
 
         if (configService.isRunWithChainEnabled()) {
-            return runWithChain(moduleName, (providerName) => {
+            return runWithChain(moduleName, (providerName, state) => {
                 const moduleConfig = configService.getModuleConfig(moduleName);
                 const modelName = moduleConfig.model;
                 let specificProvider = getProvider(providerName);
                 if (imageBase64 && !providerSupportsVision(specificProvider)) {
                     const mm = getMultimodalProvider();
-                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin }).then(sanitizeResult);
+                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, chainState: state }).then(sanitizeResult);
                 }
-                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin }).then(sanitizeResult);
+                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, chainState: state }).then(sanitizeResult);
             });
         }
 
