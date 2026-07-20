@@ -69,7 +69,7 @@ describe('runOpencode — robustez do kill (#644)', () => {
         await vi.advanceTimersByTimeAsync(600);
         expect(killTree).toHaveBeenCalledWith(12345);
         // #kill-per-slot: backstop agora é por-needle (killOpencodeOrphans), NÃO o /IM cego (killByImageName).
-        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES);
+        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES, [], []);
         expect(killByImageName).not.toHaveBeenCalled();
 
         // kill falhou (mock) e NUNCA emitimos 'exit' (órfão vivo). A promise ainda NÃO settlou.
@@ -84,6 +84,25 @@ describe('runOpencode — robustez do kill (#644)', () => {
         await expect(p).rejects.toThrow(/liberando a cadeia|kill/i);
         // childPid limpo (não deixa rastro p/ um próximo kill mirar em PID reciclado).
         expect(task.childPid).toBeUndefined();
+    });
+
+    it('#parallel: backstop de kill passa os protectNeedles (poupa coders vizinhos)', async () => {
+        const child = new FakeChild();
+        vi.mocked(spawn).mockReturnValue(child as any);
+        const task = makeTask();
+
+        // getter das runs vizinhas vivas (resolvido no instante do backstop).
+        const p = runOpencode('opencode run "..."', '/cwd', task, 60_000, undefined, {
+            protectNeedles: () => ['[tr-run:7-222]', '[tr-run:9-333]'],
+        });
+        p.catch(() => { /* handler antecipado */ });
+        await vi.advanceTimersByTimeAsync(0);
+        task.killRequested = true;
+        await vi.advanceTimersByTimeAsync(600);
+        // o backstop poupa os vizinhos vivos (4º arg = protectNeedles resolvidos).
+        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES, [], ['[tr-run:7-222]', '[tr-run:9-333]']);
+        await vi.advanceTimersByTimeAsync(KILL_GRACE_MS + 100);
+        await expect(p).rejects.toThrow(/liberando a cadeia|kill/i);
     });
 
     it('settla normalmente quando o kill bem-sucedido faz o filho emitir exit', async () => {
@@ -131,7 +150,7 @@ describe('runOpencode — robustez do kill (#644)', () => {
         await expect(p).rejects.toThrow(/timeout/i);
         // #kill-per-slot: o backstop do timeout também é por-needle, não o /IM cego.
         expect(killTree).toHaveBeenCalledWith(12345);
-        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES);
+        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES, [], []);
         expect(killByImageName).not.toHaveBeenCalled();
     });
 

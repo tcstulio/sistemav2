@@ -1582,6 +1582,15 @@ class TaskRunnerService {
         };
     }
 
+    /**
+     * #parallel (red-team Fable P0): needles das runs VIVAS EXCETO `exceptIssue`. Passado como GETTER
+     * aos backstops do runOpencode (kill/timeout) p/ POUPAR os coders vizinhos (Fase 2) e matar só o
+     * órfão da própria run. Em serial o registry tem ≤1 entrada (a própria, excluída) → [] → idêntico a hoje.
+     */
+    private protectNeedlesExcept(exceptIssue: number): string[] {
+        return [...this.liveRunNeedles.entries()].filter(([iss]) => iss !== exceptIssue).map(([, n]) => n);
+    }
+
     /** Estado de cota de LLM (esgotada? desde quando? motivo?) + hold de pico — p/ UI. */
     getQuotaStatus() {
         return { ...quotaStatus(), peakHold: this.isPeakHold() };
@@ -2005,6 +2014,7 @@ class TaskRunnerService {
                         primaryCmd,
                         WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                         (sample) => { task.cpuMemSamples?.push(sample); },
+                        { protectNeedles: () => this.protectNeedlesExcept(task.issueNumber) },
                     );
                 } catch (e: any) {
                     // Fallback GLM→MiniMax do CODER: para COTA/429 OU timeout/hang do opencode. Sob limite
@@ -2023,6 +2033,7 @@ class TaskRunnerService {
                         fallbackModel ? `opencode run --model ${fallbackModel} "${basePrompt}"` : `opencode run "${basePrompt}"`,
                         WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                         (sample) => { task.cpuMemSamples?.push(sample); },
+                        { protectNeedles: () => this.protectNeedlesExcept(task.issueNumber) },
                     );
                 }
             } finally {
@@ -3667,6 +3678,8 @@ Return ONLY a JSON:
                     return await runOpencode(
                         `opencode run "${prompt.replace(/"/g, '\\"')}"`,
                         REPO_ROOT, task, 120_000,
+                        undefined,
+                        { protectNeedles: () => this.protectNeedlesExcept(issueNumber) },
                     );
                 } finally {
                     this.liveRunNeedles.delete(issueNumber);
