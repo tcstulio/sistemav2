@@ -128,15 +128,6 @@ const bankingLimiter = rateLimit({
     legacyHeaders: false
 });
 
-// Scheduler limiter (message scheduling)
-const schedulerLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 30,
-    message: { error: 'Scheduler rate limit exceeded. Please wait.' },
-    standardHeaders: true,
-    legacyHeaders: false
-});
-
 // Strict limiter for auth (login attempts)
 const authLimiter = rateLimit({
     windowMs: 60 * 1000,
@@ -195,7 +186,7 @@ import { previewWriteGuard } from './middleware/previewWriteGuard';
 app.use('/api/dolibarr', previewWriteGuard);
 app.use('/api/dolibarr', dolibarrRoutes);
 
-app.use('/api/scheduler', schedulerLimiter, schedulerRoutes);
+app.use('/api/scheduler', schedulerRoutes);
 
 import webhookRoutes from './routes/webhookRoutes';
 app.use('/api/webhook', webhookRoutes);

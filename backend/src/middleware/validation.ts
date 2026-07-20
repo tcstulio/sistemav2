@@ -58,6 +58,10 @@ export function validateBody<T extends ZodSchema>(schema: T) {
     };
 }
 
+export function validate<T extends ZodSchema>(schema: T) {
+    return validateBody(schema);
+}
+
 /**
  * Creates a validation middleware for query parameters
  */
@@ -283,6 +287,7 @@ export const BoletoWebhookSchema = z.object({
 
 export default {
     validateBody,
+    validate,
     validateQuery,
     validateParams,
     PagamentoBoletoSchema,

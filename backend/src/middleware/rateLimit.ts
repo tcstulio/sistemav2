@@ -121,13 +121,24 @@ const banking: RequestHandler = rateLimit({
 // =============================================
 // 10/min evita disparo em massa de campanhas via scheduler (cada job
 // poderia virar várias mensagens; sem limite, um bug faz fan-out).
-const scheduler: RequestHandler = rateLimit({
+const schedulerMiddleware: RequestHandler = rateLimit({
     windowMs: ONE_MIN_MS,
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
     handler: rateLimitHandler(ONE_MIN_MS, 10, 'Scheduler rate limit exceeded. Please wait.'),
 });
+
+export const schedulerLimiter: RequestHandler = (req, res, next) => {
+    const request = req as Request & { schedulerLimiterApplied?: boolean };
+    if (request.schedulerLimiterApplied) {
+        return next();
+    }
+    request.schedulerLimiterApplied = true;
+    return schedulerMiddleware(req, res, next);
+};
+
+Object.assign(schedulerLimiter, schedulerMiddleware);
 
 // =============================================
 // 5. strict — enumeração de IDs/secrets
@@ -165,7 +176,7 @@ export const rateLimiters = {
     login,
     ai,
     banking,
-    scheduler,
+    scheduler: schedulerLimiter,
     strict,
     default: defaultLimiter,
 };
