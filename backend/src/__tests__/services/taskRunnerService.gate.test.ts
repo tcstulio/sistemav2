@@ -139,6 +139,22 @@ describe('taskRunnerService — gate determinístico + self-heal', () => {
         expect(svc.selfHealFromGate(t, 'testRegression', 'x')).toBe(false);
     });
 
+    it('#ci-log-feedback: com evidence → gateFixInstruction cerca o log como DADO NÃO-CONFIÁVEL', () => {
+        const t = makeTask(7, { gateFixAttempts: 0 });
+        const ok = svc.selfHealFromGate(t, 'ciFailure', 'test', '1) orders.render.spec.ts:56 › FALHA\nError: Timed out');
+        expect(ok).toBe(true);
+        expect(t.gateFixInstruction).toContain('DADOS NÃO-CONFIÁVEIS'); // cercado (anti-injeção)
+        expect(t.gateFixInstruction).toContain('orders.render.spec.ts:56'); // a evidência real chegou
+        expect(t.gateFixInstruction).toMatch(/CI da branch FALHOU/); // a instrução base segue
+    });
+
+    it('#ci-log-feedback: SEM evidence → gateFixInstruction = só a instrução (comportamento de hoje)', () => {
+        const t = makeTask(8, { gateFixAttempts: 0 });
+        svc.selfHealFromGate(t, 'ciFailure', 'test');
+        expect(t.gateFixInstruction).not.toContain('DADOS NÃO-CONFIÁVEIS');
+        expect(t.gateFixInstruction).toMatch(/CI da branch FALHOU/);
+    });
+
     // --- tryAutoMerge: regressão dispara self-heal; esgotado/infra estaciona ---
     it('tryAutoMerge: regressão real → self-heal (fixing), NÃO estaciona nem mergeia', async () => {
         const t = makeTask(7, { gateFixAttempts: 0 });
