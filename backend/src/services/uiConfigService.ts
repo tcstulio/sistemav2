@@ -553,10 +553,12 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
         // uso também revalida.
         judgeModel: sanitizeModel(a.judgeModel, d.judgeModel),
         // Escalada Opus (#escalada-opus): gasta $ real — defaults conservadores, NUNCA undefined (senão o
-        // teto $ ficaria ilimitado). Custo diário clampa 0..50, escaladas/dia 0..10.
+        // teto $ ficaria ilimitado). Clamp de SANIDADE (anti-typo), configurável na UI (Admin→Automações):
+        // custo/dia 0..500, escaladas/dia 0..100. Mantém um teto (não "ilimitado") como guarda-corpo
+        // contra um loop de Claude queimar $ irreversível — mesmo com o dono querendo afrouxar.
         opusEscalationEnabled: a.opusEscalationEnabled === true,
-        maxOpusEscalationsPerDay: typeof a.maxOpusEscalationsPerDay === 'number' ? Math.max(0, Math.min(10, Math.round(a.maxOpusEscalationsPerDay))) : (d.maxOpusEscalationsPerDay ?? 2),
-        maxOpusCostUsdPerDay: typeof a.maxOpusCostUsdPerDay === 'number' ? Math.max(0, Math.min(50, a.maxOpusCostUsdPerDay)) : (d.maxOpusCostUsdPerDay ?? 5),
+        maxOpusEscalationsPerDay: typeof a.maxOpusEscalationsPerDay === 'number' ? Math.max(0, Math.min(100, Math.round(a.maxOpusEscalationsPerDay))) : (d.maxOpusEscalationsPerDay ?? 2),
+        maxOpusCostUsdPerDay: typeof a.maxOpusCostUsdPerDay === 'number' ? Math.max(0, Math.min(500, a.maxOpusCostUsdPerDay)) : (d.maxOpusCostUsdPerDay ?? 5),
         coderEscalationModel: sanitizeModel(a.coderEscalationModel, d.coderEscalationModel ?? 'opus'),
         coderModel: sanitizeModel(a.coderModel, d.coderModel ?? ''),
         coderFallbackModel: sanitizeModel(a.coderFallbackModel, d.coderFallbackModel ?? ''),
