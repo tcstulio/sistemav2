@@ -323,6 +323,28 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
             for await (const ev of stream.subscribe('job')) collected2.push(ev);
             expect(collected2.map((e) => e.seq)).toEqual([1, 2]);
         });
+
+        it('preserva a ordem com múltiplos next() pendentes', async () => {
+            const it = stream.subscribe('job')[Symbol.asyncIterator]();
+            const first = it.next();
+            const second = it.next();
+
+            stream.emit('job', 'thinking', { n: 1 });
+            stream.emit('job', 'thinking', { n: 2 });
+
+            const results = await Promise.all([first, second]);
+            expect(results.map((result) => (result.value?.payload as { n?: number }).n)).toEqual([1, 2]);
+            await it.return?.();
+        });
+
+        it('rejeita imediatamente quando o signal já está abortado', async () => {
+            const ac = new AbortController();
+            ac.abort('already-stopped');
+            const it = stream.subscribe('job', { signal: ac.signal })[Symbol.asyncIterator]();
+
+            await expect(it.next()).rejects.toThrow(/already-stopped/);
+            expect(stream.isClosed('job')).toBe(false);
+        });
     });
 
     describe('cleanup (TTL)', () => {
@@ -354,6 +376,16 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
             // Agora +1500ms (sem renovar) expira.
             const purged2 = ttl.cleanup(Date.now() + 1500);
             expect(purged2).toBe(1);
+        });
+
+        it('cleanup desbloqueia e rejeita subscribers de jobs expirados', async () => {
+            const ttl = new ProgressStream({ ttlMs: 10, autoCleanupIntervalMs: 0 });
+            const it = ttl.subscribe('job')[Symbol.asyncIterator]();
+            const pending = it.next();
+
+            expect(ttl.cleanup(Date.now() + 100)).toBe(1);
+            await expect(pending).rejects.toThrow(/expired/);
+            expect(ttl.size()).toBe(0);
         });
     });
 
@@ -418,13 +450,15 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
             expect(() => new ProgressStream({ ttlMs: 0 })).toThrow(/ttlMs/);
             expect(() => new ProgressStream({ ttlMs: -1 })).toThrow(/ttlMs/);
         });
-        it('rejeita maxBufferSize <= 0', () => {
+        it('rejeita maxBufferSize <= 0 ou fracionário', () => {
             expect(() => new ProgressStream({ maxBufferSize: 0 })).toThrow(/maxBufferSize/);
             expect(() => new ProgressStream({ maxBufferSize: -10 })).toThrow(/maxBufferSize/);
+            expect(() => new ProgressStream({ maxBufferSize: 1.5 })).toThrow(/maxBufferSize/);
         });
-        it('rejeita maxListeners <= 0', () => {
+        it('rejeita maxListeners <= 0 ou fracionário', () => {
             expect(() => new ProgressStream({ maxListeners: 0 })).toThrow(/maxListeners/);
             expect(() => new ProgressStream({ maxListeners: -1 })).toThrow(/maxListeners/);
+            expect(() => new ProgressStream({ maxListeners: 1.5 })).toThrow(/maxListeners/);
         });
         it('rejeita autoCleanupIntervalMs negativo (0 é permitido = desligado)', () => {
             expect(() => new ProgressStream({ autoCleanupIntervalMs: -1 })).toThrow(/autoCleanupIntervalMs/);

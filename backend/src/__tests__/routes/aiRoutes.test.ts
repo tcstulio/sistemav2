@@ -1194,6 +1194,16 @@ describe('#1011: heartbeat do job via reportProgress (tool-call = progresso)', (
         spy.mockRestore();
     });
 
+    it('repassa o jobId ao loop de produção no job assíncrono', async () => {
+        const res = await request(app)
+            .post('/api/generate-reply-async')
+            .send({ sessionId: 'sess_stream', message: 'olá', module: 'chat' });
+
+        expect(res.status).toBe(202);
+        await waitForJob(app, res.body.data.jobId);
+        expect(mockAiService.generateReply.mock.calls.at(-1)?.[5]).toBe(res.body.data.jobId);
+    });
+
     it('rota síncrona (sem jobId) não atualiza heartbeat (jobId ausente)', async () => {
         const { aiJobService } = await import('../../services/aiJobService');
         const spy = vi.spyOn(aiJobService, 'reportProgress');
