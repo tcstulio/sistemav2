@@ -13,20 +13,6 @@
  *   - **Mesma superfície de tipos** que `aiService.generateReply` (`ChatMessage`,
  *     `TokenUsage`, `GenerateReplyResult`) — facilita migração futura.
  *
- * NOTA sobre "modificar agentLoop.ts": a issue #1574 estimou `agentLoop.ts` como um
- * arquivo A CRIAR — não existia loop de agente sob `src/agent/` antes deste PR. O loop
- * de PRODUÇÃO vive em `services/aiService.ts` (`LocalProvider.generateReply`). Este
- * arquivo é NOVO e roda em PARALELO ao de produção — NÃO tocamos o loop existente de
- * propósito.
- *
- * Por que NÃO instrumentamos `aiService.generateReply` de uma vez: a versão em produção
- * tem décadas de ajustes finos (gate #957, trava #1332, HITL #1408, etc.) e uma
- * suíte de testes extensa (ver `services/aiService.*.test.ts`). Adicionar eventos
- * retroativamente exigiria mudanças invasivas + alto risco de regressão na superfície
- * mais crítica do sistema. Esta versão oferece a base instrumentada; portar os gates de
- * produção (e ligar a emissão no loop real) fica para uma issue subsequente, com o
- * ProgressStream aqui como contrato estável.
- *
  * Como integrar:
  *   - Rotas SSE usam `getProgressStream().subscribe(jobId)` para receber eventos.
  *   - Consumers (dashboard, webhooks) chamam `runAgentLoop({ jobId, ... })` e usam
@@ -38,6 +24,7 @@ import { createLogger } from '../utils/logger';
 import {
     getProgressStream,
     ProgressStream,
+    summarizeToolResult,
     type ProgressEvent,
 } from './progressStream';
 import {
@@ -268,7 +255,7 @@ export async function runAgentLoop(
                     const result = await awaitToolOrAbort(executeToolFn(tc.tool, tc.args ?? {}, signal), signal);
                     const s = String(result ?? '');
                     // Summary curto p/ o payload (não despeja o tool result inteiro no evento).
-                    summary = s.length > 200 ? `${s.slice(0, 200)}… (+${s.length - 200} chars)` : s;
+                    summary = summarizeToolResult(result);
                     currentContext += `\n\n[TOOL RESULT ${tc.tool}]: ${s}`;
                 } catch (e: any) {
                     // Cancelamento cooperativo: o signal abortou DURANTE a tool. O listener
@@ -289,7 +276,7 @@ export async function runAgentLoop(
                     }
                     const detail = e?.message || String(e);
                     log.warn(`agentLoop[${opts.jobId}]: tool ${tc.tool} falhou: ${detail}`);
-                    summary = `error: ${detail}`;
+                    summary = summarizeToolResult(e, false);
                     currentContext += `\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}`;
                 }
 

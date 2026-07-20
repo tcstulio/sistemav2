@@ -131,7 +131,8 @@ interface AsyncPushController {
     /** Encerra o iterator com `done: true` — usado no `close()` do job. */
     close(): void;
     /** Marca como aborted — próxima iteração joga. */
-    abort(reason: string): void;
+    abort(reason: unknown): void;
+    setCleanup(cleanup: () => void): void;
     /** Indica se o consumer já viu este seq (deduplicação por lastEventId). */
     shouldSkip(seq: number): boolean;
     /** Iterator subjacente (async generator). */
@@ -163,8 +164,8 @@ export class ProgressStream {
         // Validação fail-fast: valores não-finitos ou não-positivos são erro de
         // programação (config inválida no boot), não algo a tolerar em runtime.
         if (!Number.isFinite(this.ttlMs) || this.ttlMs <= 0) throw new Error('ProgressStream: ttlMs deve ser > 0');
-        if (!Number.isFinite(this.maxBufferSize) || this.maxBufferSize <= 0) throw new Error('ProgressStream: maxBufferSize deve ser > 0');
-        if (!Number.isFinite(maxListeners) || maxListeners <= 0) throw new Error('ProgressStream: maxListeners deve ser > 0');
+        if (!Number.isInteger(this.maxBufferSize) || this.maxBufferSize <= 0) throw new Error('ProgressStream: maxBufferSize deve ser inteiro > 0');
+        if (!Number.isInteger(maxListeners) || maxListeners <= 0) throw new Error('ProgressStream: maxListeners deve ser inteiro > 0');
         if (!Number.isFinite(autoCleanupIntervalMs) || autoCleanupIntervalMs < 0) {
             throw new Error('ProgressStream: autoCleanupIntervalMs deve ser >= 0');
         }
@@ -218,45 +219,30 @@ export class ProgressStream {
         const sub = createAsyncPushController(lastSeq);
         state.subscribers.add(sub);
 
-        // Cleanup DEVE ser registrado antes do drain para que sub.close()/sub.abort()
-        // consigam remover o listener mesmo se a job estiver fechada no momento.
+        const onEvent = (ev: ProgressEvent) => {
+            if (sub.shouldSkip(ev.seq)) return;
+            sub.push(ev);
+        };
+        const onAbort = () => sub.abort(signal?.reason ?? 'aborted');
         const cleanup = () => {
             state.emitter.off('event', onEvent);
             state.subscribers.delete(sub);
             if (signal) signal.removeEventListener('abort', onAbort);
         };
-        sub.iteratorFinally = cleanup;
 
-        const onAbort = () => {
-            state.subscribers.delete(sub);
-            sub.abort(signal?.reason || 'aborted');
-        };
-        if (signal) {
-            if (signal.aborted) {
-                onAbort();
-            } else {
-                signal.addEventListener('abort', onAbort, { once: true });
-            }
-        }
-
-        // Listener do EventEmitter: empurra o evento para o controller.
-        const onEvent = (ev: ProgressEvent) => {
-            if (sub.shouldSkip(ev.seq)) return;
-            sub.push(ev);
-        };
+        sub.setCleanup(cleanup);
         state.emitter.on('event', onEvent);
 
-        // Drain inicial do buffer — entrega o histórico respeitando lastEventId.
-        // IMPORTANTE: tira uma CÓPIA para evitar race com emit() que pode estar
-        // rodando em outra thread (mesmo sendo single-threaded em JS, o await de
-        // iterator.next() cede o controle e pode haver emit() interleaved).
+        if (signal) {
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+        }
+
         const snapshot = state.events.slice();
         for (const ev of snapshot) {
             if (sub.shouldSkip(ev.seq)) continue;
             sub.push(ev);
         }
-        // Se o job já estava fechado quando o subscribe rolou, marca o iterator
-        // como done (o evento terminal já foi entregue via drain).
         if (state.closed && !sub.isDone()) {
             sub.close();
         }
@@ -340,7 +326,7 @@ export class ProgressStream {
         // Fecha todos os subscribers ativos — depois do fan-out para que o evento
         // terminal seja entregue ANTES do done. Os subscribers que não estavam
         // iterating recebem o terminal via drain no próximo subscribe.
-        for (const sub of state.subscribers) {
+        for (const sub of [...state.subscribers]) {
             sub.close();
         }
     }
@@ -381,7 +367,7 @@ export class ProgressStream {
         let purged = 0;
         for (const [id, state] of this.jobs) {
             if (now >= state.expireAt) {
-                state.subscribers.clear();
+                for (const sub of [...state.subscribers]) sub.abort('expired');
                 state.emitter.removeAllListeners();
                 this.jobs.delete(id);
                 purged++;
@@ -398,8 +384,7 @@ export class ProgressStream {
     dispose(jobId: string): void {
         const state = this.jobs.get(jobId);
         if (!state) return;
-        for (const sub of state.subscribers) sub.abort('disposed');
-        state.subscribers.clear();
+        for (const sub of [...state.subscribers]) sub.abort('disposed');
         state.emitter.removeAllListeners();
         this.jobs.delete(jobId);
     }
@@ -472,37 +457,41 @@ function parseLastEventId(raw: string | number | undefined): number {
  * Implementação manual (sem async/await generator) para evitar a sobrecarga do
  * async generator + suporte nativo a AbortSignal.
  */
-function createAsyncPushController(lastSeq: number): AsyncPushController & { iteratorFinally?: () => void } {
+function createAsyncPushController(lastSeq: number): AsyncPushController {
     const queue: ProgressEvent[] = [];
-    let resolveNext: ((v: IteratorResult<ProgressEvent>) => void) | null = null;
-    let done = false;
-    let abortReason: string | null = null;
+    const waiters: Array<{
+        resolve: (value: IteratorResult<ProgressEvent>) => void;
+        reject: (reason?: unknown) => void;
+    }> = [];
+    let closed = false;
+    let abortError: Error | null = null;
+    let cleanup: (() => void) | null = null;
+    let cleaned = false;
+
+    const runCleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        cleanup?.();
+    };
+    const doneResult = (): IteratorResult<ProgressEvent> => ({
+        value: undefined as unknown as ProgressEvent,
+        done: true,
+    });
 
     const iterator: AsyncIterator<ProgressEvent> = {
         next(): Promise<IteratorResult<ProgressEvent>> {
-            if (abortReason) {
-                return Promise.reject(new Error(`subscribe aborted: ${abortReason}`));
-            }
+            if (abortError) return Promise.reject(abortError);
             const next = queue.shift();
-            if (next) {
-                return Promise.resolve({ value: next, done: false });
-            }
-            if (done) {
-                return Promise.resolve({ value: undefined as unknown as ProgressEvent, done: true });
-            }
-            return new Promise((resolve) => {
-                resolveNext = resolve;
-            });
+            if (next) return Promise.resolve({ value: next, done: false });
+            if (closed) return Promise.resolve(doneResult());
+            return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
         },
         return(): Promise<IteratorResult<ProgressEvent>> {
-            done = true;
-            abortReason = abortReason || 'return';
-            if (resolveNext) {
-                resolveNext({ value: undefined as unknown as ProgressEvent, done: true });
-                resolveNext = null;
-            }
-            if (ctrl.iteratorFinally) ctrl.iteratorFinally();
-            return Promise.resolve({ value: undefined as unknown as ProgressEvent, done: true });
+            closed = true;
+            queue.length = 0;
+            for (const waiter of waiters.splice(0)) waiter.resolve(doneResult());
+            runCleanup();
+            return Promise.resolve(doneResult());
         },
     };
 
@@ -512,51 +501,90 @@ function createAsyncPushController(lastSeq: number): AsyncPushController & { ite
         },
     };
 
-    const ctrl: AsyncPushController & { iteratorFinally?: () => void } = {
+    return {
         push(event) {
-            if (done || abortReason) return;
-            if (resolveNext) {
-                const r = resolveNext;
-                resolveNext = null;
-                r({ value: event, done: false });
-            } else {
-                queue.push(event);
-            }
+            if (closed || abortError) return;
+            const waiter = waiters.shift();
+            if (waiter) waiter.resolve({ value: event, done: false });
+            else queue.push(event);
         },
         close() {
-            if (done) return;
-            done = true;
-            if (resolveNext) {
-                const r = resolveNext;
-                resolveNext = null;
-                r({ value: undefined as unknown as ProgressEvent, done: true });
-            }
-            if (ctrl.iteratorFinally) ctrl.iteratorFinally();
+            if (closed || abortError) return;
+            closed = true;
+            for (const waiter of waiters.splice(0)) waiter.resolve(doneResult());
+            runCleanup();
         },
         abort(reason) {
-            if (done) return;
-            done = true;
-            abortReason = reason;
-            if (resolveNext) {
-                const r = resolveNext;
-                resolveNext = null;
-                r({ value: undefined as unknown as ProgressEvent, done: true });
-            }
-            if (ctrl.iteratorFinally) ctrl.iteratorFinally();
+            if (closed || abortError) return;
+            closed = true;
+            const detail = reason instanceof Error ? reason.message : String(reason || 'aborted');
+            abortError = new Error(`subscribe aborted: ${detail}`);
+            queue.length = 0;
+            for (const waiter of waiters.splice(0)) waiter.reject(abortError);
+            runCleanup();
+        },
+        setCleanup(nextCleanup) {
+            cleanup = nextCleanup;
+            if (closed || abortError) runCleanup();
         },
         shouldSkip(seq) {
             return seq <= lastSeq;
         },
-        isDone: () => done,
+        isDone: () => closed || abortError !== null,
         iterator,
         iterable,
-        iteratorFinally: undefined,
     };
-
-    return ctrl;
 }
 
 // === Singleton + reset para testes ===
+
+export function summarizeToolResult(value: unknown, succeeded: boolean = true): string {
+    const detail = value instanceof Error ? value.message : String(value ?? '');
+    const summary = succeeded ? detail : `error: ${detail}`;
+    return summary.length > 200
+        ? `${summary.slice(0, 200)}… (+${summary.length - 200} chars)`
+        : summary;
+}
+
+export function emitThinking(jobId: string | undefined, phase: string, iteration?: number): void {
+    if (!jobId) return;
+    getProgressStream().emit(jobId, 'thinking', {
+        phase,
+        ...(iteration === undefined ? {} : { iteration }),
+    });
+}
+
+export function emitToolCall(jobId: string | undefined, name: string, args: unknown): void {
+    if (!jobId) return;
+    getProgressStream().emit(jobId, 'tool_call', { name, args });
+}
+
+export function emitToolResult(jobId: string | undefined, name: string, value: unknown, succeeded: boolean = true): void {
+    if (!jobId) return;
+    getProgressStream().emit(jobId, 'tool_result', {
+        name,
+        summary: summarizeToolResult(value, succeeded),
+    });
+}
+
+export async function withTurnProgress<T extends { text: string }>(
+    jobId: string | undefined,
+    run: () => Promise<T>,
+): Promise<T> {
+    if (!jobId) return run();
+    const stream = getProgressStream();
+    stream.emit(jobId, 'thinking', { phase: 'start' });
+    try {
+        const result = await run();
+        if (result.text) stream.emit(jobId, 'text_delta', { delta: result.text });
+        stream.close(jobId, 'done', { result: result.text });
+        return result;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        stream.close(jobId, 'error', { message });
+        throw error;
+    }
+}
 
 let _defaultStream: ProgressStream | null = null;
 
