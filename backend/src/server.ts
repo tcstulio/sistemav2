@@ -16,6 +16,12 @@ import githubRoutes from './routes/githubRoutes';
 import { sessionService } from './services/legacy/sessionService';
 import { schedulerService } from './services/schedulerService';
 import { healthLimiter } from './middleware/healthRateLimiter';
+// #1566: aiLimiter agora vem do middleware/rateLimit.ts (rateLimiters.ai) — single source
+// of truth. Antes era redefinido inline aqui, duplicando a config de middleware/rateLimit.ts
+// e divergindo no formato de resposta (message vs handler→errorHandler envelope). O preset
+// `ai` usa handler que delega ao errorHandler global, produzindo o envelope padronizado
+// { success:false, error:{ code:'RATE_LIMIT', message, details:{retryAfter,limit} } }.
+import { rateLimiters } from './middleware/rateLimit';
 
 const app = express();
 
@@ -108,15 +114,10 @@ const globalLimiter = rateLimit({
 // Só limita os POSTs caros (generate-reply*, analyze): os GETs em /ai/* são leves e
 // FREQUENTES — polling do job (GET /jobs/:id a cada 2.5s) e do feed (GET /agent/activity).
 // Sem o skip, um job longo estoura 20/min e derruba o chat com 429 (issue #320).
-// O limiter global (500/15min) continua cobrindo os GETs como backstop.
-const aiLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 20, // 20 AI requests per minute
-    message: { error: 'AI rate limit exceeded. Please wait before trying again.' },
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => req.method === 'GET'
-});
+// #1566: preset importado de middleware/rateLimit.ts (rateLimiters.ai) — 20/1min, skip GET,
+// handler que delega ao errorHandler (envelope padronizado). Removida a definição inline
+// duplicada; agora o teste em aiRoutes.rateLimit.test.ts valida a MESMA instância usada em prod.
+const aiLimiter = rateLimiters.ai;
 
 // Banking limiter (sensitive operations)
 const bankingLimiter = rateLimit({

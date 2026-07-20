@@ -615,7 +615,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 )}
                                 <div className="flex justify-between items-end">
                                     <span className="text-xs text-slate-500">{formatDateOnly(inv.date)}</span>
-                                    <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</span>
+                                    <span data-testid="invoice-amount" className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</span>
                                 </div>
                             </ClickTarget>
                         );
