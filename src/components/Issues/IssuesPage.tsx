@@ -388,8 +388,10 @@ const FeedbackModal: React.FC<{
 };
 
 // #escalada-manual: menu compacto p/ o admin escalar uma task que AGUARDA decisão humana
-// (reviewing/approved/failed) ao coder FORTE (Opus/Fable) — roda o Claude CLI AGORA no modelo
+// (reviewing/approved/failed) ao coder FORTE (Claude) — roda o Claude CLI AGORA no modelo
 // escolhido, reusando o trabalho parcial. Usa <details> nativo (sem estado/click-outside).
+// Ordem/rótulos por CAPACIDADE (verificado 2026-07-20): Fable 5 > Opus 4.8 em coding difícil,
+// mas custa ~2x. Fable = melhor resultado; Opus = mais econômico. Ver memória modelos-fable-*.
 const EscalateMenu: React.FC<{ task: Task; onAction: (action: string, task: Task, extra?: string) => void }> = ({ task, onAction }) => (
     <details className="relative inline-block">
         <summary
@@ -398,12 +400,12 @@ const EscalateMenu: React.FC<{ task: Task; onAction: (action: string, task: Task
         >
             <Sparkles size={11} /> Escalar <ChevronDown size={10} />
         </summary>
-        <div className="absolute right-0 z-20 mt-1 w-44 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg py-1 text-xs">
-            <button type="button" onClick={(e) => { e.stopPropagation(); onAction('escalate', task, 'opus'); }} className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200">
-                <span className="font-medium">Opus</span> <span className="text-slate-400">— mais forte</span>
-            </button>
+        <div className="absolute right-0 z-20 mt-1 w-52 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg py-1 text-xs">
             <button type="button" onClick={(e) => { e.stopPropagation(); onAction('escalate', task, 'fable'); }} className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200">
-                <span className="font-medium">Fable</span>
+                <span className="font-medium">Fable</span> <span className="text-slate-400">— mais capaz (~2x custo)</span>
+            </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onAction('escalate', task, 'opus'); }} className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200">
+                <span className="font-medium">Opus</span> <span className="text-slate-400">— mais econômico</span>
             </button>
         </div>
     </details>
