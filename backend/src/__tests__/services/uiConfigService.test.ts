@@ -118,12 +118,16 @@ describe('uiConfigService', () => {
         expect(svc.get().taskAutomation).toMatchObject({
             opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus',
         });
-        // clamps: custo 0-50, escaladas 0-10, model trim/cap; enabled só com true explícito
+        // clamps de SANIDADE (configurável na UI): custo 0-500, escaladas 0-100, model trim/cap; enabled só com true explícito
         const out = svc.update({ taskAutomation: { opusEscalationEnabled: true, maxOpusEscalationsPerDay: 99, maxOpusCostUsdPerDay: 999, coderEscalationModel: '  sonnet  ' } } as any);
         expect(out.taskAutomation.opusEscalationEnabled).toBe(true);
-        expect(out.taskAutomation.maxOpusEscalationsPerDay).toBe(10);   // 99 → teto 10
-        expect(out.taskAutomation.maxOpusCostUsdPerDay).toBe(50);       // 999 → teto 50
+        expect(out.taskAutomation.maxOpusEscalationsPerDay).toBe(99);   // 99 dentro do teto 100 → mantém
+        expect(out.taskAutomation.maxOpusCostUsdPerDay).toBe(500);      // 999 → teto 500
         expect(out.taskAutomation.coderEscalationModel).toBe('sonnet'); // trim
+        // acima do teto de sanidade → clampa (guarda-corpo anti-typo)
+        const outCap = svc.update({ taskAutomation: { maxOpusEscalationsPerDay: 9999, maxOpusCostUsdPerDay: 999999 } } as any);
+        expect(outCap.taskAutomation.maxOpusEscalationsPerDay).toBe(100);
+        expect(outCap.taskAutomation.maxOpusCostUsdPerDay).toBe(500);
         // valores inválidos → default (NUNCA undefined/ilimitado no teto $)
         const out2 = svc.update({ taskAutomation: { opusEscalationEnabled: 'yes', maxOpusCostUsdPerDay: 'lots' } } as any);
         expect(out2.taskAutomation.opusEscalationEnabled).toBe(false);
