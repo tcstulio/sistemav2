@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
+import path from 'path';
 import { createLogger } from './utils/logger';
 import { initSentry } from './utils/sentry';
 
@@ -258,6 +259,23 @@ import simulatorRoutes from './routes/simulatorRoutes';
 app.use('/api/simulator', simulatorRoutes);
 
 app.use('/api/github', githubRoutes);
+
+// #1561 — Rota de report in-app: recebe o contexto (screenshot + HTML +
+// console logs/errors), sanitiza, salva em disco e cria issue no GitHub.
+// Auth obrigatória (requireDolibarrLogin aplicado dentro do próprio router).
+import issueReportRoutes from './routes/issueReportRoutes';
+app.use('/api/issues', issueReportRoutes);
+
+// #1561 — Serve os arquivos persistidos pelo /api/issues/report (screenshots
+// e HTML snapshots em backend/uploads/reports/). `express.static` resolve
+// o caminho relativo à CWD do backend (mesmo princípio do adminAuditService
+// que grava em backend/data/). `dotfiles: 'ignore'` + `index: false` reduzem
+// a superficie de exposicao.
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'), {
+    dotfiles: 'ignore',
+    index: false,
+    maxAge: '7d',
+}));
 
 // Health Check (#1042, #1415) — verifica dependências externas via healthCheckService.
 // Rate-limit dedicado (healthLimiter) impede fan-out abusivo de chamadas externas a cada hit.
