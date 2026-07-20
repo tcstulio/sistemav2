@@ -62,8 +62,11 @@ export class CommercialBasePage {
 
     /** All rows of the commercial table (data + skeleton/loading rows). */
     get tableRows(): Locator {
+        // #render-fix (red-team): as telas comerciais (Propostas/Pedidos) renderizam LINHAS-CARD
+        // (data-testid="proposal-row"/"order-row"), não <table>. O `cell/expectRowVisible` herdado só
+        // olhava tabela → 0 elementos. Inclui os testids das linhas-Card mantendo o suporte a tabela.
         return this.page.locator(
-            '[data-testid="table-row"], table tbody tr'
+            '[data-testid="table-row"], [data-testid="proposal-row"], [data-testid="order-row"], table tbody tr'
         );
     }
 
