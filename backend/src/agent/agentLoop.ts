@@ -13,11 +13,19 @@
  *   - **Mesma superfície de tipos** que `aiService.generateReply` (`ChatMessage`,
  *     `TokenUsage`, `GenerateReplyResult`) — facilita migração futura.
  *
- * Por que NÃO substituímos `aiService.generateReply` de uma vez: a versão em produção
+ * NOTA sobre "modificar agentLoop.ts": a issue #1574 estimou `agentLoop.ts` como um
+ * arquivo A CRIAR — não existia loop de agente sob `src/agent/` antes deste PR. O loop
+ * de PRODUÇÃO vive em `services/aiService.ts` (`LocalProvider.generateReply`). Este
+ * arquivo é NOVO e roda em PARALELO ao de produção — NÃO tocamos o loop existente de
+ * propósito.
+ *
+ * Por que NÃO instrumentamos `aiService.generateReply` de uma vez: a versão em produção
  * tem décadas de ajustes finos (gate #957, trava #1332, HITL #1408, etc.) e uma
  * suíte de testes extensa (ver `services/aiService.*.test.ts`). Adicionar eventos
- * retroativamente exigiria mudanças invasivas + alto risco de regressão. Esta versão
- * roda em PARALELO e oferece a base para iteração incremental.
+ * retroativamente exigiria mudanças invasivas + alto risco de regressão na superfície
+ * mais crítica do sistema. Esta versão oferece a base instrumentada; portar os gates de
+ * produção (e ligar a emissão no loop real) fica para uma issue subsequente, com o
+ * ProgressStream aqui como contrato estável.
  *
  * Como integrar:
  *   - Rotas SSE usam `getProgressStream().subscribe(jobId)` para receber eventos.
@@ -90,6 +98,19 @@ export interface AgentLoopDeps {
     toolsPrompt?: string;
     /** Sleep entre iterações (testes podem acelerar). */
     iterationDelayMs?: number;
+    /**
+     * Executor de tools injetável. Recebe o `AbortSignal` para permitir cancelamento
+     * COOPERATIVO em tools que o honram. O default (`executeTool` de `services/agentTools`)
+     * é um dispatch atômico que NÃO consulta o signal — por isso o loop também corre a
+     * chamada contra o abort (`awaitToolOrAbort`), de modo que um `signal` acionado não
+     * fica bloqueado esperando uma tool longa terminar. Default: `executeTool`.
+     */
+    executeToolFn?: (tool: string, args: any, signal?: AbortSignal) => Promise<string>;
+    /**
+     * Parser de tool-calls do texto do LLM. Injetável para testes determinísticos sem
+     * depender do parser real. Default: `extractToolCalls` de `services/aiService`.
+     */
+    parseToolCalls?: (text: string) => Array<{ tool: string; args: any }>;
 }
 
 export interface AgentLoopResult extends GenerateReplyResult {
@@ -133,6 +154,8 @@ export async function runAgentLoop(
 ): Promise<AgentLoopResult> {
     const stream = deps.stream ?? getProgressStream();
     const llmCall = deps.llmCall ?? defaultLlmCall;
+    const executeToolFn = deps.executeToolFn ?? ((tool, args) => executeTool(tool, args));
+    const parseToolCalls = deps.parseToolCalls ?? extractToolCalls;
     const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     const maxToolCalls = opts.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
 
@@ -156,6 +179,8 @@ export async function runAgentLoop(
     let toolCallsUsed = 0;
     let iterations = 0;
     let lastText = '';
+    // Sinaliza que o turno foi cancelado (abort durante uma tool) — encerra os dois loops.
+    let aborted = false;
 
     const onAbort = () => {
         stream.cancel(opts.jobId, signal?.reason || 'aborted');
@@ -198,7 +223,7 @@ export async function runAgentLoop(
             }
 
             const content = llmResp.content || '';
-            const toolCalls = extractToolCalls(content);
+            const toolCalls = parseToolCalls(content);
 
             if (toolCalls.length === 0) {
                 // Sem tool-call → resposta final.
@@ -217,9 +242,12 @@ export async function runAgentLoop(
                 if (toolCallsUsed >= maxToolCalls) {
                     const msg = `Limite de ${maxToolCalls} tool call(s) atingido — encerrando o turno.`;
                     log.warn(`agentLoop[${opts.jobId}]: ${msg}`);
-                    stream.emit(opts.jobId, 'error', { message: msg });
+                    // Terminal ÚNICO: fecha com 'error' (o turno não pôde concluir dentro do
+                    // teto). `aborted` encerra os dois loops e o job já fechado faz o bloco
+                    // final pular o 'done' — sem 'error' seguido de 'done' contraditório.
+                    stream.close(opts.jobId, 'error', { message: msg });
                     lastText = msg;
-                    iterations = maxIterations; // força saída do while externo
+                    aborted = true;
                     break;
                 }
 
@@ -232,18 +260,31 @@ export async function runAgentLoop(
 
                 let summary = '';
                 try {
-                    const result = await executeTool(tc.tool, tc.args ?? {});
+                    // Corre a tool contra o abort: se o signal disparar no meio de uma tool
+                    // longa (não-cooperativa), NÃO ficamos bloqueados esperando — a Promise
+                    // rejeita com AbortError e o cancelamento é honrado imediatamente. A tool
+                    // pode terminar em background (sem cooperação não há como matá-la), mas o
+                    // stream/loop é liberado na hora.
+                    const result = await awaitToolOrAbort(executeToolFn(tc.tool, tc.args ?? {}, signal), signal);
                     const s = String(result ?? '');
                     // Summary curto p/ o payload (não despeja o tool result inteiro no evento).
                     summary = s.length > 200 ? `${s.slice(0, 200)}… (+${s.length - 200} chars)` : s;
                     currentContext += `\n\n[TOOL RESULT ${tc.tool}]: ${s}`;
                 } catch (e: any) {
+                    // Cancelamento cooperativo: o signal abortou DURANTE a tool. O listener
+                    // onAbort já emitiu 'cancelled' e fechou o job — não emitimos tool_result
+                    // nem tratamos como erro; só encerramos os dois loops.
+                    if (isAbortError(e) || signal?.aborted) {
+                        aborted = true;
+                        break;
+                    }
                     if (e?.name === 'AskUserInterrupt') {
-                        summary = `__interrupt__:${e.question ?? ''}`;
                         lastText = e.question ?? '';
-                        // Emite `cancelled` no lugar de error — é interrupção do usuário.
-                        stream.emit(opts.jobId, 'cancelled', { reason: 'user-interrupt', question: e.question });
-                        iterations = maxIterations;
+                        // Interrupção do usuário: terminal ÚNICO 'cancelled' (o turno pausa
+                        // aguardando input). `aborted` encerra os loops e, com o job fechado,
+                        // o bloco final NÃO emite 'done' por cima.
+                        stream.close(opts.jobId, 'cancelled', { reason: 'user-interrupt', question: e.question });
+                        aborted = true;
                         break;
                     }
                     const detail = e?.message || String(e);
@@ -254,18 +295,28 @@ export async function runAgentLoop(
 
                 // #1574: emite 'tool_result' {name, summary} DEPOIS de executar.
                 stream.emit(opts.jobId, 'tool_result', { name: tc.tool, summary });
+
+                // Aborto que chegou logo após a tool retornar (race resolveu com valor):
+                // encerra antes de gastar outra iteração de LLM.
+                if (signal?.aborted) {
+                    aborted = true;
+                    break;
+                }
             }
+
+            if (aborted) break;
 
             iterations++;
             if (deps.iterationDelayMs) await sleep(deps.iterationDelayMs);
         }
 
-        // === Fim: emite 'done' com o texto final ===
+        // === Fim: fecha o job com o terminal 'done' e o texto final ===
+        // `close()` JÁ emite o evento terminal no buffer — NÃO chamamos `emit('done')`
+        // antes, senão o consumidor veria dois 'done' (terminal duplicado).
         if (signal?.aborted) {
-            // Já emitimos 'cancelled' no listener — apenas fechamos.
+            // Já emitimos 'cancelled' no listener onAbort — apenas garantimos o fechamento.
             if (!stream.isClosed(opts.jobId)) stream.close(opts.jobId);
         } else if (!stream.isClosed(opts.jobId)) {
-            stream.emit(opts.jobId, 'done', { result: lastText });
             stream.close(opts.jobId, 'done', { result: lastText });
         }
 
@@ -281,8 +332,8 @@ export async function runAgentLoop(
     } catch (e: any) {
         const msg = e?.message || String(e);
         log.error(`agentLoop[${opts.jobId}]: erro fatal: ${msg}`);
+        // `close()` já emite o terminal 'error' — não duplicamos com um emit antes.
         if (!stream.isClosed(opts.jobId)) {
-            stream.emit(opts.jobId, 'error', { message: msg });
             stream.close(opts.jobId, 'error', { message: msg });
         }
         throw e;
@@ -334,6 +385,46 @@ async function defaultLlmCall(
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Erro padronizado de cancelamento (name='AbortError' — convenção da Web Platform). */
+function makeAbortError(reason?: unknown): Error {
+    const err = new Error(typeof reason === 'string' && reason ? reason : 'aborted');
+    err.name = 'AbortError';
+    return err;
+}
+
+/** Identifica o erro de cancelamento produzido por `awaitToolOrAbort`/AbortSignal. */
+function isAbortError(e: unknown): boolean {
+    return !!e && typeof e === 'object' && (e as { name?: string }).name === 'AbortError';
+}
+
+/**
+ * Corre uma Promise contra um `AbortSignal`: resolve/rejeita com o resultado da Promise,
+ * OU rejeita com `AbortError` assim que o signal disparar — o que vier primeiro. Remove
+ * o listener em qualquer desfecho (sem vazamento). Sem signal, é passthrough.
+ *
+ * Nota honesta: isto NÃO mata a Promise subjacente (uma tool não-cooperativa segue
+ * rodando em background). O ganho é liberar o LOOP imediatamente no abort, em vez de
+ * ficar preso esperando uma tool longa terminar.
+ */
+function awaitToolOrAbort<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return p;
+    if (signal.aborted) return Promise.reject(makeAbortError(signal.reason));
+    return new Promise<T>((resolve, reject) => {
+        const onAbort = () => reject(makeAbortError(signal.reason));
+        signal.addEventListener('abort', onAbort, { once: true });
+        p.then(
+            (v) => {
+                signal.removeEventListener('abort', onAbort);
+                resolve(v);
+            },
+            (e) => {
+                signal.removeEventListener('abort', onAbort);
+                reject(e);
+            },
+        );
+    });
 }
 
 // === Re-exports para reduzir acoplamento ===

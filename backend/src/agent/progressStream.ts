@@ -20,6 +20,12 @@
  * Após o TTL, o estado do job é purgado do Map; `cleanup()` varre os expirados e
  * devolve a contagem (para testes/métricas).
  *
+ * Purga AUTOMÁTICA: além do `cleanup()` manual, o construtor arma um `setInterval`
+ * interno (default 1 min, `.unref()` para não segurar o processo) que varre os jobs
+ * expirados sozinho — assim o Map NÃO cresce indefinidamente se ninguém chamar
+ * `cleanup()` em produção. Passe `autoCleanupIntervalMs: 0` para desligar o timer
+ * (testes determinísticos) e `stopAutoCleanup()` para pará-lo ao descartar a instância.
+ *
  * Concorrência: `subscribe()` retorna IMEDIATAMENTE um AsyncIterable — não bloqueia
  * o emit(). Eventos emitidos ANTES do subscribe() ficam no buffer (e são entregues
  * na primeira iteração, a menos que `lastEventId` indique o ponto de retomada).
@@ -89,6 +95,13 @@ export interface ProgressStreamConfig {
     maxBufferSize?: number;
     /** Limite de listeners por job — protege contra vazamento em clientes zumbi. Default: 100. */
     maxListeners?: number;
+    /**
+     * Intervalo (ms) da varredura AUTOMÁTICA de jobs expirados. Default: 60_000 (1 min).
+     * Passe 0 para DESLIGAR o timer interno — útil em testes determinísticos ou quando
+     * o caller prefere orquestrar `cleanup()` manualmente. O timer usa `.unref()`, então
+     * NÃO impede o processo Node de encerrar.
+     */
+    autoCleanupIntervalMs?: number;
 }
 
 /** Estado interno por job. */
@@ -132,24 +145,51 @@ interface AsyncPushController {
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_BUFFER = 500;
 const DEFAULT_MAX_LISTENERS = 100;
+const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 1000;
 
 export class ProgressStream {
     private readonly ttlMs: number;
     private readonly maxBufferSize: number;
     private readonly jobs = new Map<string, JobState>();
+    private _maxListenersPerJob: number;
+    /** Handle do timer de varredura automática (null quando desligado/parado). */
+    private _cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
     constructor(config: ProgressStreamConfig = {}) {
         this.ttlMs = config.ttlMs ?? DEFAULT_TTL_MS;
         this.maxBufferSize = config.maxBufferSize ?? DEFAULT_MAX_BUFFER;
         const maxListeners = config.maxListeners ?? DEFAULT_MAX_LISTENERS;
-        if (this.ttlMs <= 0) throw new Error('ProgressStream: ttlMs deve ser > 0');
-        if (this.maxBufferSize <= 0) throw new Error('ProgressStream: maxBufferSize deve ser > 0');
+        const autoCleanupIntervalMs = config.autoCleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS;
+        // Validação fail-fast: valores não-finitos ou não-positivos são erro de
+        // programação (config inválida no boot), não algo a tolerar em runtime.
+        if (!Number.isFinite(this.ttlMs) || this.ttlMs <= 0) throw new Error('ProgressStream: ttlMs deve ser > 0');
+        if (!Number.isFinite(this.maxBufferSize) || this.maxBufferSize <= 0) throw new Error('ProgressStream: maxBufferSize deve ser > 0');
+        if (!Number.isFinite(maxListeners) || maxListeners <= 0) throw new Error('ProgressStream: maxListeners deve ser > 0');
+        if (!Number.isFinite(autoCleanupIntervalMs) || autoCleanupIntervalMs < 0) {
+            throw new Error('ProgressStream: autoCleanupIntervalMs deve ser >= 0');
+        }
         // Marca um campo interno (lido apenas em testes/diagnóstico — `maxListeners` é
         // por job, aplicado no emitter de cada JobState).
         this._maxListenersPerJob = maxListeners;
-    }
 
-    private _maxListenersPerJob: number;
+        // Timer interno de varredura de TTL. Sem ele, jobs abandonados (cliente sumiu
+        // sem close) só sairiam do Map via `cleanup()` manual — e se ninguém chamar,
+        // o Map cresce até o processo cair. `.unref()` garante que o timer NÃO segura
+        // o event loop (o processo encerra normalmente mesmo com o timer armado).
+        if (autoCleanupIntervalMs > 0) {
+            const timer = setInterval(() => {
+                try {
+                    this.cleanup();
+                } catch (err) {
+                    log.warn(`auto-cleanup falhou: ${(err as Error)?.message ?? err}`);
+                }
+            }, autoCleanupIntervalMs);
+            if (typeof (timer as { unref?: () => void }).unref === 'function') {
+                (timer as { unref: () => void }).unref();
+            }
+            this._cleanupTimer = timer;
+        }
+    }
 
     // === API pública ===
 
@@ -332,6 +372,10 @@ export class ProgressStream {
     /**
      * Purga TODOS os jobs expirados (TTL estourado). Devolve a quantidade purgada.
      * Não fecha jobs ativos — só remove os que não recebem emit há mais de `ttlMs`.
+     *
+     * Roda AUTOMATICAMENTE via timer interno (ver construtor / `autoCleanupIntervalMs`);
+     * também pode ser chamado manualmente (o parâmetro `now` injetável habilita testes
+     * determinísticos do TTL sem depender do relógio real).
      */
     cleanup(now: number = Date.now()): number {
         let purged = 0;
@@ -363,6 +407,19 @@ export class ProgressStream {
     /** Quantidade de jobs atualmente rastreados. Útil para testes e métricas. */
     size(): number {
         return this.jobs.size;
+    }
+
+    /**
+     * Para o timer interno de varredura de TTL. Idempotente. Chame ao descartar uma
+     * instância custom (ex.: fim de suíte de teste) para não deixar o interval pendurado.
+     * O singleton de produção NÃO precisa parar (vive até o processo morrer; o `.unref()`
+     * já garante que ele não impede o encerramento).
+     */
+    stopAutoCleanup(): void {
+        if (this._cleanupTimer) {
+            clearInterval(this._cleanupTimer);
+            this._cleanupTimer = null;
+        }
     }
 
     // === Helpers internos ===
@@ -522,10 +579,14 @@ export function getProgressStream(): ProgressStream {
  * NÃO usar em produção — destrói o buffer global.
  */
 export function __setProgressStreamForTesting(stream: ProgressStream): void {
+    // Para o timer da instância anterior antes de trocar — senão o interval do singleton
+    // antigo continua varrendo um objeto órfão (vazamento entre suites).
+    if (_defaultStream && _defaultStream !== stream) _defaultStream.stopAutoCleanup();
     _defaultStream = stream;
 }
 
-/** Limpa o singleton (testes). */
+/** Limpa o singleton (testes). Para o timer interno para não vazar o interval. */
 export function __resetProgressStreamForTesting(): void {
+    if (_defaultStream) _defaultStream.stopAutoCleanup();
     _defaultStream = null;
 }
