@@ -13,6 +13,8 @@ const {
     mockRecordQuotaError,
     mockRecordTransientError,
     mockIsQuotaError,
+    mockAxiosPost,
+    mockExecuteTool,
 } = vi.hoisted(() => ({
     mockGetFallbackChain: vi.fn(),
     mockIsRunWithChainEnabled: vi.fn(() => false),
@@ -21,6 +23,15 @@ const {
     mockRecordQuotaError: vi.fn(),
     mockRecordTransientError: vi.fn(),
     mockIsQuotaError: vi.fn((msg: string) => !!(msg?.includes('429') || msg?.includes('rate limit'))),
+    mockAxiosPost: vi.fn(),
+    mockExecuteTool: vi.fn(),
+}));
+
+const mockLogger = vi.hoisted(() => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
 }));
 
 vi.mock('../../services/configService', () => ({
@@ -54,20 +65,31 @@ vi.mock('../../services/llmQuotaState', () => ({
     quotaStatus: vi.fn(() => ({ exhausted: false, since: null, reason: '' })),
 }));
 
+vi.mock('axios', () => ({
+    default: {
+        post: mockAxiosPost,
+        get: vi.fn(),
+    },
+}));
+
 vi.mock('../../services/agentTools', () => ({
     TOOLS_PROMPT: '',
-    // #1498: aiService.ts agora importa getToolsPrompt direto em vez do TOOLS_PROMPT wrapper.
     getToolsPrompt: () => '',
-    executeTool: vi.fn(),
+    executeTool: mockExecuteTool,
+    getToolContext: () => ({ isAdmin: false }),
 }));
 
 vi.mock('../../services/agentConfigService', () => ({
-    agentConfigService: { getSystemPrompt: vi.fn(() => '') },
+    agentConfigService: {
+        getSystemPrompt: vi.fn(() => ''),
+        getMaxToolCalls: vi.fn(() => 10),
+        requiresConfirmation: vi.fn(() => false),
+    },
 }));
 
 vi.mock('../../utils/logger', () => ({
-    logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) },
-    createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+    logger: { child: () => mockLogger },
+    createLogger: () => mockLogger,
 }));
 
 vi.mock('../../config/env', () => ({
@@ -98,7 +120,7 @@ vi.mock('../../services/tunnelService', () => ({
 
 // ── Importa após os mocks ────────────────────────────────────────────────────
 
-import { aiService } from '../../services/aiService';
+import { aiService, UnrecoverableChainError } from '../../services/aiService';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -332,6 +354,153 @@ describe('aiService.runWithChain — preserva contexto ao trocar de provider (#1
         expect(refs).toHaveLength(2);
         expect(refs[0]).toBe(refs[1]); // mesma referência
         expect(refs[1].seenToolCalls.has('keep|me')).toBe(true);
+    });
+});
+
+describe('aiService.runWithChain — retomada entre providers (#1551)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockIsAvailable.mockReturnValue(true);
+        mockIsQuotaError.mockImplementation((msg: string) => !!(msg?.includes('429') || msg?.includes('rate limit')));
+    });
+
+    it.each([
+        ['429', () => makeQuotaError()],
+        ['5xx', () => {
+            const err: any = new Error('HTTP 503 Service Unavailable');
+            err.response = { status: 503, data: { error: 'unavailable' } };
+            return err;
+        }],
+        ['timeout', () => {
+            const err: any = new Error('timeout of 5000ms exceeded');
+            err.code = 'ETIMEDOUT';
+            return err;
+        }],
+    ])('preserva histórico e deduplicação após erro %s', async (_kind, makeError) => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+        const executions: string[] = [];
+        let firstState: any;
+
+        const exec = vi.fn(async (provider: string, state: any) => {
+            const signature = 'get_stock:{"sku":"A1"}';
+            if (provider === 'glm') {
+                firstState = state;
+                state.seenToolCalls.add(signature);
+                state.messages.push({ role: 'assistant', tool_calls: [{ id: 'call-1', function: { name: 'get_stock', arguments: '{"sku":"A1"}' } }] });
+                state.messages.push({ role: 'tool', tool_call_id: 'call-1', content: 'estoque=10' });
+                executions.push('glm');
+                throw makeError();
+            }
+            expect(state).toBe(firstState);
+            expect(state.messages).toEqual([
+                { role: 'assistant', tool_calls: [{ id: 'call-1', function: { name: 'get_stock', arguments: '{"sku":"A1"}' } }] },
+                { role: 'tool', tool_call_id: 'call-1', content: 'estoque=10' },
+            ]);
+            expect(state.seenToolCalls.has(signature)).toBe(true);
+            if (!state.seenToolCalls.has(signature)) executions.push('minimax');
+            return 'estoque=10';
+        });
+
+        await expect(aiService.runWithChain('chat', exec)).resolves.toBe('estoque=10');
+
+        expect(executions).toEqual(['glm']);
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('chain resumed with 2 messages, 1 tool calls seen'));
+    });
+
+    it('compartilha a mesma referência de seenToolCalls em toda a cadeia', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax', 'google']);
+        const refs: Set<string>[] = [];
+
+        const exec = vi.fn(async (provider: string, state: any) => {
+            refs.push(state.seenToolCalls);
+            if (provider === 'glm') {
+                state.seenToolCalls.add('tool:a');
+                throw makeQuotaError();
+            }
+            if (provider === 'minimax') {
+                expect(state.seenToolCalls.has('tool:a')).toBe(true);
+                state.seenToolCalls.add('tool:b');
+                const err: any = new Error('ECONNRESET');
+                err.code = 'ECONNRESET';
+                throw err;
+            }
+            expect(state.seenToolCalls).toEqual(new Set(['tool:a', 'tool:b']));
+            return 'ok';
+        });
+
+        await aiService.runWithChain('chat', exec);
+
+        expect(refs[0]).toBe(refs[1]);
+        expect(refs[1]).toBe(refs[2]);
+    });
+
+    it('não chama provider secundário quando o primário retorna resposta válida', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+        const exec = vi.fn().mockResolvedValue('resposta-final');
+
+        await expect(aiService.runWithChain('chat', exec)).resolves.toBe('resposta-final');
+
+        expect(exec).toHaveBeenCalledTimes(1);
+        expect(exec).toHaveBeenCalledWith('glm', expect.any(Object));
+        expect(mockLogger.info).not.toHaveBeenCalledWith(expect.stringContaining('chain resumed with'));
+    });
+
+    it('reseta estado corrompido sem trocar as referências compartilhadas', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+        let messagesRef: any[];
+        let seenToolCallsRef: Set<string>;
+
+        const exec = vi.fn(async (provider: string, state: any) => {
+            if (provider === 'glm') {
+                messagesRef = state.messages;
+                seenToolCallsRef = state.seenToolCalls;
+                state.messages.push({ role: 'assistant', content: 'corrompida' });
+                state.seenToolCalls.add('tool:corrompida');
+                state.context = 'contexto corrompido';
+                throw new UnrecoverableChainError('schema incompatível');
+            }
+            expect(state.messages).toBe(messagesRef!);
+            expect(state.seenToolCalls).toBe(seenToolCallsRef!);
+            expect(state.messages).toEqual([]);
+            expect(state.seenToolCalls.size).toBe(0);
+            expect(state.context).toBe('');
+            return 'ok';
+        });
+
+        await expect(aiService.runWithChain('chat', exec)).resolves.toBe('ok');
+
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('chain reset: schema incompatível'));
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('chain resumed with 0 messages, 0 tool calls seen'));
+    });
+
+    it('detecta mensagem corrompida sem exigir uma classe específica', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+
+        const exec = vi.fn(async (provider: string, state: any) => {
+            if (provider === 'glm') {
+                state.messages.push({ role: 'assistant', content: 'inválida' });
+                state.seenToolCalls.add('tool:inválida');
+                throw new Error('Unexpected token in provider message');
+            }
+            expect(state.messages).toEqual([]);
+            expect(state.seenToolCalls.size).toBe(0);
+            return 'ok';
+        });
+
+        await aiService.runWithChain('chat', exec);
+
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('chain reset: Unexpected token in provider message'));
+    });
+
+    it('só registra retomada quando outro provider é efetivamente chamado', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+        mockIsAvailable.mockImplementation((provider: string) => provider === 'glm');
+        const exec = vi.fn().mockRejectedValue(makeQuotaError());
+
+        await expect(aiService.runWithChain('chat', exec)).rejects.toThrow('HTTP 429 rate limit');
+
+        expect(exec).toHaveBeenCalledTimes(1);
+        expect(mockLogger.info).not.toHaveBeenCalledWith(expect.stringContaining('chain resumed with'));
     });
 });
 
