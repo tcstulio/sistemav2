@@ -91,7 +91,7 @@ const mockPermissions = vi.hoisted(() => ({
 }));
 vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPermissions }));
 
-import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt } from '../../services/botService';
+import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt, buildAgentHistory, isAgentHistoryExcluded } from '../../services/botService';
 import { getToolContext, DEV_TOOLS, getToolsPrompt } from '../../services/agentTools';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
@@ -493,7 +493,7 @@ describe('BotService', () => {
             await botService.processMessage(createMessage({ body: 'Hello' }));
             expect(aiService.generateReply).not.toHaveBeenCalled();
         });
-        it('handles getMessages failure', async () => {
+        it('generates auto-reply with CRM context', async () => {
             (storeService.getChatSettings as any).mockReturnValue({});
 
             (storeService.getSessionSettings as any).mockReturnValue({
@@ -1064,5 +1064,154 @@ describe('#1501: self-check fail-fast com agentTools mockado (regressão #1498)'
         expect(() => botServiceMod.validateWhatsAppBotToolsPrompt()).not.toThrow();
 
         vi.resetModules();
+    });
+});
+
+// #1658 — testes unitários das funções PURAS `buildAgentHistory` e
+// `isAgentHistoryExcluded`. Sem I/O, sem LLM, sem mocks: asserção direta na
+// transformação do histórico. Garante que a EXCLUSÃO de notificações automáticas
+// sobrevive a refactors futuros e cobre os caminhos aceitos pelo prompt da issue:
+//   (a) flag `metadata.systemNotification === true` (scheduler + notificationService)
+//   (b) fallback regex do template de cobrança (cobre histórico antigo / moltbot /
+//       restart antes da persistência)
+//   (c) fallback de segurança via regex caso o template mude (notificações parciais)
+//   (d) preserva conversa real (model + user) intacta, sem cair em nenhum dos
+//       falsos-positivos clássicos ("Olá, fulano" do usuário, comandos `/...`, etc).
+describe('#1658 — isAgentHistoryExcluded / buildAgentHistory (função pura)', () => {
+    it('isAgentHistoryExcluded: true quando metadata.systemNotification === true (flag do scheduler)', () => {
+        expect(isAgentHistoryExcluded({ metadata: { systemNotification: true } })).toBe(true);
+        expect(isAgentHistoryExcluded({ body: 'qualquer', metadata: { systemNotification: true } })).toBe(true);
+    });
+
+    it('isAgentHistoryExcluded: true para o template canônico de cobrança (regex fallback #1658)', () => {
+        expect(isAgentHistoryExcluded({ body: 'Olá TULIO, a tarefa TK2511-0494 venceu em 20/07/2026.' })).toBe(true);
+        expect(isAgentHistoryExcluded({ body: 'Olá X, você é responsável pela tarefa TK9999-0001.' })).toBe(true);
+        // Template com descrição rica (caso do comentário da issue: vencimento + valor)
+        expect(isAgentHistoryExcluded({ body: 'Olá TULIO, a fatura FA2601-0042 venceu em 10/07/2026. Valor: R$ 1.234,56. Por favor, regularize.' })).toBe(false); // template de fatura é OUTRO — só cobramos tarefa
+    });
+
+    it('isAgentHistoryExcluded: FALSE para "Olá, fulano" SEM o template de tarefa (não é notificação)', () => {
+        expect(isAgentHistoryExcluded({ body: 'Olá, tudo bem?' })).toBe(false);
+        expect(isAgentHistoryExcluded({ body: 'Oi pessoal do grupo' })).toBe(false);
+        expect(isAgentHistoryExcluded({ body: 'Oi TULIO, beleza?' })).toBe(false);
+    });
+
+    it('isAgentHistoryExcluded: true para saída de /status e /ajuda (metadados do bot)', () => {
+        expect(isAgentHistoryExcluded({ body: '📊 *Status do Sistema*\n\n✅ Bot: Ativo' })).toBe(true);
+        expect(isAgentHistoryExcluded({ body: '📖 *Comandos Disponíveis*\n\n*Gerais:*' })).toBe(true);
+    });
+
+    it('isAgentHistoryExcluded: true para qualquer comando /…', () => {
+        expect(isAgentHistoryExcluded({ body: '/pagar 123' })).toBe(true);
+        expect(isAgentHistoryExcluded({ body: '/status' })).toBe(true);
+    });
+
+    it('isAgentHistoryExcluded: false para conversa real usuário↔agente', () => {
+        expect(isAgentHistoryExcluded({ body: 'oi' })).toBe(false);
+        expect(isAgentHistoryExcluded({ body: 'Como posso ajudar?' })).toBe(false);
+        expect(isAgentHistoryExcluded({ body: 'qual o status da TK2606-3559?' })).toBe(false);
+    });
+
+    it('buildAgentHistory: PRESERVA apenas a mensagem real do usuário após 3 notificações + "oi" (cenário do chat 59936436445425@lid)', () => {
+        const raw = [
+            { fromMe: true, body: 'Olá TULIO, a tarefa TK2511-0494 venceu em 20/07/2026.', metadata: { systemNotification: true } },
+            { fromMe: true, body: 'Olá TULIO, a tarefa TK2606-3559 vence em 21/07/2026.' },
+            { fromMe: true, body: 'Olá TULIO, a tarefa TK2606-3560 está sem progresso.' },
+            { fromMe: false, body: 'oi' },
+        ];
+        expect(buildAgentHistory(raw, false)).toEqual([{ role: 'user', parts: 'oi' }]);
+    });
+
+    it('buildAgentHistory: cobre as 4 vias do prompt da issue — flag, regex, conversa real, sem quebrar com mídia', () => {
+        // Mistura notificação COM flag (scheduler) + notificação SEM flag (histórico antigo /
+        // moltbot) + comando + conversa real. Garante que TODAS as vias do critério de aceite
+        // estão cobertas em UM único teste integrado.
+        const raw = [
+            { fromMe: true, body: 'Olá X, a tarefa TK1111-1111 venceu.', metadata: { systemNotification: true } }, // (a) flag
+            { fromMe: true, body: 'Olá Y, a tarefa TK2222-2222 está atrasada.' }, // (b) só regex
+            { fromMe: true, body: '/status' },                                  // comando → excluído
+            { fromMe: false, body: 'oi' },                                      // conversa real
+            { fromMe: true, body: 'tudo bem?' },                                // réplica do bot
+        ];
+        // 1:1 (isGroup=false): nenhuma consolidação entre "user" e "model"
+        expect(buildAgentHistory(raw, false)).toEqual([
+            { role: 'user', parts: 'oi' },
+            { role: 'model', parts: 'tudo bem?' },
+        ]);
+    });
+
+    it('buildAgentHistory: em GRUPO, prepende [senderName] e NÃO consolida entre falantes diferentes', () => {
+        const raw = [
+            { fromMe: false, body: 'oi', senderName: 'Alice' },
+            { fromMe: false, body: 'tudo bem?', senderName: 'Bob' },
+            { fromMe: true, body: 'Tudo certo!' },
+            { fromMe: false, body: '?', senderName: 'Alice' },
+        ];
+        expect(buildAgentHistory(raw, true)).toEqual([
+            { role: 'user', parts: '[Alice]: oi' },
+            { role: 'user', parts: '[Bob]: tudo bem?' },
+            { role: 'model', parts: 'Tudo certo!' },
+            { role: 'user', parts: '[Alice]: ?' },
+        ]);
+    });
+
+    it('buildAgentHistory: mídia sem texto do usuário vira "[Mídia recebida: tipo]" e, em 1:1, consolida com texto subsequente do mesmo remetente', () => {
+        const raw = [
+            { fromMe: false, body: '', hasMedia: true, type: 'image' },
+            { fromMe: false, body: 'viu a foto?' },
+        ];
+        // 1:1 (isGroup=false): mesma role + mesmo sender → consolida na mesma linha do LLM.
+        expect(buildAgentHistory(raw, false)).toEqual([
+            { role: 'user', parts: '[Mídia recebida: image]\nviu a foto?' },
+        ]);
+    });
+
+    it('buildAgentHistory: mídia do próprio bot consolida com a próxima resposta textual do bot (1:1)', () => {
+        const raw = [
+            { fromMe: true, body: '', hasMedia: true, type: 'image' },
+            { fromMe: true, body: 'Prontinho, aí vai.' },
+        ];
+        // 1:1: mesma role "model" + mesmo sender (null) → consolida em uma única linha
+        expect(buildAgentHistory(raw, false)).toEqual([
+            { role: 'model', parts: '[Mídia recebida: image]\nProntinho, aí vai.' },
+        ]);
+    });
+
+    it('buildAgentHistory: entradas com body vazio (sem mídia) são descartadas (nada para o LLM)', () => {
+        const raw = [
+            { fromMe: false, body: '' },
+            { fromMe: false, body: 'oi' },
+            { fromMe: false, body: '  ' }, // whitespace só
+        ];
+        expect(buildAgentHistory(raw, false)).toEqual([{ role: 'user', parts: 'oi' }]);
+    });
+
+    it('buildAgentHistory: histórico só com notificações ⇒ array VAZIO (LLM começa do zero, sem paranóia)', () => {
+        const raw = [
+            { fromMe: true, body: 'Olá TULIO, a tarefa TK2511-0494 venceu.', metadata: { systemNotification: true } },
+            { fromMe: true, body: 'Olá TULIO, a tarefa TK2606-3559 está atrasada.' },
+        ];
+        expect(buildAgentHistory(raw, false)).toEqual([]);
+    });
+
+    it('buildAgentHistory: preserva conversa MISTA (filtra só notificações + comandos; mantém a interação humana↔agente)', () => {
+        const raw = [
+            { fromMe: true, body: 'Olá TULIO, a tarefa TK2606-3559 venceu em 14/07/2026. Finalize.', metadata: { systemNotification: true } },
+            { fromMe: false, body: 'qual o status da TK2606-3559?' },
+            { fromMe: true, body: 'Vou consultar pra você.' },
+            { fromMe: true, body: 'Olá TULIO, a tarefa TK2606-3560 venceu em 13/07/2026.' },
+            { fromMe: false, body: 'oi' },
+        ];
+        const history = buildAgentHistory(raw, false);
+        const bodies = history.map(h => h.parts).join('\n---\n');
+        expect(bodies).not.toContain('Olá TULIO');
+        expect(bodies).not.toContain('TK2606-3559 venceu em');
+        expect(bodies).not.toContain('TK2606-3560');
+        // conversation tem que estar lá
+        expect(history.some(h => h.parts === 'qual o status da TK2606-3559?')).toBe(true);
+        expect(history.some(h => h.parts === 'Vou consultar pra você.')).toBe(true);
+        expect(history.some(h => h.parts === 'oi')).toBe(true);
+        // ordem preservada
+        expect(history.length).toBe(3);
     });
 });

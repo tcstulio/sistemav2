@@ -224,7 +224,16 @@ class NotificationService {
         // #1205: o channelRouter NÃO lança — devolve { success, error }. Ignorar o retorno marcava o
         // canal como ENTREGUE mesmo numa falha silenciosa (sessão caída, destino recusado). Checa e
         // lança, para o loop de entrega jogar em failedChannels (não em deliveredTo).
-        const result = await channelRouter.sendWhatsApp(chatId, notification.message);
+        // #1658 — marca a mensagem como `systemNotification` (notificação automática de cobrança/
+        // lembrete) para que o histórico do botService NÃO traga a mensagem para o LLM. Sem essa
+        // tag, o agente trataria a própria notificação como turno conversacional, dispararia a
+        // trava anti-injeção (#1332) e alucinaria que IDs reais como TK2606-3559 são "inventados".
+        const result = await channelRouter.sendWhatsApp(
+            chatId,
+            notification.message,
+            undefined,
+            { systemNotification: true }
+        );
         if (!result?.success) {
             throw new Error(result?.error || 'Envio de WhatsApp falhou (canal retornou success=false).');
         }

@@ -137,3 +137,40 @@ describe('notificationService — #1205 falha de canal NÃO marca entregue (deli
         expect(n.deliveredTo).not.toContain('email');
     });
 });
+
+// #1658 — Garante que `notificationService.deliverWhatsApp` SEMPRE propaga
+// `metadata={systemNotification:true}` para o `channelRouter.sendWhatsApp`.
+// Sem essa flag, o histórico do botService trata a notificação como turno
+// conversacional, dispara a trava anti-injeção (#1332) e alucina IDs reais como
+// "inventados".
+describe('notificationService — #1658 metadata.systemNotification no envio WhatsApp', () => {
+    beforeEach(async () => {
+        seed([]);
+        // Limpa os mocks vi.fn() para isolar este describe (canalRouter foi
+        // exercitado em outros describes e tem histórico de chamadas).
+        const { channelRouter } = await import('../../services/channelRouter');
+        (channelRouter.sendWhatsApp as any).mockClear();
+        (channelRouter.sendEmail as any).mockClear();
+    });
+
+    it('deliverWhatsApp chama channelRouter.sendWhatsApp com metadata.systemNotification=true', async () => {
+        const { channelRouter } = await import('../../services/channelRouter');
+        (channelRouter.sendWhatsApp as any).mockResolvedValueOnce({ success: true, messageId: 'x' });
+        await notificationService.notifyPerson({
+            event: 'task.overdue',
+            title: 'Tarefa vencida',
+            message: 'Olá TULIO, a tarefa TK9999-9999 venceu em 14/07/2026.',
+            channels: ['whatsapp'],
+            recipient: 'u1',
+            recipientPhone: '5511999990000',
+        } as any);
+
+        expect(channelRouter.sendWhatsApp).toHaveBeenCalledTimes(1);
+        const call = (channelRouter.sendWhatsApp as any).mock.calls[0];
+        // argumentos: [recipient, message, sessionId?, metadata?]
+        expect(call[0]).toBe('5511999990000@c.us');
+        expect(call[1]).toContain('Olá TULIO, a tarefa TK9999-9999');
+        expect(call[2]).toBeUndefined(); // sessionId default no resolver
+        expect(call[3]).toEqual({ systemNotification: true }); // <-- #1658: flag garantida
+    });
+});
