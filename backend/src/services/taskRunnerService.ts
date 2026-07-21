@@ -1696,11 +1696,13 @@ class TaskRunnerService {
     private autoPlayNext() {
         const config = this.getAutomationConfig();
         if (!config.autoPlay) return;
-        // #accelerate-sweep (red-team Fable O3): NÃO despacha se já há execução/dispatch em voo. Quem avança
-        // a cadeia ocupada é o `.finally` do exec (que só chama isto após decrementar pendingExecs). Sem esta
-        // guarda, chamadas concorrentes (sonda de cota, reevaluateAfterMerge, sweep de épicas) re-elegem a
-        // MESMA task 'pending' — que segue em getQueuedTasks mesmo já agendada na execChain — e a despacham 2×.
-        if (this.pendingExecs > 0) return;
+        // #accelerate-sweep (red-team Fable O3): NÃO despacha se todos os slots estão ocupados. Quem avança
+        // a fila é o `.finally` do exec (que só chama isto após decrementar pendingExecs) + o pollSync. Sem
+        // esta guarda, chamadas concorrentes (sonda de cota, reevaluateAfterMerge, sweep de épicas) re-elegem
+        // a MESMA task 'pending' — que segue em getQueuedTasks mesmo já agendada — e a despacham 2×.
+        // #slot-claim (Degrau 2 PR-3): a guarda passa a ser `>= maxParallelExec()` (nº de slots). Com o
+        // clamp em 1, `>= 1` ≡ `> 0` → BYTE-IDÊNTICO ao serial de hoje. Com N slots, permite até N em voo.
+        if (this.pendingExecs >= slotManager.maxParallelExec()) return;
         // Cota esgotada: NÃO despacha (evita queimar tasks em 429). A sonda em pollSync retoma quando volta.
         if (isQuotaExhausted()) { log.warn('Auto-play em espera: cota de LLM esgotada — aguardando sonda confirmar retorno da API.'); return; }
         // Horário de pico (3x): segura o dispatch p/ não queimar a cota semanal 3x mais rápido.
@@ -1715,7 +1717,15 @@ class TaskRunnerService {
         }
         const queued = this.getQueuedTasks();
         if (queued.length === 0) return;
-        const next = queued[0];
+        // #slot-claim (Degrau 2 PR-3): CLAIM ATÔMICO — nunca elege uma issue que JÁ está em voo
+        // (em execInFlight). Com N slots, sem este filtro, duas chamadas de autoPlayNext (ou o próprio
+        // avanço via .finally + pollSync) elegeriam a MESMA 'pending' (ela só sai de getQueuedTasks
+        // quando o async muda o status) e a despachariam 2× — o double-claim que o Fable provou ([100,100]).
+        // O claim em si é síncrono (startTask→scheduleExec incrementa pendingExecs/execInFlight sem await),
+        // então a eleição + dispatch não intercalam. Em serial (1 slot) execInFlight está vazio aqui
+        // (pendingExecs=0 → a guarda passou) → find === queued[0] → BYTE-IDÊNTICO.
+        const next = queued.find(t => !this.execInFlight.has(t.issueNumber));
+        if (!next) return;
         log.info(`Auto-play: iniciando #${next.issueNumber} automaticamente`);
         this.startTask(next.issueNumber).catch((e: any) => {
             log.warn(`Auto-play falhou para #${next.issueNumber}: ${e?.message || e}`);
