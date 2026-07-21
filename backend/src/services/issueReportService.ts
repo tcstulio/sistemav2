@@ -20,10 +20,12 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import path from 'path';
 import sanitizeHtml from 'sanitize-html';
+import * as cheerio from 'cheerio';
 import { v4 as uuidv4 } from 'uuid';
 import { createLogger } from '../utils/logger';
 import { buildIssueBody, IssueReportContext } from '../utils/issueBodyBuilder';
 import { createGitHubIssue, CreateGitHubIssueResult } from '../utils/githubIssue';
+import { signDeeplink } from '../utils/deeplinkToken';
 import { AppError } from '../middleware/errorHandler';
 
 const log = createLogger('IssueReport');
@@ -34,6 +36,55 @@ export const SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 export const HTML_MAX_BYTES = 1024 * 1024; // 1 MB
 /** Diretório de persistência (relativo a CWD do backend). */
 export const REPORTS_DIR = path.join(process.cwd(), 'uploads', 'reports');
+export const REPORT_SCREENSHOT_TOKEN_KIND = 'report_screenshot';
+export const REPORT_ASSET_TTL_SECONDS = 60 * 60;
+
+const REPORT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function getReportAssetPath(reportId: string, extension: 'png' | 'html'): string | null {
+    if (!REPORT_ID_PATTERN.test(String(reportId || '').trim())) return null;
+    const filePath = path.join(REPORTS_DIR, `${reportId}.${extension}`);
+    return existsSync(filePath) ? filePath : null;
+}
+
+export function getReportScreenshotPath(reportId: string): string | null {
+    return getReportAssetPath(reportId, 'png');
+}
+
+export function getReportHtmlPath(reportId: string): string | null {
+    return getReportAssetPath(reportId, 'html');
+}
+
+export function getReportScreenshotLink(reportId: string): string | null {
+    if (!getReportScreenshotPath(reportId)) return null;
+    const token = signDeeplink(REPORT_SCREENSHOT_TOKEN_KIND, { reportId }, REPORT_ASSET_TTL_SECONDS);
+    return `/api/issues/report/${encodeURIComponent(reportId)}/screenshot?token=${encodeURIComponent(token)}`;
+}
+
+export function getReportHtmlContent(reportId: string, selector?: string): string {
+    const filePath = getReportHtmlPath(reportId);
+    if (!filePath) {
+        throw new AppError(404, 'NOT_FOUND', 'Report não encontrado.');
+    }
+
+    const html = readFileSync(filePath, 'utf8');
+    if (!selector) return html;
+    if (selector.length > 500) {
+        throw new AppError(400, 'BAD_REQUEST', 'Seletor CSS excede o limite permitido.');
+    }
+
+    try {
+        const $ = cheerio.load(html);
+        const match = $(selector).first();
+        if (!match.length) {
+            throw new AppError(404, 'NOT_FOUND', 'Seletor CSS não encontrado no report.');
+        }
+        return match.html() ?? '';
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError(400, 'BAD_REQUEST', 'Seletor CSS inválido.');
+    }
+}
 
 /**
  * Payload público aceito pelo endpoint. Campos opcionais (htmlSnapshot,

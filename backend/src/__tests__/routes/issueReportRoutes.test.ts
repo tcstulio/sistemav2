@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import * as fs from 'fs';
+import { signDeeplink } from '../../utils/deeplinkToken';
+import { REPORT_SCREENSHOT_TOKEN_KIND } from '../../services/issueReportService';
 
 // === Mocks Hoisted ===
 
@@ -291,6 +294,41 @@ describe('POST /api/issues/report — auth', () => {
             .set('Content-Type', 'application/json');
         expect(res.status).toBe(401);
         expect(mockProcessIssueReport).not.toHaveBeenCalled();
+    });
+});
+
+describe('GET /api/issues/report/:id/screenshot', () => {
+    const reportId = 'a1b2c3d4-e5f6-4890-abcd-ef1234567890';
+
+    it('retorna PNG com token válido', async () => {
+        const token = signDeeplink(REPORT_SCREENSHOT_TOKEN_KIND, { reportId }, 3600);
+        const res = await request(createApp()).get(`/api/issues/report/${reportId}/screenshot`).query({ token });
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toMatch(/^image\/png/);
+    });
+
+    it('retorna 401 para token inválido', async () => {
+        const res = await request(createApp()).get(`/api/issues/report/${reportId}/screenshot`).query({ token: 'invalid' });
+        expect(res.status).toBe(401);
+        expect(res.body.error.message).toMatch(/inválido ou expirado/);
+    });
+});
+
+describe('GET /api/issues/report/:id/html', () => {
+    const reportId = 'a1b2c3d4-e5f6-4890-abcd-ef1234567890';
+
+    it('exige autenticação e retorna HTML filtrado pelo primeiro match', async () => {
+        (fs.readFileSync as any).mockReturnValue('<main><p class="error">primeiro</p><p class="error">segundo</p></main>');
+        const res = await request(createApp()).get(`/api/issues/report/${reportId}/html`).query({ selector: '.error' });
+        expect(res.status).toBe(200);
+        expect(res.text).toBe('primeiro');
+    });
+
+    it('retorna 404 para seletor inexistente', async () => {
+        (fs.readFileSync as any).mockReturnValue('<main>ok</main>');
+        const res = await request(createApp()).get(`/api/issues/report/${reportId}/html`).query({ selector: '.missing' });
+        expect(res.status).toBe(404);
+        expect(res.body.error.message).toMatch(/não encontrado/);
     });
 });
 
