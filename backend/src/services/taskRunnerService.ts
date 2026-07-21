@@ -25,6 +25,7 @@ import { recordUsage, getUsageForTask } from './taskUsageTracker';
 import { formatJudgeComment } from './judgeComment';
 import { findSimilarIssue } from '../utils/issueDedup';
 import { extractCiLogExcerpt, jobIdsFromRollup } from '../utils/ciLogExcerpt';
+import { slotManager } from './slotManager';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -34,7 +35,11 @@ const BIG = 20 * 1024 * 1024; // maxBuffer p/ saídas grandes (diff, npm, openco
 const STORE_PATH = path.join(__dirname, '../../data/tasks.json');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 // Worktree ISOLADO do TaskRunner — o agente nunca toca o diretório do dev/main.
-const WT_ROOT = path.resolve(REPO_ROOT, '..', 'sistemav2-taskrunner-wt');
+// Fase 2.1 (degrau-2): o path do worktree passa a vir do slotManager (fonte única slot-aware).
+// slot1.root é byte-idêntico ao antigo path.resolve(REPO_ROOT,'..','sistemav2-taskrunner-wt') —
+// zero mudança de comportamento. O threading do `slot` por parâmetro (troca de WT_ROOT p/ slot.root)
+// é a PR seguinte; esta só estabelece o SlotManager como dono do path. Ver slotManager.ts.
+const WT_ROOT = slotManager.slot1.root;
 // #kill-per-slot: PROMPT_FILE / VISUAL_JUDGE_MARKER / OPENCODE_ORPHAN_NEEDLES / RUN_MARKER_PREFIX
 // vêm de ../utils/gcWorktrees (fonte ÚNICA, compartilhada com o GC e o runOpencode — evita drift).
 // - PROMPT_FILE: arquivo de spec lido pelo coder (needle do run principal).
