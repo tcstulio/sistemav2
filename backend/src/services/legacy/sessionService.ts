@@ -82,8 +82,27 @@ export class SessionService {
     }
 
     private setStatus(sessionId: string, status: 'INITIALIZING' | 'SCAN_QR_CODE' | 'WORKING' | 'STOPPED' | 'STARTING') {
+        const prev = this.sessionStatus.get(sessionId);
         this.sessionStatus.set(sessionId, status);
         socketService.emit('session_status', { sessionId, status });
+        // #wa-conn-history: grava a transição no log persistente (só quando MUDA — evita o spam do QR
+        // que re-seta SCAN_QR a cada ~20s). É o histórico durável p/ debugar a instabilidade (LOGOUT).
+        if (prev !== status) this.connLog(sessionId, `STATUS ${prev || '-'} → ${status}`);
+    }
+
+    /**
+     * #wa-conn-history: histórico DURÁVEL de conexão/desconexão em backend/logs/whatsapp-connection.log.
+     * O buffer de logs em memória (500 linhas) rola em minutos por causa do QR a cada 20s, então o
+     * motivo de cada queda somia. Este arquivo (append, best-effort) preserva a linha do tempo real:
+     * transições de estado + motivo do 'disconnected' + auth_failure — o que precisamos p/ diagnosticar
+     * por que a sessão cai de WORKING (LOGOUT recorrente) em vez de adivinhar.
+     */
+    private connLog(sessionId: string, event: string) {
+        try {
+            const dir = 'logs';
+            fs.mkdirSync(dir, { recursive: true });
+            fs.appendFileSync(`${dir}/whatsapp-connection.log`, `${new Date().toISOString()} [${sessionId}] ${event}\n`, 'utf8');
+        } catch { /* best-effort — nunca quebra o fluxo da sessão */ }
     }
 
     /**
@@ -432,8 +451,14 @@ export class SessionService {
             }
         });
 
+        client.on('auth_failure', (msg) => {
+            log.warn(`[${sessionId}] Auth failure: ${msg}`);
+            this.connLog(sessionId, `AUTH_FAILURE ${String(msg).substring(0, 200)}`);
+        });
+
         client.on('disconnected', (reason) => {
             log.info(`[${sessionId}] Disconnected: ${reason}`);
+            this.connLog(sessionId, `DISCONNECTED reason=${reason}`);
             this.setStatus(sessionId, 'STOPPED');
 
             const nonRecoverableReasons = ['LOGOUT', 'DELETED_SESSION'];
