@@ -2,6 +2,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const schedulerBroadcastMaxRecipients = parseInt(
+    process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS || '100',
+    10
+);
+
 export const config = {
     port: process.env.PORT || 3004,
     dolibarrUrl: process.env.DOLIBARR_URL || 'https://sistema.coolgroove.com.br/api/index.php',
@@ -48,7 +53,9 @@ export const config = {
     webhookSecret: process.env.WEBHOOK_SECRET || '',
 
     // Cap de destinatários por broadcast do scheduler (anti-spam em massa). Configurável.
-    schedulerMaxBroadcast: parseInt(process.env.SCHEDULER_MAX_BROADCAST || '500', 10),
+    schedulerMaxBroadcast: Number.isInteger(schedulerBroadcastMaxRecipients) && schedulerBroadcastMaxRecipients > 0
+        ? schedulerBroadcastMaxRecipients
+        : 100,
 
     // Resiliência LLM: backoff exponencial em erros de infra (429/timeout/5xx).
     // LLM_PRIMARY_TIMEOUT_MS: tempo máximo por chamada ao provider primário (ms). Default 180s.

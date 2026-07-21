@@ -103,6 +103,7 @@ app.use(cors({
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 500, // 500 requests per IP per window
+    skip: req => req.method === 'POST' && req.path === '/api/whatsapp/webhook',
     message: { error: 'Too many requests. Please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -129,15 +130,6 @@ const bankingLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 30, // 30 banking requests per minute
     message: { error: 'Banking rate limit exceeded. Please wait.' },
-    standardHeaders: true,
-    legacyHeaders: false
-});
-
-// Scheduler limiter (message scheduling)
-const schedulerLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 30,
-    message: { error: 'Scheduler rate limit exceeded. Please wait.' },
     standardHeaders: true,
     legacyHeaders: false
 });
@@ -200,7 +192,7 @@ import { previewWriteGuard } from './middleware/previewWriteGuard';
 app.use('/api/dolibarr', previewWriteGuard);
 app.use('/api/dolibarr', dolibarrRoutes);
 
-app.use('/api/scheduler', schedulerLimiter, schedulerRoutes);
+app.use('/api/scheduler', schedulerRoutes);
 
 import webhookRoutes from './routes/webhookRoutes';
 app.use('/api/webhook', webhookRoutes);

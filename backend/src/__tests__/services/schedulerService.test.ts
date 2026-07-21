@@ -126,8 +126,9 @@ describe('SchedulerService', () => {
                 message: 'Test',
             });
 
-            const broadcastId = messages[0].metadata?.broadcastId!;
-            const details = schedulerService.getBroadcastDetails(broadcastId);
+            const broadcastId = messages[0].metadata?.broadcastId;
+            expect(broadcastId).toBeDefined();
+            const details = schedulerService.getBroadcastDetails(broadcastId as string);
 
             expect(details?.totalCount).toBe(2);
             expect(details?.pending).toBe(2);
@@ -329,6 +330,18 @@ describe('SchedulerService', () => {
 
             const rendered = schedulerService.renderTemplate(tpl.id, { name: 'John', order: '123' });
             expect(rendered).toBe('Hello John, your order 123 is ready.');
+        });
+
+        it('escapes HTML in rendered variables', () => {
+            const tpl = schedulerService.createTemplate({
+                name: 'Safe Render',
+                content: 'Hello {{name}}',
+            });
+
+            const rendered = schedulerService.renderTemplate(tpl.id, {
+                name: '<script>alert("xss")</script> & \'admin\'',
+            });
+            expect(rendered).toBe('Hello &lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt; &amp; &#39;admin&#39;');
         });
 
         it('returns null for unknown template', () => {

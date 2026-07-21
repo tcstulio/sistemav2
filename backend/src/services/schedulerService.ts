@@ -159,6 +159,18 @@ const STORE_PATH = path.join(__dirname, '../../data/scheduler_store.json');
 const CHECK_INTERVAL_MS = 30000; // Check every 30 seconds
 const MAX_MESSAGES_PER_MINUTE = 30;
 
+const HTML_ESCAPE_MAP: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+};
+
+function escapeTemplateValue(value: unknown): string {
+    return String(value ?? '').replace(/[&<>"']/g, character => HTML_ESCAPE_MAP[character]);
+}
+
 // --- Service ---
 
 class SchedulerService {
@@ -794,7 +806,7 @@ class SchedulerService {
 
         let content = template.content;
         for (const [key, value] of Object.entries(variables)) {
-            content = content.replaceAll(`{{${key}}}`, value);
+            content = content.replaceAll(`{{${key}}}`, escapeTemplateValue(value));
         }
 
         return content;

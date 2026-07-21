@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import { errorHandler } from '../../middleware/errorHandler';
+import { config } from '../../config/env';
 
 const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
 
@@ -97,6 +99,7 @@ function createApp() {
     const app = express();
     app.use(express.json());
     app.use('/api/whatsapp', whatsappRoutes);
+    app.use(errorHandler);
     return app;
 }
 
@@ -120,6 +123,27 @@ describe('whatsappRoutes', () => {
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(res.body.data.status).toBe('received');
+        });
+
+        it('keeps webhook signature validation when a secret is configured', async () => {
+            const previousSecret = config.webhookSecret;
+            config.webhookSecret = 'webhook-secret';
+
+            try {
+                const rejected = await request(app)
+                    .post('/api/whatsapp/webhook')
+                    .send({ message: 'test' });
+                const accepted = await request(app)
+                    .post('/api/whatsapp/webhook')
+                    .set('x-webhook-signature', 'webhook-secret')
+                    .send({ message: 'test' });
+
+                expect(rejected.status).toBe(401);
+                expect(rejected.body.error.code).toBe('UNAUTHORIZED');
+                expect(accepted.status).toBe(200);
+            } finally {
+                config.webhookSecret = previousSecret;
+            }
         });
     });
 

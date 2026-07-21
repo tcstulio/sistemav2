@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { MessageMedia } from 'whatsapp-web.js';
 import { sessionService } from '../services/legacy/sessionService';
 import { messageService } from '../services/legacy/messageService';
@@ -7,18 +8,16 @@ import { moltbotGateway } from '../services/moltbotGateway';
 import { storeService } from '../services/storeService';
 import { socketService } from '../services/socketService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { validateBody } from '../middleware/validation';
+import { rateLimiters } from '../middleware/rateLimit';
 import { z } from 'zod';
 import { createLogger } from '../utils/logger';
-import { FEATURES } from '../config/features';
+import { config } from '../config/env';
 import { ok, fail } from '../utils/apiResponse';
-import {
-    whatsappCheckLimiter,
-    whatsappWebhookLimiter,
-} from '../middleware/whatsappRateLimiters';
+import { whatsappWebhookLimiter } from '../middleware/whatsappRateLimiters';
 
 const log = createLogger('WhatsApp');
 const router = Router();
-const DEFAULT_SESSION = 'default';
 
 // ============================================================
 // #1568 — Schemas Zod compartilhados
@@ -36,23 +35,31 @@ const DEFAULT_SESSION = 'default';
 export const ALLOWED_DDIS = ['55', '1', '351', '34', '49', '33', '39', '44', '54', '56', '57'] as const;
 export const WHATSAPP_CHAT_SUFFIX = '@c.us';
 
-export const phoneSchema = z
-    .string()
-    .regex(/^\d{10,13}$/, 'Phone must contain 10-13 digits')
-    .refine(
-        (n) => ALLOWED_DDIS.some((ddi) => n.startsWith(ddi)),
-        { message: `Phone DDI not in allowed list (${ALLOWED_DDIS.join(', ')})` }
-    );
+export function normalizePhone(input: string): string {
+    return String(input || '').replace(/\D/g, '');
+}
+
+export const phoneSchema = z.preprocess(
+    value => typeof value === 'string' ? normalizePhone(value) : value,
+    z.string()
+        .regex(/^\d{10,13}$/, 'Phone must contain 10-13 digits')
+        .refine(
+            n => ALLOWED_DDIS.some(ddi => n.startsWith(ddi)),
+            { message: `Phone DDI not in allowed list (${ALLOWED_DDIS.join(', ')})` }
+        )
+);
 
 export const sendSchema = z.object({
     to: phoneSchema,
     message: z.string().min(1).max(4096),
     mediaUrl: z.string().url().optional(),
+    sessionId: z.string().min(1).optional(),
 });
 
 export const sendBulkSchema = z.object({
     recipients: z.array(phoneSchema).min(1).max(100),
     message: z.string().min(1).max(4096),
+    sessionId: z.string().min(1).optional(),
 });
 
 export const templateSchema = z.object({
@@ -60,22 +67,85 @@ export const templateSchema = z.object({
     name: z.string().min(1),
     language: z.string().min(1),
     components: z.array(z.any()),
+    sessionId: z.string().min(1).optional(),
+});
+
+const UserSettingsSchema = z.object({
+    signatureName: z.string().optional(),
+});
+
+const StartSchema = z.object({
+    name: z.string().optional(),
+    sessionId: z.string().min(1).optional(),
+});
+
+const SessionSettingsSchema = z.object({
+    sessionId: z.string().min(1),
+    autoReply: z.boolean().optional(),
+    autoReplyContext: z.string().optional(),
+    signatureName: z.string().optional(),
+    name: z.string().optional(),
+});
+
+const ChatSettingsSchema = z.object({
+    chatId: z.string().min(1),
+    autoReplyEnabled: z.boolean().optional(),
+    groupSettings: z.object({
+        llmEnabled: z.boolean().optional(),
+        responseFrequency: z.object({
+            value: z.number(),
+            unit: z.enum(['minutes', 'hours', 'days']),
+        }).optional(),
+        burstHandling: z.object({
+            enabled: z.boolean(),
+            threshold: z.number(),
+        }).optional(),
+        messageCounter: z.number().optional(),
+    }).optional(),
+});
+
+const ProfilePictureSchema = z.object({
+    fileData: z.string().min(1),
+    mimetype: z.string().min(1),
+    filename: z.string().optional(),
+    sessionId: z.string().min(1).optional(),
+});
+
+const ProfileNameSchema = z.object({
+    name: z.string().min(1),
+    sessionId: z.string().min(1).optional(),
+});
+const ProfileStatusSchema = z.object({
+    status: z.string().min(1),
+    sessionId: z.string().min(1).optional(),
+});
+const ProfilePresenceSchema = z.object({
+    presence: z.enum(['online', 'offline']),
+    sessionId: z.string().min(1).optional(),
+});
+
+const AssignSchema = z.object({
+    chatId: z.string().min(1),
+    userId: z.string().nullable().optional(),
+});
+
+const SendFileSchema = z.object({
+    chatId: z.string().min(1),
+    fileData: z.string().min(1),
+    filename: z.string().min(1),
+    caption: z.string().optional(),
+    sessionId: z.string().min(1).optional(),
+});
+
+const SendVoiceSchema = z.object({
+    chatId: z.string().min(1),
+    fileData: z.string().min(1),
+    sessionId: z.string().min(1).optional(),
 });
 
 // ============================================================
 // Helpers (#1568)
 // ============================================================
-
-/**
- * Normaliza número removendo caracteres não-numéricos (`+`, espaços, parênteses, hífens).
- * Garante a invariante "digits only" antes de montar o `chatId` (`<digits>@c.us`)
- * e antes de chamar a API do WhatsApp — sem isso, `+55 (11) 98765-4321` quebraria o
- * matcher `id.endsWith('@c.us')` no isRegisteredUser.
- */
-export function normalizePhone(input: string): string {
-    return String(input || '').replace(/\D/g, '');
-}
-
 /**
  * Converte número bruto em `chatId` (formato `<digits>@c.us`).
  * Faz normalize antes para inputs com máscara. Idempotente: se já vier com `@`, mantém.
@@ -106,11 +176,34 @@ function handleZodError(res: any, error: any) {
     return null;
 }
 
+function safeEqual(left: string, right: string): boolean {
+    const leftBuffer = Buffer.from(left);
+    const rightBuffer = Buffer.from(right);
+    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function requireWebhookSignature(req: Request, res: Response, next: NextFunction) {
+    if (!config.webhookSecret) {
+        if (process.env.NODE_ENV === 'production') {
+            return fail(res, 'SERVICE_UNAVAILABLE', 'Webhook signature is not configured', 503);
+        }
+        return next();
+    }
+
+    const signature = String(
+        req.headers['x-webhook-signature'] || req.headers['x-webhook-secret'] || ''
+    );
+    if (!safeEqual(signature, config.webhookSecret)) {
+        return fail(res, 'UNAUTHORIZED', 'Invalid webhook signature', 401);
+    }
+    return next();
+}
+
 // 1. PUBLIC ROUTES (Webhooks)
 // Webhook Receiver (Legacy / External) - Must be before Auth Middleware
 // #1568 — limiter para evitar abuso (300/min). Webhook continua público mas com
 // protecção contra DoS / scrapers (issue #1568, AC: "301ª request em 1 minuto → 429").
-router.post('/webhook', whatsappWebhookLimiter, (req, res) => {
+router.post('/webhook', requireWebhookSignature, whatsappWebhookLimiter, (req, res) => {
     const event = req.body;
     log.info('Webhook received', event);
     socketService.emit('whatsapp_message', event);
@@ -159,7 +252,7 @@ router.get('/status', async (req, res) => {
 });
 
 // Start Session
-router.post('/start', async (req, res) => {
+router.post('/start', validateBody(StartSchema), async (req, res) => {
     const sessionId = getSessionId(req);
     const { name } = req.body;
     try {
@@ -190,7 +283,7 @@ router.delete('/sessions/:sessionId', async (req, res) => {
 // #1568 — `whatsappCheckLimiter` (10/min/IP) aplicado especificamente aqui para
 // prevenir enumeração. Validação Zod ANTES do limiter ser estourado: input inválido
 // recebe 400 antes de consumir budget do limiter (acceptance criterion: /check-number/abc → 400).
-router.get('/check-number/:number', whatsappCheckLimiter, async (req, res) => {
+router.get('/check-number/:number', rateLimiters.strict, async (req, res) => {
     // #1568 — validação rigorosa do número (phoneSchema). ':number' na URL já chega
     // trimmed, mas normalizamos para descartar dígitos colados a prefixos estranhos.
     const { number } = req.params;
@@ -242,23 +335,11 @@ router.get('/qrcode', async (req, res) => {
 //   callers precisam enviar `{ to, message, mediaUrl?, sessionId? }`. Sessão
 //   continua opcional (default = getDefaultSessionId()).
 // ============================================================
-router.post('/send', async (req, res) => {
+router.post('/send', validateBody(sendSchema), async (req, res) => {
     try {
-        // #1568 — normaliza `to` ANTES de validar (phoneSchema aceita só digits).
-        // Inputs com `+`, espaços, parênteses ou hífens viram digits-only e
-        // passam pela validação subsequente.
-        const body = { ...req.body };
-        if (typeof body.to === 'string') {
-            body.to = normalizePhone(body.to);
-        }
-        const parsed = sendSchema.safeParse(body);
-        if (!parsed.success) {
-            return handleZodError(res, parsed.error);
-        }
-        const { to, message, mediaUrl } = parsed.data;
-        const sessionId = req.body?.sessionId || getSessionId(req);
+        const { to, message, mediaUrl, sessionId: bodySessionId } = req.body;
+        const sessionId = bodySessionId || getSessionId(req);
 
-        // #1568 — número normalizado, chatId derivado de digits-only.
         const chatId = toChatId(to);
 
         log.info('Sending WhatsApp message', { chatId, sessionId });
@@ -306,21 +387,10 @@ router.post('/send', async (req, res) => {
 // ruim). Cada envio consome 1 unidade do limiter genérico de envio (que aplicaremos
 // no server.ts futuramente se virar gargalo).
 // ============================================================
-router.post('/send-bulk', async (req, res) => {
+router.post('/send-bulk', validateBody(sendBulkSchema), async (req, res) => {
     try {
-        // #1568 — normaliza cada recipient antes da validação.
-        const body = { ...req.body };
-        if (Array.isArray(body.recipients)) {
-            body.recipients = body.recipients.map((r: unknown) =>
-                typeof r === 'string' ? normalizePhone(r) : r
-            );
-        }
-        const parsed = sendBulkSchema.safeParse(body);
-        if (!parsed.success) {
-            return handleZodError(res, parsed.error);
-        }
-        const { recipients, message } = parsed.data;
-        const sessionId = req.body?.sessionId || getSessionId(req);
+        const { recipients, message, sessionId: bodySessionId } = req.body;
+        const sessionId = bodySessionId || getSessionId(req);
         const currentUser = (req as any).user;
 
         const finalText = currentUser
@@ -374,19 +444,10 @@ router.post('/send-bulk', async (req, res) => {
 // o template é apenas validado/resolvido sem envio (útil para pré-validação no
 // frontend). Quando presente, normaliza o número e dispara o envio.
 // ============================================================
-router.post('/template', async (req, res) => {
+router.post('/template', validateBody(templateSchema), async (req, res) => {
     try {
-        // #1568 — normaliza `to` antes da validação (mesma razão de /send e /send-bulk).
-        const body = { ...req.body };
-        if (typeof body.to === 'string') {
-            body.to = normalizePhone(body.to);
-        }
-        const parsed = templateSchema.safeParse(body);
-        if (!parsed.success) {
-            return handleZodError(res, parsed.error);
-        }
-        const { to, name, language, components } = parsed.data;
-        const sessionId = req.body?.sessionId || getSessionId(req);
+        const { to, name, language, components, sessionId: bodySessionId } = req.body;
+        const sessionId = bodySessionId || getSessionId(req);
 
         // Se `to` foi passado, disparamos o envio do template (envolve a API).
         // Senão, só validamos/resolvemos o template (a integração real com a API
@@ -415,7 +476,7 @@ router.post('/template', async (req, res) => {
 // Settings Routes
 
 // 1. User Settings (Signature only)
-router.post('/settings/user', async (req, res) => {
+router.post('/settings/user', validateBody(UserSettingsSchema), async (req, res) => {
     try {
         const user = (req as any).user;
         if (!user) return fail(res, 'UNAUTHORIZED', 'User not found', 401);
@@ -429,15 +490,9 @@ router.post('/settings/user', async (req, res) => {
 });
 
 // 2. Session Settings (Auto-Reply Global)
-router.post('/settings/session', async (req, res) => {
+router.post('/settings/session', validateBody(SessionSettingsSchema), async (req, res) => {
     try {
-        const { sessionId, autoReply, autoReplyContext, signatureName, name } = z.object({
-            sessionId: z.string().min(1),
-            autoReply: z.boolean().optional(),
-            autoReplyContext: z.string().optional(),
-            signatureName: z.string().optional(),
-            name: z.string().optional()
-        }).parse(req.body);
+        const { sessionId, autoReply, autoReplyContext, signatureName, name } = req.body;
 
         storeService.updateSessionSettings(sessionId, { autoReply, autoReplyContext, signatureName, name });
         // #1568 — envelope padrão
@@ -450,24 +505,9 @@ router.post('/settings/session', async (req, res) => {
 });
 
 // 3. Chat Settings (Override)
-router.post('/settings/chat', async (req, res) => {
+router.post('/settings/chat', validateBody(ChatSettingsSchema), async (req, res) => {
     try {
-        const { chatId, autoReplyEnabled, groupSettings } = z.object({
-            chatId: z.string().min(1),
-            autoReplyEnabled: z.boolean().optional(),
-            groupSettings: z.object({
-                llmEnabled: z.boolean().optional(),
-                responseFrequency: z.object({
-                    value: z.number(),
-                    unit: z.enum(['minutes', 'hours', 'days'])
-                }).optional(),
-                burstHandling: z.object({
-                    enabled: z.boolean(),
-                    threshold: z.number()
-                }).optional(),
-                messageCounter: z.number().optional()
-            }).optional()
-        }).parse(req.body);
+        const { chatId, autoReplyEnabled, groupSettings } = req.body;
 
         storeService.updateChatSettings(chatId, { autoReplyEnabled, groupSettings });
         // #1568 — envelope padrão
@@ -519,14 +559,10 @@ router.get('/profile', async (req, res) => {
     }
 });
 
-router.post('/profile/picture', async (req, res) => {
+router.post('/profile/picture', validateBody(ProfilePictureSchema), async (req, res) => {
     const sessionId = getSessionId(req);
     try {
-        const { fileData, mimetype, filename } = z.object({
-            fileData: z.string().min(1),
-            mimetype: z.string().min(1),
-            filename: z.string().optional()
-        }).parse(req.body);
+        const { fileData, mimetype, filename } = req.body;
 
         const media = new MessageMedia(mimetype, fileData, filename);
         const result = await sessionService.setProfilePicture(sessionId, media);
@@ -550,10 +586,10 @@ router.delete('/profile/picture', async (req, res) => {
     }
 });
 
-router.post('/profile/name', async (req, res) => {
+router.post('/profile/name', validateBody(ProfileNameSchema), async (req, res) => {
     const sessionId = getSessionId(req);
     try {
-        const { name } = z.object({ name: z.string().min(1) }).parse(req.body);
+        const { name } = req.body;
         const result = await sessionService.setDisplayName(sessionId, name);
         // #1568 — envelope padrão
         return ok(res, { success: result });
@@ -564,10 +600,10 @@ router.post('/profile/name', async (req, res) => {
     }
 });
 
-router.post('/profile/status', async (req, res) => {
+router.post('/profile/status', validateBody(ProfileStatusSchema), async (req, res) => {
     const sessionId = getSessionId(req);
     try {
-        const { status } = z.object({ status: z.string().min(1) }).parse(req.body);
+        const { status } = req.body;
         const result = await sessionService.setAbout(sessionId, status);
         // #1568 — envelope padrão
         return ok(res, { success: result });
@@ -578,10 +614,10 @@ router.post('/profile/status', async (req, res) => {
     }
 });
 
-router.post('/profile/presence', async (req, res) => {
+router.post('/profile/presence', validateBody(ProfilePresenceSchema), async (req, res) => {
     const sessionId = getSessionId(req);
     try {
-        const { presence } = z.object({ presence: z.enum(['online', 'offline']) }).parse(req.body);
+        const { presence } = req.body;
         await sessionService.setPresence(sessionId, presence);
         // #1568 — envelope padrão
         return ok(res, { success: true });
@@ -594,12 +630,9 @@ router.post('/profile/presence', async (req, res) => {
 
 
 // Assign Conversation (Persist)
-router.post('/assign', async (req, res) => {
+router.post('/assign', validateBody(AssignSchema), async (req, res) => {
     try {
-        const { chatId, userId } = z.object({
-            chatId: z.string().min(1),
-            userId: z.string().nullable().optional()
-        }).parse(req.body);
+        const { chatId, userId } = req.body;
 
         storeService.assignConversation(chatId, userId || null);
         // #1568 — envelope padrão
@@ -688,15 +721,9 @@ router.get('/messages/:messageId/media', async (req, res) => {
 });
 
 // Send File
-router.post('/send-file', async (req, res) => {
+router.post('/send-file', validateBody(SendFileSchema), async (req, res) => {
     try {
-        const { chatId, fileData, filename, caption, sessionId } = z.object({
-            chatId: z.string().min(1),
-            fileData: z.string().min(1), // Base64
-            filename: z.string().min(1),
-            caption: z.string().optional(),
-            sessionId: z.string().optional()
-        }).parse(req.body);
+        const { chatId, fileData, filename, caption, sessionId } = req.body;
 
         const targetSession = sessionId || getSessionId(req);
 
@@ -718,13 +745,9 @@ router.post('/send-file', async (req, res) => {
 });
 
 // Send Voice
-router.post('/send-voice', async (req, res) => {
+router.post('/send-voice', validateBody(SendVoiceSchema), async (req, res) => {
     try {
-        const { chatId, fileData, sessionId } = z.object({
-            chatId: z.string().min(1),
-            fileData: z.string().min(1),
-            sessionId: z.string().optional()
-        }).parse(req.body);
+        const { chatId, fileData, sessionId } = req.body;
 
         const targetSession = sessionId || getSessionId(req);
 
@@ -746,13 +769,9 @@ router.post('/send-voice', async (req, res) => {
 });
 
 // Send Voice NATIVE (Test) - Uses channelRouter
-router.post('/send-voice-native', async (req, res) => {
+router.post('/send-voice-native', validateBody(SendVoiceSchema), async (req, res) => {
     try {
-        const { chatId, fileData, sessionId } = z.object({
-            chatId: z.string().min(1),
-            fileData: z.string().min(1),
-            sessionId: z.string().optional()
-        }).parse(req.body);
+        const { chatId, fileData, sessionId } = req.body;
 
         const targetSession = sessionId || getSessionId(req);
         const result = await channelRouter.sendWhatsAppVoice(chatId, fileData, targetSession);

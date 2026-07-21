@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import { errorHandler } from '../../middleware/errorHandler';
 
 const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
+const mockSchedulerLimiter = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
 
 const mockSchedulerService = vi.hoisted(() => ({
     scheduleMessage: vi.fn(() => ({ id: 'msg-1', chatId: '123', message: 'test', scheduledAt: Date.now() })),
@@ -19,6 +21,10 @@ const mockSchedulerService = vi.hoisted(() => ({
 
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
+}));
+
+vi.mock('../../middleware/rateLimit', () => ({
+    rateLimiters: { scheduler: mockSchedulerLimiter },
 }));
 
 vi.mock('../../services/schedulerService', () => ({
@@ -41,6 +47,7 @@ function createApp() {
     const app = express();
     app.use(express.json());
     app.use('/api/scheduler', schedulerRoutes);
+    app.use(errorHandler);
     return app;
 }
 
@@ -60,6 +67,16 @@ describe('schedulerRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
+        });
+
+        it('supports POST /jobs with scheduler rate limiting', async () => {
+            const res = await request(app)
+                .post('/api/scheduler/jobs')
+                .send({ chatId: '123', sessionId: 'default', message: 'Hello' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockSchedulerLimiter).toHaveBeenCalledTimes(1);
         });
 
         it('returns 400 when missing required fields', async () => {
@@ -88,6 +105,7 @@ describe('schedulerRoutes', () => {
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(mockSchedulerService.scheduleBroadcast).toHaveBeenCalledTimes(1);
+            expect(mockSchedulerLimiter).toHaveBeenCalledTimes(1);
         });
 
         it('returns 400 when chatIds is empty', async () => {
@@ -106,6 +124,18 @@ describe('schedulerRoutes', () => {
                 .send({ sessionId: 'default', chatIds, message: 'Hello' });
 
             expect(res.status).toBe(400);
+            expect(mockSchedulerService.scheduleBroadcast).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 with a clear message for 101 recipients', async () => {
+            const chatIds = Array.from({ length: 101 }, (_, i) => `${i}@c.us`);
+            const res = await request(app)
+                .post('/api/scheduler/broadcast')
+                .send({ sessionId: 'default', chatIds, message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.message).toContain('100');
             expect(mockSchedulerService.scheduleBroadcast).not.toHaveBeenCalled();
         });
     });
@@ -132,6 +162,22 @@ describe('schedulerRoutes', () => {
             const res = await request(app).delete('/api/scheduler/not-found');
 
             expect(res.status).toBe(404);
+        });
+    });
+
+    describe('POST /api/scheduler/templates', () => {
+        it('validates and rate-limits template creation', async () => {
+            const res = await request(app)
+                .post('/api/scheduler/templates')
+                .send({ name: 'Welcome', content: 'Hello {{name}}' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockSchedulerLimiter).toHaveBeenCalledTimes(1);
+            expect(mockSchedulerService.createTemplate).toHaveBeenCalledWith(expect.objectContaining({
+                name: 'Welcome',
+                content: 'Hello {{name}}',
+            }));
         });
     });
 
