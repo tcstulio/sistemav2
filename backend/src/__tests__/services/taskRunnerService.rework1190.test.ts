@@ -26,6 +26,10 @@ import { taskRunnerService } from '../../services/taskRunnerService';
 
 const svc = taskRunnerService as any;
 
+// Degrau-2 PR-2: branchIsAheadOfMain/hasExistingCommittedWork recebem o `slot` por parâmetro
+// (era a const global WT_ROOT). Slot fake — o git/gh estão mockados via execFile, o path não pesa.
+const fakeSlot = { id: 1, root: '/tmp/fake-slot', dataDir: null };
+
 // Estado controlável das "fontes" lidas do git/gh. Cada teste os ajusta e depois
 // monta o mock do execFile para responder de acordo com o comando/subcomando.
 let gitRevListCount = '0';        // `git rev-list --count origin/main..HEAD`
@@ -83,7 +87,7 @@ describe('#1190 — hasCommittedWork (helper PURO)', () => {
 describe('#1190 — branchIsAheadOfMain (lê git rev-list --count origin/main..HEAD)', () => {
     it('retorna TRUE quando há commits além da main (count > 0)', async () => {
         gitRevListCount = '3';
-        expect(await svc.branchIsAheadOfMain()).toBe(true);
+        expect(await svc.branchIsAheadOfMain(fakeSlot)).toBe(true);
         // evidencia: o comando certo foi chamado
         const calls = vi.mocked(execFile).mock.calls.filter((c: any) => c[0] === 'git');
         expect(calls.some((c: any) => (c[1] as string[]).slice(0, 3).join(' ') === 'rev-list --count origin/main..HEAD')).toBe(true);
@@ -91,7 +95,7 @@ describe('#1190 — branchIsAheadOfMain (lê git rev-list --count origin/main..H
 
     it('retorna FALSE quando count == 0 (branch == main)', async () => {
         gitRevListCount = '0';
-        expect(await svc.branchIsAheadOfMain()).toBe(false);
+        expect(await svc.branchIsAheadOfMain(fakeSlot)).toBe(false);
     });
 
     it('retorna FALSE (best-effort) quando o git lança erro', async () => {
@@ -100,7 +104,7 @@ describe('#1190 — branchIsAheadOfMain (lê git rev-list --count origin/main..H
             setImmediate(() => cb(new Error('no origin/main'), { stdout: '', stderr: '' }));
             return undefined as any;
         }) as any);
-        expect(await svc.branchIsAheadOfMain()).toBe(false);
+        expect(await svc.branchIsAheadOfMain(fakeSlot)).toBe(false);
     });
 });
 
@@ -127,7 +131,7 @@ describe('#1190 — hasExistingCommittedWork (combina as 3 fontes via helper pur
         gitStatusPorcelain = '';
         ghPrDiffFiles = '';
         const task = { prNumber: undefined } as any;
-        expect(await svc.hasExistingCommittedWork(task, [])).toBe(true);
+        expect(await svc.hasExistingCommittedWork(task, fakeSlot, [])).toBe(true);
     });
 
     it('CAMINHO 1b (re-work): PR existente com diff → TRUE (não deve falhar)', async () => {
@@ -135,7 +139,7 @@ describe('#1190 — hasExistingCommittedWork (combina as 3 fontes via helper pur
         gitStatusPorcelain = '';
         ghPrDiffFiles = 'src/changed.ts\n';
         const task = { prNumber: 7 } as any;
-        expect(await svc.hasExistingCommittedWork(task, [])).toBe(true);
+        expect(await svc.hasExistingCommittedWork(task, fakeSlot, [])).toBe(true);
     });
 
     it('CAMINHO 2 (genuinamente vazia): branch == main, sem PR, worktree limpo → FALSE (deve falhar)', async () => {
@@ -143,7 +147,7 @@ describe('#1190 — hasExistingCommittedWork (combina as 3 fontes via helper pur
         gitStatusPorcelain = '';
         ghPrDiffFiles = '';
         const task = { prNumber: undefined } as any;
-        expect(await svc.hasExistingCommittedWork(task, [])).toBe(false);
+        expect(await svc.hasExistingCommittedWork(task, fakeSlot, [])).toBe(false);
     });
 
     it('worktree com mudanças não-commitadas também conta como trabalho (TRUE)', async () => {
@@ -151,6 +155,6 @@ describe('#1190 — hasExistingCommittedWork (combina as 3 fontes via helper pur
         gitStatusPorcelain = '';
         ghPrDiffFiles = '';
         const task = { prNumber: undefined } as any;
-        expect(await svc.hasExistingCommittedWork(task, ['src/wip.ts'])).toBe(true);
+        expect(await svc.hasExistingCommittedWork(task, fakeSlot, ['src/wip.ts'])).toBe(true);
     });
 });
