@@ -18,13 +18,19 @@
  * Auth: `requireDolibarrLogin` — mesma política do resto de `/api/github/*`.
  */
 import { Router, Request, Response, NextFunction } from 'express';
+import { readFileSync } from 'fs';
 import { z, ZodError, ZodSchema } from 'zod';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { adminAuditService } from '../services/adminAuditService';
 import { createLogger } from '../utils/logger';
 import { AppError, ValidationError } from '../middleware/errorHandler';
+import { fail } from '../utils/apiResponse';
+import { verifyDeeplink } from '../utils/deeplinkToken';
 import {
     processIssueReport,
+    getReportScreenshotPath,
+    getReportHtmlContent,
+    REPORT_SCREENSHOT_TOKEN_KIND,
     SCREENSHOT_MAX_BYTES,
     IssueReportPayload,
 } from '../services/issueReportService';
@@ -160,6 +166,44 @@ router.post(
             next(err);
         }
     }
+);
+
+router.get(
+    '/issues/report/:id/screenshot',
+    (req: Request, res: Response) => {
+        const reportId = String(req.params.id || '');
+        const token = typeof req.query.token === 'string' ? req.query.token : '';
+        let payload: { data?: { reportId?: string } } | null = null;
+        try {
+            payload = token ? verifyDeeplink<{ reportId: string }>(token, REPORT_SCREENSHOT_TOKEN_KIND) : null;
+        } catch {
+            payload = null;
+        }
+        if (!payload || payload.data?.reportId !== reportId) {
+            return fail(res, 'UNAUTHORIZED', 'Link do screenshot inválido ou expirado.', 401);
+        }
+
+        const filePath = getReportScreenshotPath(reportId);
+        if (!filePath) {
+            return fail(res, 'NOT_FOUND', 'Report não encontrado.', 404);
+        }
+
+        return res.type('png').send(readFileSync(filePath));
+    },
+);
+
+router.get(
+    '/issues/report/:id/html',
+    requireDolibarrLogin,
+    (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const selector = typeof req.query.selector === 'string' ? req.query.selector : undefined;
+            const html = getReportHtmlContent(String(req.params.id || ''), selector);
+            return res.type('html').send(html);
+        } catch (error) {
+            return next(error);
+        }
+    },
 );
 
 // Head/GET para healthcheck do endpoint (usado pelo tunnel / smoke tests).

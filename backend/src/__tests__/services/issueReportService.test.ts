@@ -23,10 +23,17 @@ import {
     persistHtmlSnapshot,
     buildDefaultTitle,
     processIssueReport,
+    getReportScreenshotPath,
+    getReportHtmlPath,
+    getReportHtmlContent,
+    getReportScreenshotLink,
+    REPORT_SCREENSHOT_TOKEN_KIND,
+    REPORT_ASSET_TTL_SECONDS,
     SCREENSHOT_MAX_BYTES,
     REPORTS_DIR,
     IssueReportPayload,
 } from '../../services/issueReportService';
+import { verifyDeeplink } from '../../utils/deeplinkToken';
 import path from 'path';
 
 beforeEach(() => {
@@ -172,6 +179,39 @@ describe('issueReportService — persistHtmlSnapshot', () => {
         expect(text).not.toContain('<script');
     });
 });
+
+describe('issueReportService — assets de report', () => {
+    const reportId = 'a1b2c3d4-e5f6-4890-abcd-ef1234567890';
+
+    it('encontra apenas assets de report com UUID válido', () => {
+        expect(getReportScreenshotPath(reportId)?.replace(/\\/g, '/')).toContain(`${REPORTS_DIR.replace(/\\/g, '/')}/${reportId}.png`);
+        expect(getReportHtmlPath(reportId)?.endsWith(`${reportId}.html`)).toBe(true);
+        expect(getReportScreenshotPath('../report')).toBeNull();
+        expect(getReportHtmlPath('42')).toBeNull();
+    });
+
+    it('retorna o HTML completo ou o innerHTML do primeiro match', () => {
+        (fs.readFileSync as any).mockReturnValue('<main><p class="error">primeiro</p><p class="error">segundo</p></main>');
+        expect(getReportHtmlContent(reportId)).toContain('<main>');
+        expect(getReportHtmlContent(reportId, '.error')).toBe('primeiro');
+    });
+
+    it('retorna erros amigáveis para seletor ausente ou inválido', () => {
+        (fs.readFileSync as any).mockReturnValue('<main>ok</main>');
+        expect(() => getReportHtmlContent(reportId, '.missing')).toThrow(/não encontrado/);
+        expect(() => getReportHtmlContent(reportId, '[')).toThrow(/inválido/);
+    });
+
+    it('gera link de screenshot com token válido por uma hora', () => {
+        const link = getReportScreenshotLink(reportId);
+        expect(link).toContain(`/api/issues/report/${reportId}/screenshot?token=`);
+        const token = new URLSearchParams(link!.split('?')[1]).get('token');
+        const payload = verifyDeeplink<{ reportId: string }>(token!, REPORT_SCREENSHOT_TOKEN_KIND);
+        expect(payload?.data.reportId).toBe(reportId);
+        expect(payload!.exp - payload!.iat).toBe(REPORT_ASSET_TTL_SECONDS);
+    });
+});
+
 
 describe('issueReportService — buildDefaultTitle', () => {
     it('monta título a partir da URL', () => {

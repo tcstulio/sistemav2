@@ -32,6 +32,8 @@ import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
 import { classifyTool } from '../config/actionCatalog';
 import { writeIdempotencyKey, getIdempotentWrite, rememberWrite } from '../utils/writeIdempotency';
 import { notificationService } from './notificationService';
+import { getReportScreenshot } from '../agent/tools/getReportScreenshot';
+import { getReportHtml } from '../agent/tools/getReportHtml';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -305,6 +307,10 @@ const TOOLS_PROMPT_FULL = `
 
         FERRAMENTA DE AJUDA DE TELA:
         93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
+
+        FERRAMENTAS DE CONTEXTO VISUAL DE REPORTS:
+        122. get_report_screenshot(reportId) - Busca o print PNG de um report e devolve um link assinável temporário, válido por 1 hora. Use quando o usuário descrever um problema visual. Exemplo: peça para o Marciano ver o print do report #42.
+        123. get_report_html(reportId, selector?) - Busca o HTML sanitizado de um report. selector é opcional; quando informado, devolve apenas o innerHTML do primeiro elemento correspondente ao seletor CSS. Exemplo: peça para o Marciano ver o HTML do report #42 filtrando por ".error".
 
         FERRAMENTAS DE TASK RUNNER (automação opencode):
         94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
@@ -1689,6 +1695,14 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 log.error('create_bug_report failed', e);
                 return `Erro ao criar bug report: ${e.message}`;
             }
+        }
+
+        case 'get_report_screenshot': {
+            return getReportScreenshot(args?.reportId ?? args?.report_id);
+        }
+
+        case 'get_report_html': {
+            return getReportHtml(args?.reportId ?? args?.report_id, args?.selector);
         }
 
         case 'get_screen_help': {
