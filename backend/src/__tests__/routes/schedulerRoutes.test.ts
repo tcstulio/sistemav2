@@ -537,6 +537,17 @@ describe('schedulerRoutes', () => {
             expect(res.body.success).toBe(true);
             expect(mockSchedulerService.renderTemplate).toHaveBeenCalledWith('tpl-1', { name: 'João' });
         });
+
+        it('templateId com formato inválido → 400 antes do render', async () => {
+            const res = await request(app)
+                .post('/api/scheduler/send-template')
+                .send({ templateId: 'invalid-template-id', chatId: 'c', sessionId: 's' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockSchedulerService.renderTemplate).not.toHaveBeenCalled();
+        });
+
     });
 
     describe('validação Zod em /import-csv (#1567)', () => {
@@ -622,22 +633,27 @@ describe('schedulerRoutes', () => {
 
         for (const c of cases) {
             it(`${c.ok ? 'aceita' : 'rejeita'} ${JSON.stringify(c.cron)} — ${c.reason}`, () => {
-                const result = CronSchema.safeParse({ name: 'n', action: 'a', cron: c.cron });
+                const result = CronSchema.safeParse({ name: 'n', action: 'a', cron: c.cron, payload: {} });
                 expect(result.success).toBe(c.ok);
             });
         }
 
         it('rejeita name vazio', () => {
-            const result = CronSchema.safeParse({ name: '', cron: '* * * * *', action: 'a' });
+            const result = CronSchema.safeParse({ name: '', cron: '* * * * *', action: 'a', payload: {} });
             expect(result.success).toBe(false);
         });
 
         it('rejeita action ausente', () => {
-            const result = CronSchema.safeParse({ name: 'n', cron: '* * * * *' });
+            const result = CronSchema.safeParse({ name: 'n', cron: '* * * * *', payload: {} });
             expect(result.success).toBe(false);
         });
 
-        it('aceita payload opcional', () => {
+        it('exige payload', () => {
+            const result = CronSchema.safeParse({ name: 'n', cron: '* * * * *', action: 'a' });
+            expect(result.success).toBe(false);
+        });
+
+        it('aceita payload', () => {
             const result = CronSchema.safeParse({
                 name: 'n', cron: '* * * * *', action: 'a', payload: { foo: 'bar' },
             });

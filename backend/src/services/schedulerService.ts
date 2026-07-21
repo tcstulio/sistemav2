@@ -817,15 +817,12 @@ class SchedulerService {
     }
 
     /**
-     * Render a template with variables. Valida que o templateId existe (anti-injection:
-     * se a chave veio de payload externo e não bate com nenhum template, retorna null em
-     * vez de "renderizar" string arbitrária) e escapa cada valor (anti-injection de HTML
-     * e contra recursão de placeholders). Os testes assumem que o método é estável para
-     * placeholders conhecidos quando o valor não contém nada especial — ver #1567.
+     * Render a template with variables. Valida que o templateId existe com uma leitura única do
+     * store e escapa cada valor antes da substituição.
      */
     renderTemplate(templateId: string, variables: Record<string, string>): string | null {
-        if (!this.templateExists(templateId)) return null;
-        const template = this.getTemplate(templateId)!;
+        const template = this.getTemplate(templateId);
+        if (!template) return null;
 
         let content = template.content;
         for (const [key, value] of Object.entries(variables || {})) {

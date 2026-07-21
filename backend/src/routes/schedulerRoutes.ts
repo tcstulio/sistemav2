@@ -69,6 +69,11 @@ const IdParamSchema = z.object({
 
 const SessionIdSchema = z.string().min(1, 'sessionId é obrigatório').max(200);
 
+const TemplateIdSchema = z.union([
+    z.string().uuid(),
+    z.string().regex(/^tpl(?:_|-)[A-Za-z0-9_-]+$/, 'templateId inválido'),
+]);
+
 /**
  * Broadcast (#1567): `recipients` é o nome canônico na API; `chatIds` é aceito
  * como alias legado para preservar compatibilidade com clientes existentes
@@ -89,7 +94,7 @@ const BroadcastSchema = z.object({
     recipients: BroadcastRecipientsField.optional(),
     chatIds: BroadcastRecipientsField.optional(),
     message: z.string().min(1).max(4096),
-    templateId: z.string().min(1).max(200).optional(),
+    templateId: TemplateIdSchema.optional(),
     scheduledAt: ScheduledAtSchema.optional(),
     delayBetween: z.number().int().min(0).max(60_000).optional(),
     channel: z.enum(['whatsapp', 'email']).optional(),
@@ -146,7 +151,7 @@ const TemplateCreateSchema = z.object({
 const TemplateUpdateSchema = TemplateCreateSchema.partial();
 
 const SendTemplateSchema = z.object({
-    templateId: z.string().min(1).max(200),
+    templateId: TemplateIdSchema,
     chatId: z.string().min(1).max(200),
     sessionId: SessionIdSchema,
     variables: z.record(z.string(), z.string()).optional(),
@@ -171,6 +176,8 @@ const HistoryQuerySchema = z.object({
     limit: z.string().regex(/^\d+$/).transform(Number).optional(),
 });
 
+const EmptyQuerySchema = z.object({}).strict();
+
 /**
  * Cron job schema (#1567): cron expression POSIX de 5 campos
  * (min hour day month dow). Cada campo aceita estrela ou
@@ -183,15 +190,17 @@ const HistoryQuerySchema = z.object({
  * persistente ainda); a definição fica aqui para casar com a
  * especificação da issue #1567 e servir de contrato.
  */
-export const CronSchema = z.object({
+export const cronSchema = z.object({
     name: z.string().min(1).max(120),
     cron: z.string().regex(
-        /^(\*|[0-9,\-\/\*]+)\s+(\*|[0-9,\-\/\*]+)\s+(\*|[0-9,\-\/\*]+)\s+(\*|[0-9,\-\/\*]+)\s+(\*|[0-9,\-\/\*]+)$/,
+        /^(\*|[0-9,/*-]+)\s+(\*|[0-9,/*-]+)\s+(\*|[0-9,/*-]+)\s+(\*|[0-9,/*-]+)\s+(\*|[0-9,/*-]+)$/,
         { message: 'cron deve ser uma expressão POSIX de 5 campos (min hour day month dow)' },
     ),
     action: z.string().min(1).max(120),
-    payload: z.record(z.string(), z.any()).optional(),
+    payload: z.record(z.string(), z.any()),
 });
+
+export const CronSchema = cronSchema;
 
 // ===========================================
 // Helpers
@@ -462,7 +471,7 @@ router.delete('/:id', validateParams(IdParamSchema), (req: Request, res: Respons
 
 // --- Get stats ---
 
-router.get('/stats', (_req: Request, res: Response, next: NextFunction) => {
+router.get('/stats', validateQuery(EmptyQuerySchema), (_req: Request, res: Response, next: NextFunction) => {
     try {
         const stats = schedulerService.getStats();
         res.json({ success: true, data: stats });
@@ -484,7 +493,7 @@ router.post('/templates', validateBody(TemplateCreateSchema), (req: Request, res
     }
 });
 
-router.get('/templates', (_req: Request, res: Response, next: NextFunction) => {
+router.get('/templates', validateQuery(EmptyQuerySchema), (_req: Request, res: Response, next: NextFunction) => {
     try {
         const templates = schedulerService.getTemplates();
         res.json({ success: true, count: templates.length, data: templates });
@@ -607,7 +616,7 @@ router.post('/import-csv', validateBody(ImportCsvSchema), async (req: Request, r
 
 // --- Broadcasts ---
 
-router.get('/broadcasts', (_req: Request, res: Response, next: NextFunction) => {
+router.get('/broadcasts', validateQuery(EmptyQuerySchema), (_req: Request, res: Response, next: NextFunction) => {
     try {
         const broadcasts = schedulerService.getBroadcasts();
         res.json({ success: true, count: broadcasts.length, data: broadcasts });
