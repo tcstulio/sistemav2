@@ -4372,7 +4372,7 @@ Return ONLY a JSON:
         return task;
     }
 
-    async redoTask(issueNumber: number, instruction?: string): Promise<Task> {
+    async redoTask(issueNumber: number, instruction?: string, opts?: { resetBudget?: boolean }): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
 
@@ -4401,8 +4401,17 @@ Return ONLY a JSON:
         task.synthesisAttempt = undefined;
         task.status = 'running';
         task.error = undefined;
+        // #1567: redo MANUAL (admin) zera o teto de rodadas/task e o contador de re-julgamentos — o
+        // admin está reiniciando de propósito, então a task merece orçamento fresco. Sem isto, uma task
+        // que bateu o teto de 20 rodadas (ex.: #1567, vítima do juiz quebrado que queimou rodadas) volta
+        // a bater o teto NA HORA e re-escala p/ humano. O redo AUTOMÁTICO do quebra-deadlock
+        // (taskPlannerService) NÃO passa resetBudget → preserva o teto (anti-loop do re-despacho).
+        if (opts?.resetBudget) {
+            task.roundsUsed = 0;
+            task.judgeErrorRequeues = 0;
+        }
         task.updatedAt = new Date().toISOString();
-        this.recordEvent(task, 'task_started', `Task refeita${instruction ? `: ${instruction.substring(0, 200)}` : ''}`, { redo: true, instruction });
+        this.recordEvent(task, 'task_started', `Task refeita${instruction ? `: ${instruction.substring(0, 200)}` : ''}${opts?.resetBudget ? ' (orçamento de rodadas zerado)' : ''}`, { redo: true, instruction, resetBudget: !!opts?.resetBudget });
         this.save();
 
         this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'running');

@@ -197,7 +197,9 @@ router.post('/:issueNumber/fix', requireDolibarrAdmin, async (req, res) => {
 router.post('/:issueNumber/redo', requireDolibarrAdmin, async (req, res) => {
     try {
         const { instruction } = req.body;
-        const task = await taskRunnerService.redoTask(Number(req.params.issueNumber), instruction);
+        // #1567: redo manual (admin) reinicia com orçamento de rodadas FRESCO (resetBudget) — o auto
+        // do quebra-deadlock (taskPlannerService) NÃO reseta, p/ preservar o teto anti-loop.
+        const task = await taskRunnerService.redoTask(Number(req.params.issueNumber), instruction, { resetBudget: true });
         res.json(task);
     } catch (error: any) {
         log.error('Redo task error', { error: error.message });
