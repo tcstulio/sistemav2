@@ -17,23 +17,19 @@ describe('sessionService — auto-recover (#wa-autorecover)', () => {
         vi.restoreAllMocks();
         svc.sessionStatus = new Map();
         svc.initializationLocks = new Map();
-        svc.loggedOut = new Set();
-        // pastas de auth persistidas em disco:
         vi.spyOn(fs, 'existsSync').mockReturnValue(true as any);
+    });
+
+    it('recupera sessões STOPPED com pasta de auth (não WORKING nem já-iniciando)', () => {
+        // Só existem pastas p/ A, B, D em disco (o discriminador é a pasta de auth).
         vi.spyOn(fs, 'readdirSync').mockReturnValue([
             { name: 'session-A', isDirectory: () => true },
             { name: 'session-B', isDirectory: () => true },
-            { name: 'session-C', isDirectory: () => true },
             { name: 'session-D', isDirectory: () => true },
             { name: 'not-a-session', isDirectory: () => true },
         ] as any);
-    });
-
-    it('recupera só a sessão STOPPED que NÃO foi deslogada nem está iniciando', () => {
-        svc.sessionStatus.set('A', 'STOPPED');   // deve recuperar
+        svc.sessionStatus.set('A', 'STOPPED');   // recupera
         svc.sessionStatus.set('B', 'WORKING');   // não (conectada)
-        svc.sessionStatus.set('C', 'STOPPED');   // não (logout deliberado)
-        svc.loggedOut.add('C');
         svc.sessionStatus.set('D', 'STOPPED');   // não (já iniciando)
         svc.initializationLocks.set('D', true);
 
@@ -44,18 +40,19 @@ describe('sessionService — auto-recover (#wa-autorecover)', () => {
         expect(start).toHaveBeenCalledWith('A');
     });
 
-    it('logout deliberado marca loggedOut; um start manual limpa a marca', async () => {
-        // simula o ramo de LOGOUT do handler 'disconnected' (add) e o start (delete)
-        svc.loggedOut.add('A');
-        expect(svc.loggedOut.has('A')).toBe(true);
+    it('NÃO ressuscita sessão cuja pasta de auth foi removida (delete do usuário)', () => {
+        // C está STOPPED mas SEM pasta em disco (o usuário deu DELETE → deleteSession apagou a pasta).
+        vi.spyOn(fs, 'readdirSync').mockReturnValue([
+            { name: 'session-A', isDirectory: () => true }, // só A tem pasta
+        ] as any);
+        svc.sessionStatus.set('A', 'STOPPED');
+        svc.sessionStatus.set('C', 'STOPPED'); // sem pasta → sweep nem enxerga
 
-        vi.spyOn(svc, 'getStatus').mockReturnValue('STOPPED');
-        // startSession real limpa loggedOut no topo; mockamos o resto p/ não subir client
-        svc.clients = new Map();
-        svc.sessionStartTimes = new Map();
-        // chama só a parte de topo relevante: loggedOut.delete acontece antes do lock
-        svc.initializationLocks.set('A', true); // faz retornar cedo (STARTING), mas após o delete
-        await svc.startSession('A');
-        expect(svc.loggedOut.has('A')).toBe(false);
+        const start = vi.spyOn(svc, 'startSession').mockResolvedValue({ status: 'STARTING' } as any);
+        svc.recoverStoppedSessions();
+
+        expect(start).toHaveBeenCalledTimes(1);
+        expect(start).toHaveBeenCalledWith('A');
+        expect(start).not.toHaveBeenCalledWith('C');
     });
 });
