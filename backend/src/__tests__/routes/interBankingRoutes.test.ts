@@ -189,26 +189,20 @@ describe('interBankingRoutes', () => {
 
     describe('Webhook signature verification (#1542) — sempre roda quando x-webhook-signature está presente', () => {
         const SECRET = 'inter-test-secret';
-        let restoreSecret: string;
-        let restoreEnv: string | undefined;
 
         beforeEach(async () => {
             const { config } = await import('../../config/env');
-            restoreSecret = (config as any).interWebhookSecret;
-            (config as any).interWebhookSecret = SECRET;
-            restoreEnv = process.env.NODE_ENV;
-            // #1542: o teste prova que a verificação roda MESMO em development
-            process.env.NODE_ENV = 'development';
+            // #1542: spy em vez de mutação direta — preserva o getter original e é
+            // restaurado automaticamente pelo vi.restoreAllMocks() no clearAllMocks.
+            vi.spyOn(config as any, 'interWebhookSecret', 'get').mockReturnValue(SECRET);
+            // #1542: o teste prova que a verificação roda MESMO em development.
+            // vi.stubEnv isola do estado global de NODE_ENV.
+            vi.stubEnv('NODE_ENV', 'development');
         });
 
-        afterEach(async () => {
-            const { config } = await import('../../config/env');
-            (config as any).interWebhookSecret = restoreSecret;
-            if (restoreEnv === undefined) {
-                delete process.env.NODE_ENV;
-            } else {
-                process.env.NODE_ENV = restoreEnv;
-            }
+        afterEach(() => {
+            vi.unstubAllEnvs();
+            vi.restoreAllMocks();
         });
 
         const sign = (body: any) =>
@@ -292,10 +286,8 @@ describe('interBankingRoutes', () => {
 
         it('em development sem secret: webhook sem header passa (compat)', async () => {
             const { config } = await import('../../config/env');
-            const restoreSecret = (config as any).interWebhookSecret;
-            (config as any).interWebhookSecret = '';
-            const restoreEnv = process.env.NODE_ENV;
-            process.env.NODE_ENV = 'development';
+            vi.spyOn(config as any, 'interWebhookSecret', 'get').mockReturnValue('');
+            vi.stubEnv('NODE_ENV', 'development');
 
             try {
                 const res = await request(app)
@@ -305,18 +297,15 @@ describe('interBankingRoutes', () => {
                 expect(res.status).toBe(200);
                 expect(mockBankingService.processInterWebhook).toHaveBeenCalled();
             } finally {
-                (config as any).interWebhookSecret = restoreSecret;
-                if (restoreEnv === undefined) delete process.env.NODE_ENV;
-                else process.env.NODE_ENV = restoreEnv;
+                vi.unstubAllEnvs();
+                vi.restoreAllMocks();
             }
         });
 
         it('em production sem secret: webhook sem header é rejeitado com 503', async () => {
             const { config } = await import('../../config/env');
-            const restoreSecret = (config as any).interWebhookSecret;
-            (config as any).interWebhookSecret = '';
-            const restoreEnv = process.env.NODE_ENV;
-            process.env.NODE_ENV = 'production';
+            vi.spyOn(config as any, 'interWebhookSecret', 'get').mockReturnValue('');
+            vi.stubEnv('NODE_ENV', 'production');
 
             try {
                 const res = await request(app)
@@ -329,16 +318,14 @@ describe('interBankingRoutes', () => {
                 });
                 expect(mockBankingService.processInterWebhook).not.toHaveBeenCalled();
             } finally {
-                (config as any).interWebhookSecret = restoreSecret;
-                if (restoreEnv === undefined) delete process.env.NODE_ENV;
-                else process.env.NODE_ENV = restoreEnv;
+                vi.unstubAllEnvs();
+                vi.restoreAllMocks();
             }
         });
 
         it('com secret configurado mas sem header: webhook é rejeitado com 401 MISSING_SIGNATURE', async () => {
             const { config } = await import('../../config/env');
-            const restoreSecret = (config as any).interWebhookSecret;
-            (config as any).interWebhookSecret = 'some-secret';
+            vi.spyOn(config as any, 'interWebhookSecret', 'get').mockReturnValue('some-secret');
 
             try {
                 const res = await request(app)
@@ -351,7 +338,7 @@ describe('interBankingRoutes', () => {
                 });
                 expect(mockBankingService.processInterWebhook).not.toHaveBeenCalled();
             } finally {
-                (config as any).interWebhookSecret = restoreSecret;
+                vi.restoreAllMocks();
             }
         });
     });
