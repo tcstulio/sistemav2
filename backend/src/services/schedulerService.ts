@@ -392,7 +392,7 @@ class SchedulerService {
             if (msg.channel === 'email') {
                 await emailService.sendEmail(msg.sessionId, msg.chatId, msg.subject || 'Notificação', msg.message);
             } else {
-                await messageService.sendText(msg.sessionId, msg.chatId, msg.message);
+                await messageService.sendText(msg.sessionId, msg.chatId, msg.message, { systemNotification: true });
             }
 
             // Update status

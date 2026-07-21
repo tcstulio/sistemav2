@@ -110,6 +110,98 @@ function alreadyProcessed(id: string): boolean {
 /** SÓ TESTES: zera o dedup de mensagens (o Map é de processo; testes reusam ids). */
 export function __resetMessageDedupForTests(): void { seenMessages.clear(); }
 
+/**
+ * #1658 — discriminador de mensagens que NÃO devem entrar no histórico do LLM.
+ *
+ * Critérios (todos os três precisam ser satisfeitos para a remoção dar certo):
+ *   (a) FLAG explícita `metadata.systemNotification === true` — setada no PONTO DE ENVIO
+ *       (schedulerService/notificationService → channelRouter → messageService). Cobre
+ *       todas as notificações NOVAS com garantia semântica do emissor.
+ *   (b) FALLBACK por regex do template canônico de cobrança/lembrete — cobre o histórico
+ *       ANTIGO (pré-tag) e mensagens de outros providers (moltbot) que ainda não foram
+ *       reemitidas com a flag. Pattern: "Olá <Nome>, a tarefa TK####-#### …" ou
+ *       "Olá <Nome>, você é responsável pela tarefa TK####-#### …". A combinação com o
+ *       token TK\d{4}-\d{4} garante que NÃO confunde com um "Olá, fulano…" do próprio
+ *       usuário (cenário `botService.test.ts`).
+ *   (c) Saídas de comandos internos do bot (`/status`, `/ajuda`, etc.) e qualquer
+ *       mensagem que comece com `/` — o histórico do agente não deve ver seus próprios
+ *       comandos como turno conversacional.
+ *
+ * Pura (sem I/O, sem estado de processo) para que `botService.test.ts` consiga asserir a
+ * transformação sem subir o LLM nem mocks de serviço. Caso a expressão de template mude
+ * no futuro, basta atualizar a regex e os testes de "isAgentHistoryExcluded: false
+ * para conversa real" automaticamente validam que mensagens genuínas não caem na
+ * peneira.
+ */
+export function isAgentHistoryExcluded(msg: any): boolean {
+    const body: string = (msg?.body || '').toString();
+    if (!body) {
+        // Mensagem vazia (mídia sem caption ou whitespace) ainda pode ser uma notif se
+        // vier explicitamente marcada — confiamos na flag nesse caso. Sem flag, deixa
+        // passar para o discriminador de mídia (vira "[Mídia recebida: tipo]").
+        if (msg?.metadata?.systemNotification === true) return true;
+        return false;
+    }
+    if (msg?.metadata?.systemNotification === true) return true;
+    if (body.includes('Status do Sistema')) return true;
+    if (body.includes('Comandos Disponíveis')) return true;
+    if (body.startsWith('/')) return true;
+    // Fallback de template (cobre histórico pré-flag + outros providers sem propagação
+    // de metadata). A exigência do TK####-#### evita falso-positivo em saudações reais.
+    if (/^Olá [^,]+, (a tarefa|você é responsável pela tarefa)\b/i.test(body) &&
+        /TK\d{4}-\d{4}/.test(body)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * #1658 — monta a lista de turnos `{role, parts}` enviada para o LLM a partir do
+ * histórico bruto de `messageService.getMessages`. PURE (sem I/O) para que testes
+ * determinísticos consigam asserir a transformação. Aplica:
+ *
+ *   1. Exclusão via `isAgentHistoryExcluded` (notificações + comandos do próprio bot).
+ *   2. Limpeza de body (remove assinatura residual injetada em turn anterior).
+ *   3. Prefix de sender em grupo + placeholder de mídia sem texto.
+ *   4. Consolidação de turnos consecutivos do MESMO role+emitente (regra igual ao
+ *      código legado, só isolada em função pura para teste). Em 1:1, consolida por
+ *      role; em grupo, exige role E sender iguais (evita "mesclar" falantes diferentes).
+ *   5. `senderName` é stripado após embed em `parts` (LLM não precisa do campo cru).
+ *
+ * @param rawHistory  Lista de mensagens vinda de `messageService.getMessages`.
+ * @param isGroup     Se o chat é grupo (`@g.us`); controla o prefixo e a consolidação.
+ */
+export function buildAgentHistory(rawHistory: any[], isGroup: boolean): { role: 'user' | 'model'; parts: string }[] {
+    const cleaned = rawHistory
+        .filter((m: any) => !isAgentHistoryExcluded(m))
+        .map((m: any) => {
+            const cleanBody = (m.body || '').replace(/(\n\s*~.*)+$/g, '').trim();
+            const mediaNote = (m.hasMedia && !cleanBody) ? `[Mídia recebida: ${m.type || 'arquivo'}]` : '';
+            const senderPrefix = (!m.fromMe && isGroup && m.senderName) ? `[${m.senderName}]: ` : '';
+            const parts = senderPrefix + (cleanBody || mediaNote);
+            return {
+                role: m.fromMe ? 'model' as const : 'user' as const,
+                parts,
+                senderName: m.senderName || null,
+            };
+        })
+        .filter((m: any) => m.parts && m.parts.length > 0 && !m.parts.startsWith('Erro LLM Local'));
+
+    const consolidated: { role: 'user' | 'model'; parts: string; senderName: string | null }[] = [];
+    for (const msg of cleaned) {
+        const lastMsg = consolidated[consolidated.length - 1];
+        const sameRole = lastMsg?.role === msg.role;
+        const sameSender = lastMsg?.senderName === msg.senderName;
+        if (consolidated.length > 0 && sameRole && (sameSender || !isGroup)) {
+            lastMsg.parts += `\n${msg.parts}`;
+        } else {
+            consolidated.push({ role: msg.role, parts: msg.parts, senderName: msg.senderName });
+        }
+    }
+
+    return consolidated.map(m => ({ role: m.role, parts: m.parts }));
+}
+
 class BotService {
 
     /**
@@ -298,53 +390,12 @@ class BotService {
             let history: any[] = [];
             try {
                 const rawHistory = await messageService.getMessages(sessionId, chatId, historyLimit);
-
-                // 1. Initial Map & Clean History (with senderName for groups + media context)
-                let rawMapped = rawHistory
-                    .filter((m: any) => {
-                        const b = m.body || '';
-                        return !b.includes('Status do Sistema') && 
-                               !b.includes('Comandos Disponíveis') && 
-                               !b.startsWith('/');
-                    })
-                    .map((m: any) => {
-                    // Strip existing signatures from history to avoid poisoning the LLM context
-                    const cleanBody = (m.body || '').replace(/(\n\s*~.*)+$/g, '').trim();
-
-                    // Add media context when message has media but no text
-                    const mediaNote = (m.hasMedia && !cleanBody)
-                        ? `[Mídia recebida: ${m.type || 'arquivo'}]`
-                        : '';
-
-                    // For groups, prepend the sender name to provide context to the LLM
-                    const senderPrefix = (!m.fromMe && isGroup && m.senderName)
-                        ? `[${m.senderName}]: `
-                        : '';
-
-                    return {
-                        role: m.fromMe ? 'model' : 'user',
-                        parts: senderPrefix + (cleanBody || mediaNote),
-                        senderName: m.senderName || null
-                    };
-                }).filter((m: any) => m.parts && m.parts.length > 0 && !m.parts.startsWith('Erro LLM Local'));
-
-                // 2. Smart Consolidation - Don't merge messages from different people in groups
-                const consolidated: any[] = [];
-                for (const msg of rawMapped) {
-                    const lastMsg = consolidated[consolidated.length - 1];
-                    const sameRole = lastMsg?.role === msg.role;
-                    const sameSender = lastMsg?.senderName === msg.senderName;
-
-                    // Only consolidate if same role AND (same sender OR not a group context)
-                    if (consolidated.length > 0 && sameRole && (sameSender || !isGroup)) {
-                        lastMsg.parts += `\n${msg.parts}`;
-                    } else {
-                        consolidated.push({ role: msg.role, parts: msg.parts, senderName: msg.senderName });
-                    }
-                }
-
-                // Remove senderName before sending to AI (it's embedded in parts now)
-                history = consolidated.map(m => ({ role: m.role, parts: m.parts }));
+                // #1658 — `buildAgentHistory` é a unidade testável que aplica o filtro de
+                // notificações automáticas, placeholder de mídia, prefix de sender em grupo
+                // e a consolidação de turnos consecutivos. Aqui, só plugamos o resultado
+                // (transformação) — toda a lógica de filtragem vive na função pura
+                // exportada.
+                history = buildAgentHistory(rawHistory, isGroup);
             } catch (e) {
                 log.warn(`Failed to fetch history for ${chatId}, using explicit prompt only.`);
             }
