@@ -136,14 +136,11 @@ const bankingLimiter = rateLimit({
     legacyHeaders: false
 });
 
-// Scheduler limiter (message scheduling)
-const schedulerLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 30,
-    message: { error: 'Scheduler rate limit exceeded. Please wait.' },
-    standardHeaders: true,
-    legacyHeaders: false
-});
+// Scheduler rate limit (#1567): aplicado direto no router `schedulerRoutes`
+// via `router.use` que pula GETs (GETs são polling leve — limitá-los quebraria
+// a UI). O preset `rateLimiters.scheduler` (10/1min, bucket por IP) está em
+// `middleware/rateLimit.ts` (single source of truth) — ver teste
+// `schedulerRoutes.test.ts` (AC #1567: 11ª chamada POST → 429).
 
 // Strict limiter for auth (login attempts)
 const authLimiter = rateLimit({
@@ -203,7 +200,8 @@ import { previewWriteGuard } from './middleware/previewWriteGuard';
 app.use('/api/dolibarr', previewWriteGuard);
 app.use('/api/dolibarr', dolibarrRoutes);
 
-app.use('/api/scheduler', schedulerLimiter, schedulerRoutes);
+// #1567 — rate-limit aplicado DENTRO do router (pula GETs); ver comentário acima.
+app.use('/api/scheduler', schedulerRoutes);
 
 import webhookRoutes from './routes/webhookRoutes';
 app.use('/api/webhook', webhookRoutes);
