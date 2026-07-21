@@ -152,14 +152,33 @@ export async function runAgentLoop(
         throw new Error(`runAgentLoop: aborted before start (${signal.reason})`);
     }
 
-    // === Início: emite 'thinking' com a fase inicial ===
-    stream.emit(opts.jobId, 'thinking', { phase: 'start', origin: opts.origin ?? 'agent' });
-
+    // Resolve cfg cedo para que o early-return do cancel-assíncrono possa usar
+    // `modelName` no `AgentLoopResult` (não precisamos de `accUsage` aqui — é zero).
     const isAdmin = opts.isAdmin ?? getToolContext().isAdmin ?? false;
     const toolsPrompt = deps.toolsPrompt ?? getToolsPrompt({ isAdmin: isAdmin === true });
     const baseUrl = envConfig.localLlmUrl.replace(/\/+$/, '');
     const modelName = opts.model ?? envConfig.localModelName;
     const apiKey = (envConfig as any).localLlmApiKey || undefined;
+
+    // #1575: cancelamento assíncrono via flag (POST /chat/jobs/:id/cancel). Se o cancel
+    // chegou ANTES do loop começar, emitimos 'cancelled' com summary (vazio) e fechamos
+    // o job — o caller ainda recebe uma resposta rápida sem executar tool alguma.
+    if (stream.isCancelled(opts.jobId)) {
+        const summary = buildCancelSummary(stream.getCompletedToolCalls(opts.jobId));
+        stream.close(opts.jobId, 'cancelled', { reason: 'user-cancel', summary });
+        const result: AgentLoopResult = {
+            text: summary,
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+            contextWindow: 0,
+            model: modelName,
+            fellBack: false,
+            events: stream.getBuffer(opts.jobId),
+        };
+        return result;
+    }
+
+    // === Início: emite 'thinking' com a fase inicial ===
+    stream.emit(opts.jobId, 'thinking', { phase: 'start', origin: opts.origin ?? 'agent' });
 
     let currentContext = opts.context;
     const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -177,6 +196,19 @@ export async function runAgentLoop(
     try {
         while (iterations < maxIterations) {
             if (signal?.aborted) break;
+
+            // #1575: checa a flag de cancelamento ANTES de gastar mais uma iteração do LLM.
+            // Se setada (via POST /chat/jobs/:id/cancel), emite 'cancelled' com summary
+            // listando tool_calls já completados e fecha o job. Tempo alvo: O(1).
+            // NOTA: AbortSignal tem PRECEDÊNCIA — se ambos estiverem acionados, o bloco
+            // final trata como abort (path já testado). Aqui só chegamos com signal vivo.
+            if (stream.isCancelled(opts.jobId)) {
+                const summary = buildCancelSummary(stream.getCompletedToolCalls(opts.jobId));
+                stream.close(opts.jobId, 'cancelled', { reason: 'user-cancel', summary });
+                lastText = summary;
+                aborted = true;
+                break;
+            }
 
             // Sinaliza "pensando" — útil para o cliente SSE mostrar um spinner.
             stream.emit(opts.jobId, 'thinking', {
@@ -225,6 +257,17 @@ export async function runAgentLoop(
             // Tool-calls: emite cada `tool_call` ANTES e `tool_result` DEPOIS.
             for (const tc of toolCalls) {
                 if (signal?.aborted) break;
+
+                // #1575: cancelamento por flag entre tools — interrompe o batch e fecha
+                // o job com summary. Evita continuar chamando tools caras depois que o
+                // usuário clicou em "cancelar".
+                if (stream.isCancelled(opts.jobId)) {
+                    const summary = buildCancelSummary(stream.getCompletedToolCalls(opts.jobId));
+                    stream.close(opts.jobId, 'cancelled', { reason: 'user-cancel', summary });
+                    lastText = summary;
+                    aborted = true;
+                    break;
+                }
 
                 if (toolCallsUsed >= maxToolCalls) {
                     const msg = `Limite de ${maxToolCalls} tool call(s) atingido — encerrando o turno.`;
@@ -283,6 +326,17 @@ export async function runAgentLoop(
                 // #1574: emite 'tool_result' {name, summary} DEPOIS de executar.
                 stream.emit(opts.jobId, 'tool_result', { name: tc.tool, summary });
 
+                // #1575: checa cancel flag DEPOIS da tool terminar — race-resolved cancel
+                // (cliente clicou enquanto a tool rodava; ela terminou sozinha, mas não
+                // devemos gastar outra iteração de LLM).
+                if (stream.isCancelled(opts.jobId)) {
+                    const summary = buildCancelSummary(stream.getCompletedToolCalls(opts.jobId));
+                    stream.close(opts.jobId, 'cancelled', { reason: 'user-cancel', summary });
+                    lastText = summary;
+                    aborted = true;
+                    break;
+                }
+
                 // Aborto que chegou logo após a tool retornar (race resolveu com valor):
                 // encerra antes de gastar outra iteração de LLM.
                 if (signal?.aborted) {
@@ -330,6 +384,37 @@ export async function runAgentLoop(
 }
 
 // === Helpers ===
+
+/**
+ * #1575: monta o texto do summary do cancelamento a partir da lista de tool_calls
+ * completadas. Formato humano-legível:
+ *
+ *   "Cancelado por você. O que já fiz:
+ *    - buscar({"q":"x"}) → encontrou 3 resultados
+ *    - enviar_email({"to":"..."}) → enviado"
+ *
+ * Caso vazio (cancel antes de qualquer tool): "Cancelado por você. Nada foi concluído
+ * ainda — o turno não havia começado." Caller decide se usa a frase vazia ou essa.
+ *
+ * Tool_calls pendentes (tool_call emitido mas tool_result ainda não chegou — race
+ * edge case) SÃO pulados: só listamos o que REALMENTE terminou. Limite duro de 50
+ * entradas para não estourar o payload do SSE em jobs com tool_calls pesadas.
+ */
+export function buildCancelSummary(
+    completedToolCalls: Array<{ name: string; args: unknown; summary: string }>,
+): string {
+    const completed = completedToolCalls.filter((c) => !!c.summary).slice(0, 50);
+    if (completed.length === 0) {
+        return 'Cancelado por você. Nada foi concluído ainda — o turno não havia começado.';
+    }
+    const lines = completed.map((c) => {
+        const argsStr = c.args && Object.keys(c.args as object).length > 0
+            ? JSON.stringify(c.args)
+            : '{}';
+        return `- ${c.name}(${argsStr}) → ${c.summary}`;
+    });
+    return `Cancelado por você. O que já fiz:\n${lines.join('\n')}`;
+}
 
 /** Monta a lista de messages no formato OpenAI-compat (system + history). */
 function buildMessages(

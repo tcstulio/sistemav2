@@ -478,4 +478,93 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
             __resetProgressStreamForTesting();
         });
     });
+
+    // #1575: cancelamento assíncrono via flag + tracking de tool_calls completadas.
+    // Cobre os novos métodos públicos `requestCancel`, `isCancelled` e `getCompletedToolCalls`
+    // — a lógica do agentLoop depende desses pra fechar o job com summary.
+    describe('#1575 — requestCancel / isCancelled / getCompletedToolCalls', () => {
+        it('requestCancel seta a flag em job existente', () => {
+            stream.emit('job', 'thinking', { phase: 'start' });
+            expect(stream.isCancelled('job')).toBe(false);
+            stream.requestCancel('job');
+            expect(stream.isCancelled('job')).toBe(true);
+        });
+
+        it('requestCancel cria o estado se o job não existe (cobre cancel-antes-do-emit)', () => {
+            expect(stream.has('job-future')).toBe(false);
+            stream.requestCancel('job-future');
+            expect(stream.has('job-future')).toBe(true);
+            expect(stream.isCancelled('job-future')).toBe(true);
+        });
+
+        it('isCancelled devolve false para job desconhecido (não joga)', () => {
+            expect(stream.isCancelled('fantasma')).toBe(false);
+        });
+
+        it('requestCancel é idempotente', () => {
+            stream.requestCancel('job');
+            stream.requestCancel('job');
+            stream.requestCancel('job');
+            expect(stream.isCancelled('job')).toBe(true);
+        });
+
+        it('requestCancel não fecha o job (caller decide quando emitir cancelled)', () => {
+            stream.emit('job', 'thinking', { phase: 'start' });
+            stream.requestCancel('job');
+            expect(stream.isClosed('job')).toBe(false);
+            // O caller ainda pode emitir tool_call/tool_result; só o flag está setado.
+            stream.emit('job', 'tool_call', { name: 't', args: {} });
+            expect(stream.isClosed('job')).toBe(false);
+        });
+
+        it('getCompletedToolCalls rastreia pares tool_call → tool_result', () => {
+            stream.emit('job', 'tool_call', { name: 'buscar', args: { q: 'x' } });
+            // Sem tool_result ainda — a entrada tem summary vazio.
+            let list = stream.getCompletedToolCalls('job');
+            expect(list).toHaveLength(1);
+            expect(list[0]).toEqual({ name: 'buscar', args: { q: 'x' }, summary: '' });
+
+            stream.emit('job', 'tool_result', { name: 'buscar', summary: 'encontrou 3' });
+            list = stream.getCompletedToolCalls('job');
+            expect(list).toHaveLength(1);
+            expect(list[0]).toEqual({ name: 'buscar', args: { q: 'x' }, summary: 'encontrou 3' });
+        });
+
+        it('getCompletedToolCalls lista múltiplas tools completadas em ordem', () => {
+            stream.emit('job', 'tool_call', { name: 'a', args: {} });
+            stream.emit('job', 'tool_result', { name: 'a', summary: 'rA' });
+            stream.emit('job', 'tool_call', { name: 'b', args: { x: 1 } });
+            stream.emit('job', 'tool_result', { name: 'b', summary: 'rB' });
+            stream.emit('job', 'tool_call', { name: 'c', args: {} });
+            stream.emit('job', 'tool_result', { name: 'c', summary: 'rC' });
+
+            const list = stream.getCompletedToolCalls('job');
+            expect(list.map((c) => c.name)).toEqual(['a', 'b', 'c']);
+            expect(list.map((c) => c.summary)).toEqual(['rA', 'rB', 'rC']);
+        });
+
+        it('getCompletedToolCalls devolve [] para job inexistente', () => {
+            expect(stream.getCompletedToolCalls('fantasma')).toEqual([]);
+        });
+
+        it('getCompletedToolCalls sobrevive ao close do job', () => {
+            stream.emit('job', 'tool_call', { name: 'a', args: {} });
+            stream.emit('job', 'tool_result', { name: 'a', summary: 'rA' });
+            stream.close('job', 'cancelled', { reason: 'user-cancel' });
+            // Após close, getCompletedToolCalls ainda devolve a lista (importante p/ o
+            // resumo de cancelamento depois do job fechar).
+            expect(stream.getCompletedToolCalls('job')).toEqual([
+                { name: 'a', args: {}, summary: 'rA' },
+            ]);
+        });
+
+        it('entradas pendentes (tool_call sem tool_result) ficam com summary vazio', () => {
+            stream.emit('job', 'tool_call', { name: 'buscar', args: {} });
+            stream.emit('job', 'tool_call', { name: 'outra', args: {} });
+            const list = stream.getCompletedToolCalls('job');
+            expect(list).toHaveLength(2);
+            expect(list[0]!.summary).toBe('');
+            expect(list[1]!.summary).toBe('');
+        });
+    });
 });

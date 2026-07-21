@@ -102,6 +102,180 @@ function baseDeps(stream: ProgressStream, over: Partial<AgentLoopDeps> = {}): Ag
 
 const types = (buf: ProgressEvent[]) => buf.map((e) => e.type);
 
+describe('#1575 — cancelamento via flag no JobState (requestCancel / isCancelled)', () => {
+        // Cobertura: o loop checa `stream.isCancelled()` no topo de cada iteração E
+        // entre tool_calls. Quando setada, fecha o job com payload {summary} e aborta.
+
+        it('requestCancel ANTES do loop: emite cancelled com summary vazio', async () => {
+            const stream = makeStream();
+            // Marca o cancel ANTES de iniciar o loop — cobre "cancel chega antes do
+            // primeiro emit do agente".
+            stream.requestCancel('job-cancel');
+            expect(stream.isCancelled('job-cancel')).toBe(true);
+
+            const res = await runAgentLoop(
+                baseOpts({ jobId: 'job-cancel' }),
+                baseDeps(stream, {
+                    llmCall: scriptedLlm(['CALL any {}', 'fim']),
+                    executeToolFn: vi.fn(async () => 'ok'),
+                }),
+            );
+
+            const buf = stream.getBuffer('job-cancel');
+            const cancelledEv = buf.find((e) => e.type === 'cancelled');
+            expect(cancelledEv).toBeTruthy();
+            // Summary do caso vazio: frase padrão.
+            const summary = (cancelledEv!.payload as any).summary as string;
+            expect(summary).toMatch(/Cancelado por você/);
+            expect(summary).toMatch(/Nada foi concluído/);
+            // Sem 'done' contraditório por cima.
+            expect(buf.filter((e) => e.type === 'done')).toHaveLength(0);
+            expect(stream.isClosed('job-cancel')).toBe(true);
+            expect(res).toBeTruthy();
+            expect(res.text).toMatch(/Cancelado por você/);
+        });
+
+        it('requestCancel APÓS tool_call completada: cancelled inclui tool_calls no summary', async () => {
+            const stream = makeStream();
+            let callsSeen = 0;
+            const executeToolFn = vi.fn(async () => {
+                callsSeen++;
+                // Na segunda chamada, marca o cancel — o loop vê a flag no topo da
+                // PRÓXIMA iteração (após tool_result emitir) e fecha.
+                if (callsSeen === 1) {
+                    stream.requestCancel('job-cancel');
+                }
+                return `r${callsSeen}`;
+            });
+
+            await runAgentLoop(
+                baseOpts({ jobId: 'job-cancel' }),
+                baseDeps(stream, {
+                    // LLM sempre pede tool → loop só sai via flag.
+                    parseToolCalls: () => [{ tool: 'buscar', args: { q: 'x' } }],
+                    llmCall: scriptedLlm(['CALL buscar {}']),
+                    executeToolFn,
+                }),
+            );
+
+            const buf = stream.getBuffer('job-cancel');
+            const cancelledEv = buf.find((e) => e.type === 'cancelled');
+            expect(cancelledEv).toBeTruthy();
+            // O summary lista a tool_call que completou antes do cancel.
+            const summary = (cancelledEv!.payload as any).summary as string;
+            expect(summary).toMatch(/Cancelado por você/);
+            expect(summary).toContain('buscar');
+            expect(summary).toContain('{"q":"x"}');
+            // Ao menos 1 tool_call foi completada e está no buffer.
+            expect(buf.filter((e) => e.type === 'tool_call').length).toBeGreaterThanOrEqual(1);
+            expect(buf.filter((e) => e.type === 'tool_result').length).toBeGreaterThanOrEqual(1);
+            // Sem 'done' por cima do cancelled.
+            expect(buf.filter((e) => e.type === 'done')).toHaveLength(0);
+            expect(stream.isClosed('job-cancel')).toBe(true);
+        });
+
+        it('requestCancel dispara DURANTE tool: loop checa no topo da próxima iteração', async () => {
+            const stream = makeStream();
+            // Tool que demora ~150ms — sem isto o loop rodaria as maxIterations em
+            // microssegundos e o setTimeout chegaria TARDE (loop já done). Com 150ms
+            // por tool + 10 iterações = ~1.5s total, o cancel atira DURANTE a primeira
+            // tool e o loop vê no topo da próxima iteração.
+            const executeToolFn = vi.fn(async () => {
+                await new Promise((r) => setTimeout(r, 150));
+                return 'ok';
+            });
+
+            // Cancela em t≈100ms.
+            setTimeout(() => stream.requestCancel('job-cancel'), 100);
+
+            const start = Date.now();
+            await runAgentLoop(
+                baseOpts({ jobId: 'job-cancel', maxIterations: 10 }),
+                baseDeps(stream, {
+                    parseToolCalls: () => [{ tool: 'spin', args: {} }],
+                    llmCall: scriptedLlm(['CALL spin {}']),
+                    executeToolFn,
+                }),
+            );
+            const elapsed = Date.now() - start;
+            // Spec: ≤2s após cancel. Cancel em t=100ms + próximo tool (~150ms) + overhead ≈ 350ms.
+            expect(elapsed).toBeLessThan(2000);
+
+            const buf = stream.getBuffer('job-cancel');
+            const cancelledEv = buf.find((e) => e.type === 'cancelled');
+            expect(cancelledEv).toBeTruthy();
+            expect(stream.isClosed('job-cancel')).toBe(true);
+        });
+
+        it('AbortSignal tem precedência sobre a flag (síncrono > assíncrono)', async () => {
+            const stream = makeStream();
+            const ac = new AbortController();
+            stream.requestCancel('job-cancel');
+            ac.abort('signal-wins');
+
+            await expect(
+                runAgentLoop(
+                    baseOpts({ jobId: 'job-cancel', signal: ac.signal }),
+                    baseDeps(stream, { llmCall: scriptedLlm(['CALL x {}']), executeToolFn: vi.fn(async () => 'ok') }),
+                ),
+            ).rejects.toThrow(/aborted before start/);
+
+            const buf = stream.getBuffer('job-cancel');
+            // O cancelled emitido pelo path do AbortSignal está presente (rejeição
+            // antes do nosso early-return do requestCancel).
+            expect(buf.some((e) => e.type === 'cancelled')).toBe(true);
+        });
+
+        it('cancel é idempotente — múltiplas chamadas não quebram o summary', async () => {
+            const stream = makeStream();
+            stream.requestCancel('job-cancel');
+            stream.requestCancel('job-cancel');
+            stream.requestCancel('job-cancel');
+
+            await runAgentLoop(
+                baseOpts({ jobId: 'job-cancel' }),
+                baseDeps(stream, { llmCall: scriptedLlm(['CALL x {}']), executeToolFn: vi.fn(async () => 'ok') }),
+            );
+
+            const buf = stream.getBuffer('job-cancel');
+            // Apenas UM cancelled (a idempotência do close() cobre o caso).
+            expect(buf.filter((e) => e.type === 'cancelled')).toHaveLength(1);
+        });
+
+        it('buildCancelSummary: lista tool_calls completadas com args e summary', async () => {
+            const { buildCancelSummary } = await import('../../agent/agentLoop');
+            const result = buildCancelSummary([
+                { name: 'buscar', args: { q: 'x' }, summary: 'encontrou 3' },
+                { name: 'enviar_email', args: { to: 'a@b.c' }, summary: 'enviado' },
+            ]);
+            expect(result).toMatch(/Cancelado por você/);
+            expect(result).toMatch(/O que já fiz/);
+            expect(result).toContain('buscar');
+            expect(result).toContain('enviar_email');
+            expect(result).toContain('encontrou 3');
+            expect(result).toContain('enviado');
+        });
+
+        it('buildCancelSummary: lista vazia produz frase "Nada foi concluído"', async () => {
+            const { buildCancelSummary } = await import('../../agent/agentLoop');
+            const result = buildCancelSummary([]);
+            expect(result).toMatch(/Cancelado por você/);
+            expect(result).toMatch(/Nada foi concluído/);
+        });
+
+        it('buildCancelSummary: pula tool_calls pendentes (summary vazio)', async () => {
+            const { buildCancelSummary } = await import('../../agent/agentLoop');
+            const result = buildCancelSummary([
+                { name: 'buscar', args: { q: 'x' }, summary: 'encontrou 3' },
+                { name: 'pendente', args: {}, summary: '' }, // tool_call emitido mas sem tool_result
+                { name: 'outra', args: {}, summary: 'concluiu' },
+            ]);
+            expect(result).toContain('buscar');
+            expect(result).toContain('outra');
+            expect(result).not.toContain('pendente');
+        });
+    });
+
 describe('#1574 — runAgentLoop (loop do agente com eventos de progresso)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
