@@ -114,6 +114,21 @@ interface JobState {
     closed: boolean;
     /** Set para deduplicação de listeners (mesmo handler inscrito múltiplas vezes é idempotente). */
     subscribers: Set<AsyncPushController>;
+    /**
+     * #1575: flag de cancelamento assíncrona — setada por `requestCancel(jobId)` (chamada
+     * externa, via POST /chat/jobs/:id/cancel). O loop do agente checa a cada iteração
+     * via `isCancelled(jobId)` e emite um evento terminal `cancelled` com summary.
+     * Idempotente: chamadas repetidas não mudam o estado.
+     */
+    cancelled: boolean;
+    /**
+     * #1575: snapshot das tool_calls COMPLETADAS (com resultado) — usado para montar o
+     * resumo do cancelamento ("Cancelado por você. O que já fiz: ..."). Cada entrada é
+     * `{ name, args, summary }`. Mantido em sincronia com os eventos `tool_result` no
+     * buffer; sobrevive ao `close()` para que `getCompletedToolCalls()` ainda funcione
+     * depois do job fechar (importante para o cancel-respond endpoint retornar o summary).
+     */
+    completedToolCalls: Array<{ name: string; args: unknown; summary: string }>;
 }
 
 // === AsyncIterable controller ===
@@ -278,6 +293,28 @@ export class ProgressStream {
         if (state.events.length > this.maxBufferSize) {
             state.events.splice(0, state.events.length - this.maxBufferSize);
         }
+        // #1575: rastreia pares tool_call → tool_result para montar o resumo do
+        // cancelamento. Só registramos quando o par está completo (tool_result
+        // casa o tool_call mais recente). Se o tool_call veio antes do tracking
+        // ser ativado (caso degenerado), o args vira {}.
+        if (type === 'tool_call') {
+            const p = payload as { name?: string; args?: unknown } | undefined;
+            if (p && typeof p.name === 'string') {
+                state.completedToolCalls.push({ name: p.name, args: p.args, summary: '' });
+            }
+        } else if (type === 'tool_result') {
+            const p = payload as { name?: string; summary?: string } | undefined;
+            if (state.completedToolCalls.length > 0) {
+                // Pega o ÚLTIMO tool_call pendente (o par pode não estar em ordem
+                // estrita, mas no fluxo normal do agentLoop está). Casa por nome
+                // quando disponível para robustez.
+                const lastIdx = state.completedToolCalls.length - 1;
+                const pending = state.completedToolCalls[lastIdx]!;
+                if (!pending.summary && (p?.summary !== undefined)) {
+                    state.completedToolCalls[lastIdx] = { ...pending, summary: p.summary };
+                }
+            }
+        }
         // Renova o TTL a cada emit — atividade reinicia o relógio de expiração.
         state.expireAt = Date.now() + this.ttlMs;
         // Fan-out para subscribers ativos.
@@ -336,6 +373,47 @@ export class ProgressStream {
      */
     cancel(jobId: string, reason: string = 'cancelled'): void {
         this.close(jobId, 'cancelled', { reason });
+    }
+
+    /**
+     * #1575: sinalização ASSÍNCRONA de cancelamento — setada pela rota POST /chat/jobs/:id/cancel.
+     * NÃO fecha o job nem emite evento terminal. O loop do agente checa `isCancelled()` a cada
+     * iteração e fecha o job emitindo um `cancelled` com payload `{summary}` (gerado via
+     * `buildCancelSummary` em `agentLoop.ts`).
+     *
+     * Idempotente: chamadas repetidas no mesmo jobId não mudam o estado. Job já fechado
+     * aceita a chamada sem efeito (cancel "tardio" — caso comum: cliente clicou duas vezes
+     * ou POST chegou depois do loop terminar). Cria o estado se o job não existir ainda
+     * (cobre o caso "cancel chega antes do emit inicial do agente" — o flag estará setado
+     * quando o loop chamar `ensureJob`).
+     *
+     * Tempo alvo: O(1). A resposta do POST /cancel sai imediatamente.
+     */
+    requestCancel(jobId: string): void {
+        const state = this.ensureJob(jobId);
+        state.cancelled = true;
+    }
+
+    /**
+     * #1575: indica se o job foi sinalizado para cancelamento (`requestCancel`). True mesmo
+     * após `close()` — permite checagem no agentLoop ANTES do próximo emit. O(1).
+     */
+    isCancelled(jobId: string): boolean {
+        const state = this.jobs.get(jobId);
+        return !!state?.cancelled;
+    }
+
+    /**
+     * #1575: snapshot das tool_calls COMPLETADAS (com summary do tool_result). Usado pelo
+     * `buildCancelSummary` para montar o texto do resumo do cancelamento. Retorna [] para
+     * job inexistente. A lista é mantida em sincronia com os eventos do buffer; entradas
+     * pendentes (tool_call emitido mas tool_result ainda não) têm `summary: ''` e o caller
+     * filtra essas no momento de montar a string.
+     */
+    getCompletedToolCalls(jobId: string): Array<{ name: string; args: unknown; summary: string }> {
+        const state = this.jobs.get(jobId);
+        if (!state) return [];
+        return state.completedToolCalls.map((c) => ({ ...c }));
     }
 
     /** Snapshot do buffer atual (cópia — segura para iteração livre). Vazio se job não existe. */
@@ -421,6 +499,8 @@ export class ProgressStream {
                 emitter,
                 closed: false,
                 subscribers: new Set(),
+                cancelled: false,
+                completedToolCalls: [],
             };
             this.jobs.set(jobId, state);
         } else {

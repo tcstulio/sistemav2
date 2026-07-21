@@ -261,6 +261,13 @@ app.use('/api/agent-actions', agentActionRoutes);
 import agentConfigRoutes from './routes/agentConfigRoutes';
 app.use('/api/agent', agentConfigRoutes); // Config IA — system prompt do Marciano (#1005)
 
+// #1575: rotas de chat (SSE de eventos + cancelamento assíncrono de job). Montadas em
+// `/api/chat` — prefixo dedicado porque o SSE consome Content-Type text/event-stream
+// (incompatível com o envelope JSON do `/api/ai/jobs`). Auth via requireDolibarrLogin
+// dentro do próprio router (mesma política dos demais endpoints do agente).
+import chatRoutes from './routes/chatRoutes';
+app.use('/api/chat', chatRoutes);
+
 import systemEventsRoutes from './routes/systemEventsRoutes';
 app.use('/api/system-events', systemEventsRoutes);
 
