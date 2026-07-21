@@ -11,6 +11,12 @@ import { getToolsPrompt, executeTool, getToolContext } from './agentTools';
 import { agentConfigService } from './agentConfigService';
 import { classifyTool } from '../config/actionCatalog';
 import { claimsWriteSuccess, WRITE_CLAIM_RETRY_INSTRUCTION, WRITE_CLAIM_DISCLAIMER } from '../utils/writeClaimGuard';
+import {
+    emitThinking,
+    emitToolCall,
+    emitToolResult,
+    withTurnProgress,
+} from '../agent/progressStream';
 // #1316: system prompt do Marciano centralizado em config/agentSystemPrompt.ts.
 import { MARCIANO_IDENTITY_PROMPT } from '../config/agentSystemPrompt';
 export { MARCIANO_IDENTITY_PROMPT };
@@ -307,6 +313,8 @@ export interface GenerateReplyOptions {
     approvedTools?: string[];
     isAdmin?: boolean;
     chainState?: ChainState;
+    jobId?: string;
+    progressLifecycleManaged?: boolean;
 }
 
 // #1408: mensagem EXPLÍCITA de teto de tool-calls atingido. Antes o loop caía em síntese
@@ -394,6 +402,14 @@ class GoogleProvider implements AIProvider {
     }
 
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
+        if (options?.jobId && !options.progressLifecycleManaged) {
+            return withTurnProgress(options.jobId, () => this.generateReply(
+                conversationHistory,
+                context,
+                imageBase64,
+                { ...options, progressLifecycleManaged: true },
+            ));
+        }
         if (!this.ai) {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
@@ -426,6 +442,7 @@ class GoogleProvider implements AIProvider {
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
         while (iterations < MAX_ITERATIONS) {
+            emitThinking(options?.jobId, 'iteration', iterations);
 
             // Format history
             const historyText = [
@@ -482,6 +499,7 @@ class GoogleProvider implements AIProvider {
             const toolCall = extractToolCall(textResponse);
 
             if (toolCall) {
+                let progressToolStarted = false;
                 try {
                     log.info(`Tool Call: ${toolCall.tool}`, toolCall.args);
 
@@ -506,7 +524,11 @@ class GoogleProvider implements AIProvider {
                         continue;
                     }
 
+                    emitToolCall(options?.jobId, toolCall.tool, toolCall.args || {});
+                    progressToolStarted = true;
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
+                    emitToolResult(options?.jobId, toolCall.tool, toolResult);
+                    progressToolStarted = false;
 
                     // #1355: encerra o turno SÓ com deeplink real (?prefill=) — ver LocalProvider.
                     if (String(toolCall.tool).startsWith('prepare_') && /\?prefill=/.test(String(toolResult))) {
@@ -520,6 +542,7 @@ class GoogleProvider implements AIProvider {
                     continue;
 
                 } catch (e: any) {
+                    if (progressToolStarted) emitToolResult(options?.jobId, toolCall.tool, e, false);
                     if (e.name === 'AskUserInterrupt') {
                         return { text: e.question, usage: accUsage, contextWindow: ctxWindow };
                     }
@@ -1230,6 +1253,14 @@ export class LocalProvider implements AIProvider {
     }
 
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
+        if (options?.jobId && !options.progressLifecycleManaged) {
+            return withTurnProgress(options.jobId, () => this.generateReply(
+                conversationHistory,
+                context,
+                imageBase64,
+                { ...options, progressLifecycleManaged: true },
+            ));
+        }
         // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin (defesa em profundidade:
         // executeTool TAMBÉM recusa, mesmo com prompt injetado).
         // #1499: `options.isAdmin` é a FONTE DA VERDADE — quando ausente, cai pro ctx
@@ -1353,6 +1384,7 @@ export class LocalProvider implements AIProvider {
                 log.warn(`Agente: orçamento de contexto atingido (${lastPromptTokens} >= ${contextBudgetTokens} tokens) — sintetizando com os dados coletados.`);
                 break;
             }
+            emitThinking(options?.jobId, 'iteration', iterations);
             const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
                 { role: 'system', content: `${MARCIANO_IDENTITY_PROMPT}${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
@@ -1417,8 +1449,10 @@ export class LocalProvider implements AIProvider {
                         }
                         toolCallsUsed++; // #1408: só conta o que de fato vai executar
                         log.info(`Local LLM Tool Call: ${tc.tool}`, tc.args);
+                        emitToolCall(options?.jobId, tc.tool, tc.args || {});
                         try {
                             const toolResult = await executeTool(tc.tool, tc.args || {});
+                            emitToolResult(options?.jobId, tc.tool, toolResult);
                             // prepare_* (HITL) devolve deeplink e encerra o turno p/ o usuário confirmar.
                             // #1355: encerrar SÓ quando o resultado é DE FATO um deeplink (?prefill=).
                             // Antes, qualquer string de uma tool prepare_* saía direto p/ o usuário — então
@@ -1436,6 +1470,7 @@ export class LocalProvider implements AIProvider {
                             updateContext(pruneContext(`${currentContext}\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`, contextCharBudget, 2));
                             ranAny = true;
                         } catch (e: any) {
+                            emitToolResult(options?.jobId, tc.tool, e, false);
                             if (e.name === 'AskUserInterrupt') {
                                 return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                             }
@@ -1525,6 +1560,7 @@ export class LocalProvider implements AIProvider {
             while (finalMessages.length > 1 && finalMessages[1].role === 'assistant') {
                 finalMessages.splice(1, 1);
             }
+            emitThinking(options?.jobId, 'synthesis', iterations);
             const { data: finalData, modelUsed: finalModel, fellBack: finalFellBack } = await this.postChatCompletion(finalMessages, 0.3, options);
             accumulate(finalData?.usage);
             let finalText = stripReasoning(finalData?.choices?.[0]?.message?.content || '');
@@ -2220,7 +2256,7 @@ export const aiService = {
     // runWithToolContext). A normalização final (`=== true`) é responsabilidade do
     // provider — UNIFORME nos dois caminhos (options explícito e ctx), fail-closed
     // contra qualquer valor não-boolean (`'1'`, `1`, `{}`, etc.).
-    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean) => {
+    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean, jobId?: string) => withTurnProgress(jobId, async () => {
         // Injeta o endereço público (cloudflared) no contexto -> o agente sabe responder "qual o endereço de acesso?".
         try {
             const tunnelUrl = require('./tunnelService').tunnelService.getUrl();
@@ -2236,9 +2272,9 @@ export const aiService = {
                 let specificProvider = getProvider(providerName);
                 if (imageBase64 && !providerSupportsVision(specificProvider)) {
                     const mm = getMultimodalProvider();
-                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, chainState: state }).then(sanitizeResult);
+                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, chainState: state, jobId, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
                 }
-                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, chainState: state }).then(sanitizeResult);
+                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, chainState: state, jobId, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
             });
         }
 
@@ -2252,13 +2288,13 @@ export const aiService = {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
-                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin }).then(sanitizeResult);
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, jobId, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
             }
             log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
         }
 
-        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin }).then(sanitizeResult);
-    },
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, jobId, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
+    }),
 
     analyzeSystem: async (query: string, rootPath: string = '../src', module: string = 'system_analysis') => {
         const configService = _configService;

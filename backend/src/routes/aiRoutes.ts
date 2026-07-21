@@ -227,7 +227,7 @@ async function runChatReply(body: any, user: any, jobId?: string): Promise<{ rep
                 // (além de já propagar via runWithToolContext acima). Garante que o
                 // filtro de DEV_TOOLS (#1498) usa o papel real do chamador, mesmo se
                 // futuramente algum caller esquecer o runWithToolContext.
-                return aiService.generateReply(llmHistory, enrichedContext, allImages.length ? allImages : undefined, module, isAdmin);
+                return aiService.generateReply(llmHistory, enrichedContext, allImages.length ? allImages : undefined, module, isAdmin, jobId);
             });
         } catch (agentErr: any) {
             // issue #1151: erro no job → persiste uma msg de erro na sessão para não
