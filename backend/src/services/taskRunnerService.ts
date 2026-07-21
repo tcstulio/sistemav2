@@ -26,6 +26,7 @@ import { formatJudgeComment } from './judgeComment';
 import { findSimilarIssue } from '../utils/issueDedup';
 import { extractCiLogExcerpt, jobIdsFromRollup } from '../utils/ciLogExcerpt';
 import { slotManager, Slot } from './slotManager';
+import { slotProvisioner } from './slotProvisioner';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -506,6 +507,14 @@ class TaskRunnerService {
         setImmediate(() => {
             this.resumePendingMerges().catch((e) => log.warn(`resumePendingMerges no boot falhou: ${e?.message || e}`));
         });
+        // Degrau 2 PR-2: provisão INERTE do slot-2. Gated por TASKRUNNER_SLOT2 (ÚNICO gatilho): sem a
+        // flag NADA roda (byte-idêntico ao de hoje). NUNCA bloqueia o boot (setImmediate + .catch); o
+        // slotProvisioner nunca lança p/ fora, mas o .catch é defesa-em-profundidade. Ver slotProvisioner.ts.
+        if (process.env.TASKRUNNER_SLOT2 === '1') {
+            setImmediate(() => {
+                void slotProvisioner.ensureSlot2().catch((e) => log.warn(`ensureSlot2: ${e?.message || e}`));
+            });
+        }
         // Auto-recuperação da fila (#644): checa periodicamente se a cadeia ficou presa e,
         // se sim após QUEUE_RECOVERY_MIN_MS, reseta e retoma. unref p/ não segurar o processo.
         this.recoveryTimer = setInterval(() => this.checkQueueHealth(), QUEUE_CHECK_INTERVAL_MS);
