@@ -1,16 +1,29 @@
 import React, { useState } from 'react';
 import { Bug, X, Send, Loader2, CheckCircle2, ExternalLink } from 'lucide-react';
 import { GithubService } from '../services/githubService';
-import { captureContext, ReportContext } from '../utils/reportContext';
+import { captureFullContext, ReportContext, CaptureMeta } from '../utils/reportContext';
+
+/** Texto curto p/ exibir ao usuário o motivo de captura visual parcial/omitida. */
+function captureMetaLabel(reason: NonNullable<CaptureMeta['reason']>): string {
+    switch (reason) {
+        case 'sensitive-route': return 'rota sensível (login/senha) — snapshot/screenshot omitidos por segurança';
+        case 'timeout': return 'timeout na captura do screenshot (≥5s) — os demais dados foram preservados';
+        case 'error': return 'erro ao gerar screenshot — os demais dados foram preservados';
+        case 'unavailable': return 'captura visual indisponível neste navegador';
+    }
+}
 
 /**
  * Botão flutuante "Reportar problema" — sempre disponível.
- * Captura o contexto (tela/breadcrumb, erros de console, chamadas de API que falharam)
- * NO MOMENTO DO CLIQUE (antes de abrir o modal, p/ o breadcrumb refletir a tela real)
- * e cria uma issue no GitHub via o backend.
+ * Captura o contexto (tela/breadcrumb, erros e logs de console, chamadas de API
+ * que falharam, snapshot HTML e screenshot da viewport) NO MOMENTO DO CLIQUE
+ * (antes de abrir o modal, p/ o breadcrumb refletir a tela real) e cria uma
+ * issue no GitHub via o backend. O screenshot/html têm timeout de 5s — se
+ * estourar, envia o restante normalmente.
  */
 export const ReportButton: React.FC = () => {
     const [open, setOpen] = useState(false);
+    const [capturing, setCapturing] = useState(false);
     const [ctx, setCtx] = useState<ReportContext | null>(null);
     const [title, setTitle] = useState('');
     const [desc, setDesc] = useState('');
@@ -18,13 +31,24 @@ export const ReportButton: React.FC = () => {
     const [result, setResult] = useState<{ ok: boolean; url?: string; number?: number; error?: string } | null>(null);
     const [autoFix, setAutoFix] = useState(false);
 
-    const openModal = () => {
-        setCtx(captureContext()); // snapshot ANTES de abrir o modal
-        setTitle('');
-        setDesc('');
-        setAutoFix(false);
-        setResult(null);
-        setOpen(true);
+    const openModal = async () => {
+        if (capturing) return;
+        setCapturing(true); // loading enquanto captura (async)
+        try {
+            // captureFullContext aplica timeout de 5s; em caso de timeout,
+            // devolve o contexto sem screenshot/HTML, preservando logs e erros.
+            const snapshot = await captureFullContext();
+            setCtx(snapshot);
+        } catch {
+            setCtx(null);
+        } finally {
+            setCapturing(false);
+            setTitle('');
+            setDesc('');
+            setAutoFix(false);
+            setResult(null);
+            setOpen(true);
+        }
     };
 
     const close = () => { if (!sending) setOpen(false); };
@@ -35,7 +59,7 @@ export const ReportButton: React.FC = () => {
         const r = await GithubService.createIssue({
             title: title.trim(),
             description: desc,
-            context: ctx,
+            context: ctx ?? undefined,
             // autoFix → adiciona 'opencode-task' p/ o TaskRunner pegar (o agente tenta corrigir e
             // abre um PR). 'from-app' fica sempre, p/ rastrear a origem. Sem autoFix = só triagem humana.
             labels: autoFix ? ['from-app', 'opencode-task'] : ['from-app'],
@@ -50,11 +74,12 @@ export const ReportButton: React.FC = () => {
             <button
                 type="button"
                 onClick={openModal}
+                disabled={capturing}
                 aria-label="Reportar problema"
                 title="Reportar problema"
-                className="fixed bottom-6 left-6 z-50 flex items-center justify-center w-12 h-12 rounded-full bg-rose-600 text-white shadow-lg hover:bg-rose-700 transition-colors"
+                className="fixed bottom-6 left-6 z-50 flex items-center justify-center w-12 h-12 rounded-full bg-rose-600 text-white shadow-lg hover:bg-rose-700 transition-colors disabled:opacity-70"
             >
-                <Bug size={20} />
+                {capturing ? <Loader2 size={20} className="animate-spin" /> : <Bug size={20} />}
             </button>
 
             {open && (
@@ -125,7 +150,13 @@ export const ReportButton: React.FC = () => {
                                         <div className="mt-2 space-y-1 break-words">
                                             <p><b>Onde:</b> {ctx.breadcrumb || '—'}</p>
                                             <p><b>URL:</b> {ctx.url}</p>
-                                            <p><b>Erros de console:</b> {ctx.consoleErrors.length} · <b>API falhas:</b> {ctx.failedRequests.length}</p>
+                                            <p><b>Erros de console:</b> {ctx.consoleErrors.length} · <b>Logs:</b> {ctx.consoleLogs.length} · <b>API falhas:</b> {ctx.failedRequests.length}</p>
+                                            <p><b>Snapshot HTML:</b> {ctx.htmlSnapshot ? `${Math.round(ctx.htmlSnapshot.length / 1024)} kB` : 'não capturado'} · <b>Screenshot:</b> {ctx.screenshot ? 'sim' : 'não'}</p>
+                                            {ctx.captureMeta?.reason && (
+                                                <p className="text-amber-600 dark:text-amber-400">
+                                                    <b>Obs.:</b> {captureMetaLabel(ctx.captureMeta.reason)}
+                                                </p>
+                                            )}
                                         </div>
                                     </details>
                                 )}
