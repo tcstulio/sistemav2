@@ -77,9 +77,11 @@ export function signReportFileToken(
  * `null` caso contrário. Comparação timing-safe da assinatura.
  */
 export function verifyReportFileToken(token: string): ReportFileTokenPayload | null {
-    if (!token || typeof token !== 'string' || !token.includes('.')) return null;
-    const [body, sig] = token.split('.');
-    if (!body || !sig) return null;
+    if (!token || typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [body, sig] = parts;
+    if (!body || !sig || !/^[A-Za-z0-9_-]+$/.test(body) || !/^[A-Za-z0-9_-]+$/.test(sig)) return null;
 
     const expected = hmac(body);
     const a = Buffer.from(sig);
@@ -92,7 +94,14 @@ export function verifyReportFileToken(token: string): ReportFileTokenPayload | n
     } catch {
         return null;
     }
-    if (payload.kind !== REPORT_FILE_TOKEN_KIND) return null;
-    if (!payload.exp || Math.floor(Date.now() / 1000) > payload.exp) return null;
+    if (
+        payload.kind !== REPORT_FILE_TOKEN_KIND
+        || typeof payload.reportId !== 'string'
+        || typeof payload.ext !== 'string'
+        || !Number.isInteger(payload.iat)
+        || !Number.isInteger(payload.exp)
+        || payload.exp <= payload.iat
+    ) return null;
+    if (Math.floor(Date.now() / 1000) >= payload.exp) return null;
     return payload;
 }

@@ -175,7 +175,7 @@ export function sanitizeHtmlSnapshot(html: string): string {
             img: ['src', 'alt', 'width', 'height', 'loading'],
             a: ['href', 'name', 'target', 'rel'],
         },
-        allowedSchemes: ['http', 'https', 'mailto', 'tel', 'data'],
+        allowedSchemes: ['http', 'https', 'mailto', 'tel'],
         allowedSchemesByTag: { img: ['http', 'https', 'data'] },
         allowProtocolRelative: false,
         disallowedTagsMode: 'discard',
@@ -429,11 +429,12 @@ export function loadPersistedHtmlFiltered(reportId: string, selector?: string): 
         );
     }
     const raw = readFileSync(htmlPath, 'utf8');
-    const truncated = raw.includes('<!-- truncated -->');
+    const sanitized = sanitizeHtmlSnapshot(raw);
+    const truncated = raw.includes('<!-- truncated -->') || sanitized.includes('<!-- truncated -->');
     if (selector && selector.trim()) {
-        return { html: filterHtmlBySelector(raw, selector.trim()), truncated };
+        return { html: filterHtmlBySelector(sanitized, selector.trim()), truncated };
     }
-    return { html: raw, truncated };
+    return { html: sanitized, truncated };
 }
 
 /**
