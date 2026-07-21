@@ -174,3 +174,38 @@ describe('runOpencode — robustez do kill (#644)', () => {
         await expect(p).rejects.toThrow(/killed/i);
     });
 });
+
+describe('runOpencode — env override (PR-1 slot-2 XDG_DATA_HOME)', () => {
+    beforeEach(() => vi.mocked(spawn).mockClear()); // mock.calls acumula entre testes
+    afterEach(() => vi.restoreAllMocks());
+
+    it('SEM opts.env → spawn NÃO recebe a chave `env` (herda process.env — byte-idêntico ao de hoje)', async () => {
+        const child = new FakeChild();
+        vi.mocked(spawn).mockReturnValue(child as any);
+
+        const p = runOpencode('opencode run "x"', '/cwd', makeTask(), 60_000);
+        child.emit('exit', 0, null);
+        await expect(p).resolves.toBe('');
+
+        const spawnOpts = vi.mocked(spawn).mock.calls[0][2] as any;
+        expect('env' in spawnOpts).toBe(false); // chave ausente → filho herda process.env
+    });
+
+    it('COM opts.env → spawn recebe { ...process.env, ...opts.env } (XDG mesclado, process.env preservado)', async () => {
+        const child = new FakeChild();
+        vi.mocked(spawn).mockReturnValue(child as any);
+        process.env.__RUNOPENCODE_SENTINEL = 'keep';
+
+        const p = runOpencode('opencode run "x"', '/cwd', makeTask(), 60_000, undefined, {
+            env: { XDG_DATA_HOME: 'C:/tmp/slot2-xdg' },
+        });
+        child.emit('exit', 0, null);
+        await expect(p).resolves.toBe('');
+
+        const spawnOpts = vi.mocked(spawn).mock.calls[0][2] as any;
+        expect(spawnOpts.env.XDG_DATA_HOME).toBe('C:/tmp/slot2-xdg'); // override aplicado
+        expect(spawnOpts.env.__RUNOPENCODE_SENTINEL).toBe('keep');    // process.env preservado
+
+        delete process.env.__RUNOPENCODE_SENTINEL;
+    });
+});

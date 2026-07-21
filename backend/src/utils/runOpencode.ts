@@ -72,14 +72,20 @@ export function runOpencode(
     // vizinhos vivos e mata só o órfão DESTE run. É um GETTER (não valor): resolvido no instante do
     // backstop (cancel/timeout pode disparar muito depois do dispatch, com o conjunto de runs mudado).
     // Em serial não é passado → protect vazio → comportamento byte-idêntico ao de hoje.
-    opts?: { protectNeedles?: () => string[] },
+    // #parallel env: `opts.env` é mesclado sobre `process.env` no spawn (ex.: XDG_DATA_HOME do slot-2
+    // p/ isolar o opencode.db). AUSENTE (slot-1) → nenhuma chave `env` é passada → o filho herda
+    // `process.env` exatamente como hoje (byte-idêntico). Presente → { ...process.env, ...opts.env }.
+    opts?: { protectNeedles?: () => string[]; env?: Record<string, string> },
 ): Promise<string> {
     return new Promise((resolve, reject) => {
+        const spawnEnv = opts?.env ? { ...process.env, ...opts.env } : undefined;
         const child: ChildProcess = spawn(GIT_BASH, ['-lc', command], {
             cwd,
             detached: process.platform !== 'win32',
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
+            // Só injeta `env` quando há override — senão omite a chave p/ herdar process.env (byte-safe).
+            ...(spawnEnv ? { env: spawnEnv } : {}),
         });
         task.childPid = child.pid;
 

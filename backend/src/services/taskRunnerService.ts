@@ -1843,9 +1843,15 @@ class TaskRunnerService {
      * de outra sessão a corromperia. Sem config legível → pula. `force` (vindo de uma varredura
      * com confirmedGone) apaga mesmo com mtime < 30s — cobre o restart rápido do #335.
      */
-    private cleanSnapshotLockFor(worktreePath: string, force = false): void {
+    private cleanSnapshotLockFor(worktreePath: string, dataDir: string | null, force = false): void {
         try {
-            const snapRoot = path.join(os.homedir(), '.local', 'share', 'opencode', 'snapshot');
+            // Snapshot mora sob o XDG_DATA_HOME do opencode. slot-1 (dataDir=null) → o default
+            // ~/.local/share/opencode (path byte-idêntico ao de antes). slot-2 (clone c/ XDG próprio) →
+            // $XDG/opencode/snapshot, senão o limpador de index.lock do #335 nunca acharia os snapshots
+            // do slot-2. path.join tolera o forward-slash do SLOT2_XDG no Windows.
+            const snapRoot = dataDir
+                ? path.join(dataDir, 'opencode', 'snapshot')
+                : path.join(os.homedir(), '.local', 'share', 'opencode', 'snapshot');
             if (!fs.existsSync(snapRoot)) return;
             const target = path.resolve(worktreePath).toLowerCase().replace(/\\/g, '/');
             for (const proj of fs.readdirSync(snapRoot)) {
@@ -1875,7 +1881,7 @@ class TaskRunnerService {
     private cleanStaleLocks(slot: Slot, opencodeGone = false): void {
         const gitDir = this.worktreeGitDir(slot);
         if (gitDir) this.rmStaleLock(path.join(gitDir, 'index.lock'), 'worktree gitdir');
-        this.cleanSnapshotLockFor(slot.root, opencodeGone);
+        this.cleanSnapshotLockFor(slot.root, slot.dataDir, opencodeGone);
     }
 
     /**
@@ -2063,7 +2069,12 @@ class TaskRunnerService {
                         primaryCmd,
                         slot.root, task, OPENCODE_TIMEOUT_MS,
                         (sample) => { task.cpuMemSamples?.push(sample); },
-                        { protectNeedles: () => this.protectNeedlesExcept(task.issueNumber) },
+                        {
+                            protectNeedles: () => this.protectNeedlesExcept(task.issueNumber),
+                            // #parallel: XDG_DATA_HOME do slot isola o opencode.db. slot-1 (dataDir=null)
+                            // → undefined → spawn herda process.env como hoje (byte-idêntico).
+                            env: slot.dataDir ? { XDG_DATA_HOME: slot.dataDir } : undefined,
+                        },
                     );
                 } catch (e: any) {
                     // Fallback GLM→MiniMax do CODER: para COTA/429 OU timeout/hang do opencode. Sob limite
@@ -2082,7 +2093,12 @@ class TaskRunnerService {
                         fallbackModel ? `opencode run --model ${fallbackModel} "${basePrompt}"` : `opencode run "${basePrompt}"`,
                         slot.root, task, OPENCODE_TIMEOUT_MS,
                         (sample) => { task.cpuMemSamples?.push(sample); },
-                        { protectNeedles: () => this.protectNeedlesExcept(task.issueNumber) },
+                        {
+                            protectNeedles: () => this.protectNeedlesExcept(task.issueNumber),
+                            // #parallel: XDG_DATA_HOME do slot isola o opencode.db. slot-1 (dataDir=null)
+                            // → undefined → spawn herda process.env como hoje (byte-idêntico).
+                            env: slot.dataDir ? { XDG_DATA_HOME: slot.dataDir } : undefined,
+                        },
                     );
                 }
             } finally {
@@ -3744,7 +3760,8 @@ Return ONLY a JSON:
                 try {
                     // excludeIssue=self: mata órfão do PRÓPRIO judge, poupa coders vizinhos (Fase 2).
                     const gone = await this.sweepOrphanedOpencode(`visual-judge #${issueNumber}`, [], undefined, { excludeIssue: issueNumber });
-                    this.cleanSnapshotLockFor(REPO_ROOT, gone);
+                    // Judge Visual roda em REPO_ROOT com XDG default → dataDir=null (snapshot root padrão).
+                    this.cleanSnapshotLockFor(REPO_ROOT, null, gone);
                     return await runOpencode(
                         `opencode run "${prompt.replace(/"/g, '\\"')}"`,
                         REPO_ROOT, task, 120_000,
