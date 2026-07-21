@@ -493,9 +493,9 @@ describe('BotService', () => {
             await botService.processMessage(createMessage({ body: 'Hello' }));
             expect(aiService.generateReply).not.toHaveBeenCalled();
         });
-
-        it('generates auto-reply with CRM context', async () => {
+        it('handles getMessages failure', async () => {
             (storeService.getChatSettings as any).mockReturnValue({});
+
             (storeService.getSessionSettings as any).mockReturnValue({
                 autoReply: true,
                 historyLimit: 10,
@@ -598,6 +598,23 @@ describe('BotService', () => {
             await botService.processMessage(createMessage({ body: 'Hello', from: 'group@g.us' }));
 
             expect(aiService.generateReply).toHaveBeenCalled();
+        });
+
+        it('#1658: exclui notificações automáticas do histórico, preservando a conversa real', async () => {
+            (messageService.getMessages as any).mockResolvedValue([
+                { fromMe: true, body: 'Olá TULIO, a tarefa TK2511-0494 venceu em 20/07/2026.', metadata: { systemNotification: true } },
+                { fromMe: true, body: 'Olá TULIO, a tarefa TK2606-3559 vence em 21/07/2026.' },
+                { fromMe: true, body: 'Olá TULIO, a tarefa TK2606-3560 está sem progresso.' },
+                { fromMe: false, body: 'oi' },
+            ]);
+            (aiService.generateReply as any).mockResolvedValue('Reply');
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+            (sessionService.sendTyping as any).mockResolvedValue(undefined);
+
+            await botService.processMessage(createMessage({ body: 'oi', id: 'msg_1658' }));
+
+            const history = (aiService.generateReply as any).mock.calls[0][0];
+            expect(history).toEqual([{ role: 'user', parts: 'oi' }]);
         });
 
         it('handles getMessages failure', async () => {

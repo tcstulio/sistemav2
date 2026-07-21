@@ -12,6 +12,7 @@ const log = createLogger('MessageService');
  */
 export class MessageService {
     private static instance: MessageService;
+    private readonly sentMessageMetadata = new Map<string, Record<string, any>>();
 
     private constructor() { }
 
@@ -33,10 +34,12 @@ export class MessageService {
         return chatId.includes('@') ? chatId : `${chatId}@c.us`;
     }
 
-    async sendText(sessionId: string, chatId: string, text: string) {
+    async sendText(sessionId: string, chatId: string, text: string, metadata?: Record<string, any>) {
         const client = this.getClient(sessionId);
         const msg = await client.sendMessage(this.formatChatId(chatId), text);
-        return { id: msg.id._serialized, timestamp: msg.timestamp };
+        const id = msg.id._serialized;
+        if (metadata) this.sentMessageMetadata.set(id, metadata);
+        return { id, timestamp: msg.timestamp };
     }
 
     async sendFile(sessionId: string, chatId: string, fileData: string, filename: string, caption?: string) {
@@ -176,7 +179,8 @@ export class MessageService {
             senderName: await this.resolveSenderName(client, m),
             status: m.ack >= 3 ? 'read' : m.ack >= 2 ? 'delivered' : 'sent',
             type: m.type,
-            mimetype: m._data?.mimetype
+            mimetype: m._data?.mimetype,
+            metadata: this.sentMessageMetadata.get(m.id._serialized || (m.id as any).$1)
         })));
         
         return mappedMessages.sort((a, b) => a.timestamp - b.timestamp);

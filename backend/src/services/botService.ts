@@ -303,7 +303,9 @@ class BotService {
                 let rawMapped = rawHistory
                     .filter((m: any) => {
                         const b = m.body || '';
-                        return !b.includes('Status do Sistema') && 
+                        const isSystemNotification = m.metadata?.systemNotification === true ||
+                            /^Olá [^,]+, (a tarefa|você é responsável pela tarefa)/i.test(b) && /TK\d{4}-\d{4}/i.test(b);
+                        return !isSystemNotification && !b.includes('Status do Sistema') &&
                                !b.includes('Comandos Disponíveis') && 
                                !b.startsWith('/');
                     })
