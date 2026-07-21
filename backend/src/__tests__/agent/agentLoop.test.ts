@@ -174,18 +174,46 @@ describe('#1575 — cancelamento via flag no JobState (requestCancel / isCancell
             expect(stream.isClosed('job-cancel')).toBe(true);
         });
 
+        it('E2E: cancela job de 30s com 8 tool_calls no t=10s e retorna summary em até 3s', async () => {
+            const stream = makeStream();
+            let callsSeen = 0;
+            const executeToolFn = vi.fn(async () => {
+                callsSeen++;
+                await new Promise((resolve) => setTimeout(resolve, 3_750));
+                return `ação ${callsSeen}`;
+            });
+            const cancelAt = 10_000;
+            const startedAt = Date.now();
+            const cancelTimer = setTimeout(() => stream.requestCancel('job-e2e-cancel'), cancelAt);
+
+            try {
+                const result = await runAgentLoop(
+                    baseOpts({ jobId: 'job-e2e-cancel', maxIterations: 8, maxToolCalls: 8 }),
+                    baseDeps(stream, {
+                        llmCall: scriptedLlm(['CALL ação {}']),
+                        parseToolCalls: () => [{ tool: 'ação', args: { etapa: callsSeen + 1 } }],
+                        executeToolFn,
+                    }),
+                );
+                const elapsedAfterCancel = Date.now() - (startedAt + cancelAt);
+                const cancelled = stream.getBuffer('job-e2e-cancel').find((event) => event.type === 'cancelled');
+                expect(cancelled).toBeTruthy();
+                expect((cancelled!.payload as { summary: string }).summary).toContain('Cancelado por você');
+                expect(result.text).toContain('Cancelado por você');
+                expect(elapsedAfterCancel).toBeLessThan(3_000);
+                expect(callsSeen).toBeLessThanOrEqual(3);
+            } finally {
+                clearTimeout(cancelTimer);
+            }
+        }, 15_000);
+
         it('requestCancel dispara DURANTE tool: loop checa no topo da próxima iteração', async () => {
             const stream = makeStream();
-            // Tool que demora ~150ms — sem isto o loop rodaria as maxIterations em
-            // microssegundos e o setTimeout chegaria TARDE (loop já done). Com 150ms
-            // por tool + 10 iterações = ~1.5s total, o cancel atira DURANTE a primeira
-            // tool e o loop vê no topo da próxima iteração.
             const executeToolFn = vi.fn(async () => {
                 await new Promise((r) => setTimeout(r, 150));
                 return 'ok';
             });
 
-            // Cancela em t≈100ms.
             setTimeout(() => stream.requestCancel('job-cancel'), 100);
 
             const start = Date.now();
@@ -198,7 +226,6 @@ describe('#1575 — cancelamento via flag no JobState (requestCancel / isCancell
                 }),
             );
             const elapsed = Date.now() - start;
-            // Spec: ≤2s após cancel. Cancel em t=100ms + próximo tool (~150ms) + overhead ≈ 350ms.
             expect(elapsed).toBeLessThan(2000);
 
             const buf = stream.getBuffer('job-cancel');
@@ -206,6 +233,8 @@ describe('#1575 — cancelamento via flag no JobState (requestCancel / isCancell
             expect(cancelledEv).toBeTruthy();
             expect(stream.isClosed('job-cancel')).toBe(true);
         });
+
+
 
         it('AbortSignal tem precedência sobre a flag (síncrono > assíncrono)', async () => {
             const stream = makeStream();

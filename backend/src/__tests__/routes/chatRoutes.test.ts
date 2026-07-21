@@ -131,7 +131,7 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             // Em prática, Express faz match de `/jobs/:id/cancel` com :id === '' → entra
             // no handler que valida e joga AppError(400). Verificamos que sem crash.
             const res = await request(r).post('/api/chat/jobs//cancel');
-            expect([400, 404]).toContain(res.status);
+            expect(res.status).toBe(404);
         });
 
         it('permite cancelar job que NÃO existe (cria o estado com a flag setada)', async () => {
