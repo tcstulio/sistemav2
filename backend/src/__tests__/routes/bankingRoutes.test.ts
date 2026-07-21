@@ -451,6 +451,95 @@ describe('bankingRoutes', () => {
         });
     });
 
+    describe('Cobertura dos demais endpoints POST (#1542)', () => {
+        const VALID_KEY = 'abcdef1234567890abcdef1234567890';
+
+        it('valida e processa /import/ofx', async () => {
+            const res = await request(app)
+                .post('/api/banking/import/ofx')
+                .send({});
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockBankingService.parseOFX).toHaveBeenCalled();
+        });
+
+        it('rejeita body inesperado em /import/ofx', async () => {
+            const res = await request(app)
+                .post('/api/banking/import/ofx')
+                .send({ unexpected: true });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockBankingService.parseOFX).not.toHaveBeenCalled();
+        });
+
+        it('valida e processa /import/auto', async () => {
+            const res = await request(app)
+                .post('/api/banking/import/auto')
+                .send({});
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockBankingService.parseStatement).toHaveBeenCalled();
+        });
+
+        it('rejeita body inesperado em /import/auto', async () => {
+            const res = await request(app)
+                .post('/api/banking/import/auto')
+                .send({ unexpected: true });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockBankingService.parseStatement).not.toHaveBeenCalled();
+        });
+
+        it('valida e processa /insights/chart-data', async () => {
+            const res = await request(app)
+                .post('/api/banking/insights/chart-data')
+                .send({ transactions: [{ date: '2024-01-01', amount: 100 }], groupBy: 'day' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockBankingService.getCashFlowChartData).toHaveBeenCalled();
+        });
+
+        it('rejeita payload inválido em /insights/chart-data', async () => {
+            const res = await request(app)
+                .post('/api/banking/insights/chart-data')
+                .send({ transactions: [] });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockBankingService.getCashFlowChartData).not.toHaveBeenCalled();
+        });
+
+        it('valida e processa /reconcile/save', async () => {
+            const res = await request(app)
+                .post('/api/banking/reconcile/save')
+                .set('DOLAPIKEY', VALID_KEY)
+                .send({ lineId: 'line1', invoiceId: 'invoice1' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockBankingService.saveReconciliation).toHaveBeenCalledWith(
+                'line1',
+                'invoice1',
+                VALID_KEY
+            );
+        });
+
+        it('rejeita payload inválido em /reconcile/save', async () => {
+            const res = await request(app)
+                .post('/api/banking/reconcile/save')
+                .send({ lineId: 'line1' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockBankingService.saveReconciliation).not.toHaveBeenCalled();
+        });
+    });
+
     describe('Envelopes apiResponse ok/fail (#1542)', () => {
         it('resposta de sucesso de /analyze/categorize usa { success: true, data: ... }', async () => {
             const res = await request(app)
