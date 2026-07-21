@@ -316,6 +316,10 @@ import { delegationService } from './services/delegationService';
 import { taskRunnerService } from './services/taskRunnerService';
 import { gcSchedulerService } from './services/gcSchedulerService';
 if (!IS_PREVIEW) {
+    // #wa-autorecover: sweep periódico que recupera sessões de WhatsApp STOPPED (chrome morto sem
+    // disparar 'disconnected') com auth salva — sem isto o dono ficava sem QR até um restart manual.
+    sessionService.startHealthMonitor();
+
     schedulerService.startWorker();
     log.info('SchedulerService worker started');
 
@@ -409,6 +413,7 @@ const gracefulShutdown = async (signal: string) => {
 
     // 3. Destroy WhatsApp Clients (Releases Chrome processes & Ports)
     try {
+        sessionService.stopHealthMonitor(); // #wa-autorecover: para o sweep antes de destruir
         await sessionService.destroy();
     } catch (e) {
         log.error('Error destroying WhatsApp service', e);
