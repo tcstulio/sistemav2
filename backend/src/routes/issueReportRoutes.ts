@@ -9,13 +9,26 @@
  * binários (screenshot/HTML), gera `reportId` (UUID), usa o helper compartilhado
  * `createGitHubIssue` e grava entrada no audit log.
  *
- * Resposta:
- *   - `201 { reportId, issueUrl, issueNumber?, screenshotUrl, htmlUrl }` em sucesso
- *   - `400` em campos obrigatórios ausentes (`userId`, `url`, `viewport`, `userAgent`)
- *   - `413` em screenshot > 5 MB (decodificado)
- *   - `502` em falha do helper `gh` (propagada como AppError)
+ * Endpoints de LEITURA (#1562) — usados pelas ferramentas do agente Marciano
+ * (`get_report_screenshot` / `get_report_html`) para puxar o print/HTML já
+ * persistido quando o usuário descrever um problema visual:
+ *   - `GET /api/issues/report/:id/screenshot` → link assinado temporário (1h)
+ *   - `GET /api/issues/report/:id/html[?selector=...]` → HTML bruto ou filtrado
+ *   - `GET /api/issues/report/:id/file.<ext>?token=...` → binário (via token)
  *
- * Auth: `requireDolibarrLogin` — mesma política do resto de `/api/github/*`.
+ * Resposta:
+ *   - `201 { reportId, issueUrl, issueNumber?, screenshotUrl, htmlUrl }` em sucesso (POST)
+ *   - `200 { url, expiresAt, mime }` em sucesso (GET screenshot)
+ *   - `200 { html, truncated?, matchedSelector? }` em sucesso (GET html)
+ *   - `200 image/<ext>` binário (GET file)
+ *   - `400` em campos obrigatórios ausentes / params inválidos
+ *   - `401 TOKEN_INVALID_OR_EXPIRED` no GET file com token ruim
+ *   - `404 REPORT_NOT_FOUND` / `SELECTOR_NO_MATCH` nos GETs
+ *   - `413` em screenshot > 5 MB (decodificado, no POST)
+ *   - `502` em falha do helper `gh` (propagada como AppError, no POST)
+ *
+ * Auth: `requireDolibarrLogin` — mesma política do resto de `/api/github/*`
+ * (exceto o `GET /file.<ext>?token=...` que valida o token em vez de login).
  */
 import { Router, Request, Response, NextFunction } from 'express';
 import { z, ZodError, ZodSchema } from 'zod';
@@ -27,6 +40,12 @@ import {
     processIssueReport,
     SCREENSHOT_MAX_BYTES,
     IssueReportPayload,
+    findPersistedScreenshot,
+    buildSignedScreenshotUrl,
+    verifySignedScreenshotToken,
+    loadPersistedScreenshot,
+    loadPersistedHtmlFiltered,
+    truncateUtf8,
 } from '../services/issueReportService';
 
 const log = createLogger('IssueReportRoute');
@@ -166,5 +185,173 @@ router.post(
 router.get('/issues/report/_health', (_req: Request, res: Response) => {
     res.json({ ok: true, endpoint: 'POST /api/issues/report' });
 });
+
+// =====================================================================
+// #1562 — endpoints de LEITURA para ferramentas do agente Marciano.
+// Servem o screenshot (via URL assinada temporária) e o HTML (bruto ou
+// filtrado por seletor CSS) já persistidos pelo POST acima. Esses GETs
+// são a contraparte "ler o que foi reportado" — uma issue visual sem o
+// print/HTML perde metade do contexto, e o LLM precisa enxergar.
+// =====================================================================
+
+/**
+ * GET /api/issues/report/:id/screenshot
+ *
+ * Devolve um LINK ASSINÁVEL temporário (válido por 1h) para a screenshot
+ * persistida — pronto p/ colar numa issue do GitHub, abrir num chat, ou
+ * passar de volta para o LLM (que tem visão). NÃO serve o arquivo binário
+ * direto: o link retornado aponta para `/file.<ext>?token=...` (rota
+ * abaixo) que valida o token sem exigir login.
+ *
+ * Auth: `requireDolibarrLogin` — mesma política do resto de `/api/issues/*`.
+ * Resposta:
+ *   - `200 { url, expiresAt, mime }` em sucesso (URL relativa `/api/...`).
+ *   - `404 REPORT_NOT_FOUND` se o reportId não existir / não tiver screenshot.
+ *   - `400 INVALID_REPORT_ID` se reportId malformado.
+ */
+router.get(
+    '/issues/report/:id/screenshot',
+    requireDolibarrLogin,
+    (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const reportId = String(req.params.id || '').trim();
+            const found = findPersistedScreenshot(reportId);
+            if (!found) {
+                throw new AppError(
+                    404,
+                    'REPORT_NOT_FOUND',
+                    `Report ${reportId} não encontrado ou sem screenshot anexada.`,
+                );
+            }
+            const ttlSeconds = 3600;
+            const url = buildSignedScreenshotUrl(reportId, found.ext, ttlSeconds);
+            const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+            log.info('Screenshot URL assinada emitida', { reportId, ext: found.ext, ttlSeconds });
+            res.json({
+                reportId,
+                mime: found.mime,
+                ext: found.ext,
+                url,
+                expiresAt,
+                ttlSeconds,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+);
+
+/**
+ * GET /api/issues/report/:id/html[?selector=...&maxBytes=N]
+ *
+ * Devolve o HTML persistido (sanitizado) do report. Aceita um `selector`
+ * (CSS) opcional — se passado, retorna APENAS o `innerHTML` do PRIMEIRO
+ * match, reduzindo ruído para o LLM (AC #1562). `maxBytes` opcional para
+ * truncar resposta (cap defensivo; default 200KB, máx 1MB).
+ *
+ * Auth: `requireDolibarrLogin`.
+ * Resposta:
+ *   - `200 { html, truncated?, matchedSelector? }` em sucesso.
+ *   - `404 REPORT_NOT_FOUND` se o reportId não existir / sem HTML.
+ *   - `404 SELECTOR_NO_MATCH` se o seletor não casar.
+ *   - `400 INVALID_SELECTOR` / `INVALID_REPORT_ID` em params ruins.
+ */
+router.get(
+    '/issues/report/:id/html',
+    requireDolibarrLogin,
+    (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const reportId = String(req.params.id || '').trim();
+            const rawSelector = typeof req.query.selector === 'string' ? req.query.selector.trim() : '';
+            const rawMaxBytes = typeof req.query.maxBytes === 'string' ? Number(req.query.maxBytes) : NaN;
+            const maxBytes = Number.isFinite(rawMaxBytes) && rawMaxBytes > 0
+                ? Math.min(Math.floor(rawMaxBytes), 1024 * 1024)
+                : 200 * 1024;
+
+            const { html, truncated: persistedTruncated } = loadPersistedHtmlFiltered(reportId, rawSelector || undefined);
+            const limited = truncateUtf8(html, maxBytes);
+            const outHtml = limited.truncated ? `${limited.value}\n<!-- truncated -->` : limited.value;
+            const truncated = persistedTruncated || limited.truncated;
+
+            res.json({
+                reportId,
+                selector: rawSelector || null,
+                html: outHtml,
+                bytes: Buffer.byteLength(outHtml, 'utf8'),
+                truncated,
+                matchedSelector: !!rawSelector,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+);
+
+/**
+ * GET /api/issues/report/:id/file.<ext>?token=...
+ *
+ * Serve o ARQUIVO BINÁRIO da screenshot validando o token assinado. Não
+ * exige auth (o token É a credencial, com TTL de 1h). O caminho inclui a
+ * extensão (`.png`, `.jpg`, etc.) para que o Content-Type saia correto
+ * sem precisar de query string adicional.
+ *
+ * Resposta:
+ *   - `200 image/<ext>` binário em sucesso.
+ *   - `404 REPORT_NOT_FOUND` se o arquivo sumiu do disco (raro, mas pode
+ *     acontecer se alguém limpou `uploads/reports/` entre a geração e o
+ *     consumo do link).
+ *   - `400 INVALID_REPORT_ID` / `INVALID_EXT` em path malformado.
+ *   - `401 TOKEN_INVALID_OR_EXPIRED` se token ausente, adulterado ou expirado.
+ */
+router.get(
+    '/issues/report/:id/file.:ext',
+    (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const reportId = String(req.params.id || '').trim();
+            const rawExt = String(req.params.ext || '').trim().toLowerCase();
+            // Allowlist de extensões de IMAGEM (espelha `IMAGE_EXT_BY_MIME` no
+            // service). Defesa em profundidade: mesmo que o regex permissivo
+            // passasse, uma `.php` ou `.html` aqui significa "alguém tentou
+            // baixar arquivo não-imagem" — recusamos antes de qualquer leitura.
+            const ALLOWED_FILE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+            if (!ALLOWED_FILE_EXTS.includes(rawExt)) {
+                throw new AppError(
+                    400,
+                    'INVALID_EXT',
+                    `Extensão inválida no path: "${rawExt}". Aceitas: ${ALLOWED_FILE_EXTS.join(', ')}.`,
+                );
+            }
+            const token = typeof req.query.token === 'string' ? req.query.token : null;
+            const verified = verifySignedScreenshotToken(reportId, rawExt, token);
+            if (!verified) {
+                throw new AppError(
+                    401,
+                    'TOKEN_INVALID_OR_EXPIRED',
+                    'Token de acesso ao arquivo ausente, expirado ou adulterado. Gere um novo link via GET /api/issues/report/:id/screenshot.',
+                );
+            }
+            let payload: { bytes: Buffer; mime: string; ext: string };
+            try {
+                payload = loadPersistedScreenshot(reportId);
+            } catch (e: any) {
+                if (e?.code === 'REPORT_NOT_FOUND') {
+                    throw new AppError(404, 'REPORT_NOT_FOUND', e.message);
+                }
+                throw e;
+            }
+            // Re-checagem defensiva: a extensão no path TEM que bater com a do arquivo.
+            // Se a persistência usou .png mas o atacante pediu .html no path, o verifySignedScreenshotToken
+            // já recusa (ext !== payload.ext). Esta é a 2ª barreira.
+            if (payload.ext !== rawExt) {
+                throw new AppError(400, 'EXT_MISMATCH', 'Extensão do arquivo não corresponde ao solicitado.');
+            }
+            res.setHeader('Content-Type', payload.mime);
+            res.setHeader('Cache-Control', 'private, max-age=300');
+            res.send(payload.bytes);
+        } catch (err) {
+            next(err);
+        }
+    }
+);
 
 export default router;

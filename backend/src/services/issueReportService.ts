@@ -17,14 +17,16 @@
  * Erros têm shape `AppError` (status + code) para integrar com o errorHandler
  * global — ver `routes/issueReportRoutes.ts`.
  */
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import sanitizeHtml from 'sanitize-html';
+import * as cheerio from 'cheerio';
 import { v4 as uuidv4 } from 'uuid';
 import { createLogger } from '../utils/logger';
 import { buildIssueBody, IssueReportContext } from '../utils/issueBodyBuilder';
 import { createGitHubIssue, CreateGitHubIssueResult } from '../utils/githubIssue';
 import { AppError } from '../middleware/errorHandler';
+import { signReportFileToken, verifyReportFileToken } from '../utils/reportFileToken';
 
 const log = createLogger('IssueReport');
 
@@ -32,6 +34,8 @@ const log = createLogger('IssueReport');
 export const SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 /** Limite do HTML persistido (sanitizado). Evita DoS / disco cheio. */
 export const HTML_MAX_BYTES = 1024 * 1024; // 1 MB
+/** TTL padrão dos links assinados de screenshot (1h — AC #1562). */
+export const SCREENSHOT_URL_TTL_SECONDS = 3600;
 /** Diretório de persistência (relativo a CWD do backend). */
 export const REPORTS_DIR = path.join(process.cwd(), 'uploads', 'reports');
 
@@ -248,6 +252,202 @@ export function buildDefaultTitle(url: string): string {
 export function loadPersistedHtml(reportId: string): string {
     const p = path.join(REPORTS_DIR, `${reportId}.html`);
     return readFileSync(p, 'utf8');
+}
+
+// === ISSUE #1562 — leitura de screenshot/HTML por ferramentas do agente ===
+//
+// Helpers usados pelas ferramentas `get_report_screenshot` e `get_report_html`
+// (registradas em `services/agentTools.ts`) e pelos endpoints
+// `GET /api/issues/report/:id/screenshot` e `GET /api/issues/report/:id/html`.
+// Mantidos no service para serem reusados pelos DOIS callers sem duplicar a
+// lógica de path / validação / erro 404 — o service é a fonte única da verdade
+// sobre onde mora cada arquivo e como servi-lo.
+
+/** Lista de extensões aceitas para a screenshot (espelha `IMAGE_EXT_BY_MIME`). */
+const SCREENSHOT_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+const SCREENSHOT_MIME_BY_EXT: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    svg: 'image/svg+xml',
+};
+
+/** Valida formato do reportId (UUID v4 ou qualquer string "slug-safe" sem `/` nem `..`). */
+function assertSafeReportId(reportId: string): void {
+    if (!reportId || typeof reportId !== 'string') {
+        throw new AppError(400, 'INVALID_REPORT_ID', 'reportId é obrigatório');
+    }
+    if (!/^[A-Za-z0-9-]{1,128}$/.test(reportId)) {
+        throw new AppError(400, 'INVALID_REPORT_ID', 'reportId contém caracteres inválidos');
+    }
+}
+
+/**
+ * Localiza o arquivo de screenshot persistido para um reportId.
+ *
+ * O mime original determina a extensão (.png, .jpg, .webp etc. — vide
+ * `persistScreenshot`/`IMAGE_EXT_BY_MIME`); como só sabemos o `reportId`,
+ * procuramos QUALQUER arquivo `<REPORTS_DIR>/<reportId>.<ext>` que exista.
+ *
+ * @returns `{ path, ext, mime }` se encontrado; `null` se nenhum arquivo
+ *          casar (caller decide se traduz em 404 amigável).
+ */
+export function findPersistedScreenshot(reportId: string): { path: string; ext: string; mime: string } | null {
+    assertSafeReportId(reportId);
+    for (const ext of SCREENSHOT_EXTS) {
+        const fp = path.join(REPORTS_DIR, `${reportId}.${ext}`);
+        if (existsSync(fp)) {
+            return { path: fp, ext, mime: SCREENSHOT_MIME_BY_EXT[ext] };
+        }
+    }
+    return null;
+}
+
+/**
+ * Carrega a screenshot persistida como Buffer. Lança `AppError(404)` com
+ * mensagem amigável em PT-BR se o arquivo não existir — consumido tanto pelo
+ * endpoint quanto pelo tool do agente (que devolve a string p/ o LLM).
+ */
+export function loadPersistedScreenshot(reportId: string): { bytes: Buffer; mime: string; ext: string } {
+    const found = findPersistedScreenshot(reportId);
+    if (!found) {
+        throw new AppError(
+            404,
+            'REPORT_NOT_FOUND',
+            `Report ${reportId} não encontrado ou sem screenshot anexada.`,
+        );
+    }
+    return { bytes: readFileSync(found.path), mime: found.mime, ext: found.ext };
+}
+
+/**
+ * Assina um link TEMPORÁRIO p/ a screenshot — válido por `ttlSeconds`
+ * (default 3600 = 1h, conforme AC #1562). O link pode ser compartilhado
+ * (ex.: colado numa issue do GitHub) sem expor a URL estática
+ * desprotegida `/static/reports/<id>.png`.
+ *
+ * Usa o helper `signReportFileToken` (mesmo esquema do `deeplinkToken` —
+ * HMAC-SHA256, base64url, comparação timing-safe).
+ */
+export function buildSignedScreenshotUrl(reportId: string, ext: string, ttlSeconds = 3600): string {
+    assertSafeReportId(reportId);
+    // Validação RÍGIDA: extensão deve estar na allowlist canônica do service
+    // (espelha `IMAGE_EXT_BY_MIME`). Rejeita path traversal, espaços etc.
+    // ANTES de qualquer normalização silenciosa — não queremos que
+    // `../../../etc/passwd` vire `etcpasswd` magicamente.
+    const rawExt = String(ext || '').toLowerCase().trim();
+    const ALLOWED_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+    if (!ALLOWED_EXTS.includes(rawExt)) {
+        throw new AppError(
+            400,
+            'INVALID_EXT',
+            `Extensão da screenshot inválida: "${ext}". Aceitas: ${ALLOWED_EXTS.join(', ')}.`,
+        );
+    }
+    const token = signReportFileToken({ reportId, ext: rawExt }, ttlSeconds);
+    return `/api/issues/report/${reportId}/file.${rawExt}?token=${token}`;
+}
+
+/**
+ * Verifica o token de uma URL assinada e devolve o payload se válido;
+ * `null` se expirado, adulterado ou kind errado.
+ */
+export function verifySignedScreenshotToken(
+    reportId: string,
+    ext: string,
+    token: string | undefined | null,
+): { reportId: string; ext: string; exp: number } | null {
+    if (!token) return null;
+    const payload = verifyReportFileToken(token);
+    if (!payload) return null;
+    if (payload.reportId !== reportId) return null;
+    if (payload.ext !== ext.toLowerCase()) return null;
+    return payload;
+}
+
+/**
+ * Filtra o HTML persistido por um seletor CSS, devolvendo o `innerHTML`
+ * do PRIMEIRO match (AC #1562). Se o seletor não casar com nada, lança
+ * `AppError(404)` com mensagem amigável — diferente do erro de seletor
+ * inválido (que é 400).
+ *
+ * Usado pela tool `get_report_html(reportId, selector)` e pelo endpoint
+ * `GET /api/issues/report/:id/html?selector=...`.
+ */
+export function filterHtmlBySelector(html: string, selector: string): string {
+    if (!selector || typeof selector !== 'string') {
+        throw new AppError(400, 'INVALID_SELECTOR', 'Seletor CSS é obrigatório (string não-vazia).');
+    }
+    const trimmed = selector.trim();
+    if (!trimmed) {
+        throw new AppError(400, 'INVALID_SELECTOR', 'Seletor CSS é obrigatório (string não-vazia).');
+    }
+    if (trimmed.length > 500) {
+        throw new AppError(400, 'INVALID_SELECTOR', 'Seletor CSS excede 500 caracteres.');
+    }
+    try {
+        const $ = cheerio.load(html, { xmlMode: false });
+        const match = $(trimmed).first();
+        if (match.length === 0) {
+            throw new AppError(
+                404,
+                'SELECTOR_NO_MATCH',
+                `Nenhum elemento encontrado para o seletor "${trimmed}".`,
+            );
+        }
+        return match.html() || '';
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        const message = error instanceof Error ? error.message : 'erro desconhecido';
+        throw new AppError(400, 'INVALID_SELECTOR', `Seletor CSS inválido: ${message}`);
+    }
+}
+
+export function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
+    const bytes = Buffer.from(value, 'utf8');
+    if (bytes.length <= maxBytes) return { value, truncated: false };
+    let end = Math.max(0, Math.floor(maxBytes));
+    while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1;
+    return { value: bytes.subarray(0, end).toString('utf8'), truncated: true };
+}
+
+/**
+ * Helper de conveniência: carrega o HTML persistido e (opcionalmente) aplica
+ * o filtro CSS. Lança 404 amigável se nem o report nem o seletor casarem.
+ */
+export function loadPersistedHtmlFiltered(reportId: string, selector?: string): { html: string; truncated?: boolean } {
+    assertSafeReportId(reportId);
+    const htmlPath = path.join(REPORTS_DIR, `${reportId}.html`);
+    if (!existsSync(htmlPath)) {
+        throw new AppError(
+            404,
+            'REPORT_NOT_FOUND',
+            `Report ${reportId} não encontrado ou sem HTML anexado.`,
+        );
+    }
+    const raw = readFileSync(htmlPath, 'utf8');
+    const truncated = raw.includes('<!-- truncated -->');
+    if (selector && selector.trim()) {
+        return { html: filterHtmlBySelector(raw, selector.trim()), truncated };
+    }
+    return { html: raw, truncated };
+}
+
+/**
+ * Sanity-check defensivo p/ o diretório de reports em testes/mocks: ignora
+ * arquivos cujo nome não casa com `<reportId>.<ext>` — evita falso-positivo
+ * quando o `REPORTS_DIR` tem sobras de outras fontes.
+ */
+export function listReportFiles(): string[] {
+    if (!existsSync(REPORTS_DIR)) return [];
+    try {
+        return readdirSync(REPORTS_DIR) as string[];
+    } catch {
+        return [];
+    }
 }
 
 /**

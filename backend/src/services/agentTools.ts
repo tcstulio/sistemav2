@@ -32,6 +32,13 @@ import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
 import { classifyTool } from '../config/actionCatalog';
 import { writeIdempotencyKey, getIdempotentWrite, rememberWrite } from '../utils/writeIdempotency';
 import { notificationService } from './notificationService';
+import {
+    findPersistedScreenshot,
+    buildSignedScreenshotUrl,
+    loadPersistedHtmlFiltered,
+    truncateUtf8,
+    SCREENSHOT_URL_TTL_SECONDS,
+} from './issueReportService';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -306,12 +313,16 @@ const TOOLS_PROMPT_FULL = `
         FERRAMENTA DE AJUDA DE TELA:
         93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
 
+        FERRAMENTAS DE CONTEXTO VISUAL DE REPORT (#1562 — quando o usuário descreve um problema visual):
+        94. get_report_screenshot(reportId) - Busca a SCREENSHOT (print da tela) anexada a um report do botão "Reportar problema". Retorna uma URL ASSINADA temporária (válida por 1h) para o PNG/JPG — não devolve base64. Use quando o usuário disser "veja o print do report #42", "olhe o screenshot que eu mandei", "tem como ver a foto do bug?". reportId = UUID retornado quando o report foi criado (o usuário pode passar o número da issue, mas o ideal é o UUID). Se o report não existir, devolve mensagem amigável ("Report não encontrado").
+        95. get_report_html(reportId, selector?) - Busca o HTML (snapshot da página) anexado ao mesmo report. Aceita um seletor CSS opcional para reduzir ruído (ex.: "#tabela-pedidos", ".erro-500", "table > tbody > tr:first-child"). Se o seletor não casar com nada, devolve mensagem amigável sugerindo seletor mais amplo. Use quando precisar inspecionar a estrutura da página onde o problema ocorreu (ex.: "tem um botão errado no report #42 — pega o HTML do container principal", "olha a classe do item que está quebrando").
+
         FERRAMENTAS DE TASK RUNNER (automação opencode):
-        94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
-        95. list_opencode_tasks(status?) - Lista tasks do board opencode. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
-        96. start_opencode_task(issueNumber) - Inicia a execução automática de uma task (opencode implementa e abre PR). Use quando o usuário disser "iniciar task", "executar" ou "começar". Retorna status atualizado.
-        97. opencode_task_feedback(issueNumber, feedback) - Envia instrução adicional para corrigir uma task em andamento. Use quando o usuário disser para ajustar algo na task.
-        98. merge_opencode_task(issueNumber) - Mergea o PR da task e fecha a issue. Use quando o usuário aprovar o resultado.
+        96. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
+        97. list_opencode_tasks(status?) - Lista tasks do board opencode. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
+        98. start_opencode_task(issueNumber) - Inicia a execução automática de uma task (opencode implementa e abre PR). Use quando o usuário disser "iniciar task", "executar" ou "começar". Retorna status atualizado.
+        99. opencode_task_feedback(issueNumber, feedback) - Envia instrução adicional para corrigir uma task em andamento. Use quando o usuário disser para ajustar algo na task.
+        100. merge_opencode_task(issueNumber) - Mergea o PR da task e fecha a issue. Use quando o usuário aprovar o resultado.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -1733,6 +1744,68 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             if (info.fields) help += `\nCampos: ${info.fields.join(', ')}`;
             if (info.tips) help += `\nDicas: ${info.tips.join(' ')}`;
             return help;
+        }
+
+        // #1562 — ferramentas p/ o Marciano ver o print e o HTML de um report quando o
+        // usuário descrever um problema visual. Ambas chamam helpers do service
+        // (`issueReportService`) que são a FONTE ÚNICA do acesso aos arquivos
+        // persistidos (rotas + tools compartilham o mesmo código de 404/selector).
+        //
+        // Não estão em DEV_TOOLS: o caso de uso é "qualquer usuário logado
+        // descreveu um problema visual" — não é operação de admin. A trava de
+        // segurança é o próprio `requireDolibarrLogin` no endpoint que GERA o
+        // link; o tool devolve só a URL assinada (TTL 1h), nunca o binário cru.
+        case 'get_report_screenshot': {
+            const reportId = String(args?.reportId || args?.report_id || '').trim();
+            if (!reportId) return 'Informe o reportId (ex.: "peça para o Marciano ver o print do report #42" → reportId="42").';
+            const found = findPersistedScreenshot(reportId);
+            if (!found) {
+                return `Report ${reportId} não encontrado ou sem screenshot anexada. Confirme o reportId (UUID retornado pelo botão "Reportar problema") ou peça ao usuário o link da issue do GitHub.`;
+            }
+            const url = buildSignedScreenshotUrl(reportId, found.ext, SCREENSHOT_URL_TTL_SECONDS);
+            const expiresAt = new Date(Date.now() + SCREENSHOT_URL_TTL_SECONDS * 1000).toISOString();
+            // Devolve TUDO num JSON-ish estruturado p/ o LLM extrair fácil: o link
+            // é renderizado num <img> invisível (visão), o mime e o expiresAt
+            // vêm no rodapé. Idêntico ao que o endpoint GET retorna.
+            return `Screenshot do report ${reportId} (mime: ${found.mime}, válido até ${expiresAt}):\n\n<img src="${url}" alt="Screenshot do report ${reportId}" />\n\nURL assinada (válida por ${SCREENSHOT_URL_TTL_SECONDS}s / 1h): ${url}`;
+        }
+
+        case 'get_report_html': {
+            const reportId = String(args?.reportId || args?.report_id || '').trim();
+            if (!reportId) return 'Informe o reportId (ex.: "peça para o Marciano ver o HTML do report #42" → reportId="42").';
+            const selector = typeof (args?.selector ?? args?.css_selector) === 'string'
+                ? String(args.selector ?? args.css_selector).trim()
+                : '';
+            let html: string;
+            let persistedTruncated = false;
+            try {
+                const out = loadPersistedHtmlFiltered(reportId, selector || undefined);
+                html = out.html;
+                persistedTruncated = Boolean(out.truncated);
+            } catch (e: any) {
+                // Traduz AppError em mensagem amigável pro LLM (em vez de só
+                // devolver "Erro: 404 — REPORT_NOT_FOUND" cru).
+                if (e?.code === 'REPORT_NOT_FOUND') {
+                    return `Report ${reportId} não encontrado ou sem HTML anexado. Confirme o reportId ou peça ao usuário o link da issue.`;
+                }
+                if (e?.code === 'SELECTOR_NO_MATCH') {
+                    return `Nenhum elemento encontrado no HTML do report ${reportId} para o seletor "${selector}". Tente um seletor mais amplo (ex.: remova o último ":nth-child(...)") ou chame sem seletor para receber o HTML completo.`;
+                }
+                if (e?.code === 'INVALID_SELECTOR') {
+                    return `Seletor CSS inválido: ${e.message}. Use a sintaxe padrão (ex.: "#id", ".classe", "table > tbody > tr", "div[data-foo='bar']").`;
+                }
+                log.error('get_report_html failed', { reportId, selector, error: e?.message });
+                return `Erro ao ler HTML do report ${reportId}: ${e?.message || 'desconhecido'}`;
+            }
+            const MAX_HTML_BYTES = 200 * 1024;
+            const limited = truncateUtf8(html, MAX_HTML_BYTES);
+            const truncated = persistedTruncated || limited.truncated;
+            if (limited.truncated) {
+                html = `${limited.value}\n<!-- truncated -->`;
+            }
+            const selNote = selector ? ` (filtrado pelo seletor: ${selector})` : ' (HTML completo, sem filtro)';
+            const truncNote = truncated ? ' [truncado em 200KB]' : '';
+            return `HTML do report ${reportId}${selNote}${truncNote}:\n\n\`\`\`html\n${html}\n\`\`\``;
         }
 
         case 'create_opencode_task': {

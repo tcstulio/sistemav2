@@ -30,8 +30,14 @@ const SAFE_ERROR_CODES = [
     'BAD_REQUEST',
     'RATE_LIMITED',
     'RATE_LIMIT',
-    'CONFLICT'
-];
+    'CONFLICT',
+    'REPORT_NOT_FOUND',
+    'SELECTOR_NO_MATCH',
+    'INVALID_SELECTOR',
+    'INVALID_REPORT_ID',
+    'INVALID_EXT',
+    'EXT_MISMATCH',
+    'TOKEN_INVALID_OR_EXPIRED'];
 
 // Patterns to detect in error messages that should be sanitized
 const SENSITIVE_PATTERNS = [

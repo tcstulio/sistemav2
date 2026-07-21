@@ -24,8 +24,16 @@ import {
     buildDefaultTitle,
     processIssueReport,
     SCREENSHOT_MAX_BYTES,
+    SCREENSHOT_URL_TTL_SECONDS,
     REPORTS_DIR,
     IssueReportPayload,
+    findPersistedScreenshot,
+    loadPersistedScreenshot,
+    buildSignedScreenshotUrl,
+    verifySignedScreenshotToken,
+    filterHtmlBySelector,
+    loadPersistedHtmlFiltered,
+    listReportFiles,
 } from '../../services/issueReportService';
 import path from 'path';
 
@@ -281,5 +289,255 @@ describe('issueReportService — processIssueReport (integração)', () => {
         };
         await expect(processIssueReport(payload as IssueReportPayload)).rejects.toThrow(/excede o limite/);
         expect(mockCreateGitHubIssue).not.toHaveBeenCalled();
+    });
+});
+
+// =====================================================================
+// #1562 — helpers de leitura de screenshot/HTML (ferramentas do agente Marciano)
+// =====================================================================
+
+describe('issueReportService — findPersistedScreenshot (#1562)', () => {
+    it('retorna null quando nenhum arquivo do reportId existe', () => {
+        // fs.existsSync defaulta para true no setup; sobrescreve p/ false neste teste.
+        (fs.existsSync as any).mockReturnValue(false);
+        expect(findPersistedScreenshot('rid-missing')).toBeNull();
+    });
+
+    it('retorna metadados quando existe .png', () => {
+        (fs.existsSync as any).mockImplementation((p: string) => String(p).endsWith('.png'));
+        const found = findPersistedScreenshot('rid-png');
+        expect(found).not.toBeNull();
+        expect(found!.ext).toBe('png');
+        expect(found!.mime).toBe('image/png');
+        expect(found!.path.replace(/\\/g, '/')).toContain('uploads/reports/rid-png.png');
+    });
+
+    it('retorna metadados quando existe .jpg (ext != mime)', () => {
+        (fs.existsSync as any).mockImplementation((p: string) => String(p).endsWith('.jpg'));
+        const found = findPersistedScreenshot('rid-jpg');
+        expect(found!.ext).toBe('jpg');
+        expect(found!.mime).toBe('image/jpeg');
+    });
+
+    it('retorna metadados quando existe .webp', () => {
+        (fs.existsSync as any).mockImplementation((p: string) => String(p).endsWith('.webp'));
+        const found = findPersistedScreenshot('rid-webp');
+        expect(found!.ext).toBe('webp');
+        expect(found!.mime).toBe('image/webp');
+    });
+
+    it('rejeita reportId malformado (path traversal, vazio, >128 chars)', () => {
+        expect(() => findPersistedScreenshot('')).toThrow(/reportId/);
+        expect(() => findPersistedScreenshot('../../../etc/passwd')).toThrow(/inválid/);
+        expect(() => findPersistedScreenshot('a'.repeat(200))).toThrow(/inválid/);
+        expect(() => findPersistedScreenshot('has space')).toThrow(/inválid/);
+    });
+});
+
+describe('issueReportService — loadPersistedScreenshot (#1562)', () => {
+    it('lança AppError 404 REPORT_NOT_FOUND com mensagem amigável', () => {
+        (fs.existsSync as any).mockReturnValue(false);
+        expect(() => loadPersistedScreenshot('rid-missing')).toThrow(/Report rid-missing não encontrado/);
+    });
+
+    it('lê bytes e devolve mime/ext quando arquivo existe', () => {
+        const expected = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+        (fs.existsSync as any).mockImplementation((p: string) => String(p).endsWith('.png'));
+        (fs.readFileSync as any).mockReturnValue(expected);
+        const out = loadPersistedScreenshot('rid-ok');
+        expect(out.bytes.equals(expected)).toBe(true);
+        expect(out.mime).toBe('image/png');
+        expect(out.ext).toBe('png');
+    });
+});
+
+describe('issueReportService — buildSignedScreenshotUrl / verifySignedScreenshotToken (#1562)', () => {
+    it('gera URL com TTL default de 1h (3600s)', () => {
+        const url = buildSignedScreenshotUrl('rid-1', 'png');
+        expect(url).toMatch(/^\/api\/issues\/report\/rid-1\/file\.png\?token=/);
+        // Decodifica o payload do token p/ checar o exp (~1h)
+        const token = url.split('token=')[1];
+        const [body] = token.split('.');
+        const padded = body.replace(/-/g, '+').replace(/_/g, '/').padEnd(body.length + (4 - body.length % 4) % 4, '=');
+        const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+        const ttl = payload.exp - payload.iat;
+        expect(ttl).toBe(SCREENSHOT_URL_TTL_SECONDS);
+        expect(payload.kind).toBe('report-file');
+        expect(payload.reportId).toBe('rid-1');
+        expect(payload.ext).toBe('png');
+    });
+
+    it('aceita TTL customizado', () => {
+        const url = buildSignedScreenshotUrl('rid-2', 'jpg', 60);
+        const token = url.split('token=')[1];
+        const [body] = token.split('.');
+        const padded = body.replace(/-/g, '+').replace(/_/g, '/').padEnd(body.length + (4 - body.length % 4) % 4, '=');
+        const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+        expect(payload.exp - payload.iat).toBe(60);
+    });
+
+    it('verifySignedScreenshotToken aceita token válido', () => {
+        const url = buildSignedScreenshotUrl('rid-3', 'png');
+        const token = url.split('token=')[1];
+        const ok = verifySignedScreenshotToken('rid-3', 'png', token);
+        expect(ok).not.toBeNull();
+        expect(ok!.reportId).toBe('rid-3');
+        expect(ok!.ext).toBe('png');
+    });
+
+    it('verifySignedScreenshotToken rejeita token adulterado (assinatura)', () => {
+        const url = buildSignedScreenshotUrl('rid-4', 'png');
+        const token = url.split('token=')[1];
+        // Adultera o body — assinatura vai ficar inválida.
+        const [body, sig] = token.split('.');
+        const tampered = body.replace(/^./, 'X') + '.' + sig;
+        expect(verifySignedScreenshotToken('rid-4', 'png', tampered)).toBeNull();
+    });
+
+    it('verifySignedScreenshotToken rejeita reportId diferente', () => {
+        const url = buildSignedScreenshotUrl('rid-5', 'png');
+        const token = url.split('token=')[1];
+        expect(verifySignedScreenshotToken('outro-rid', 'png', token)).toBeNull();
+    });
+
+    it('verifySignedScreenshotToken rejeita extensão diferente', () => {
+        const url = buildSignedScreenshotUrl('rid-6', 'png');
+        const token = url.split('token=')[1];
+        expect(verifySignedScreenshotToken('rid-6', 'jpg', token)).toBeNull();
+    });
+
+    it('verifySignedScreenshotToken rejeita token expirado', () => {
+        // Assina em "tempo real", avança o relógio 2h e tenta validar — TTL de 1h
+        // já passou. `vi.setSystemTime` é o modo correto de simular passagem de
+        // tempo sem dormir o teste.
+        const realNow = Date.now();
+        vi.setSystemTime(realNow);
+        const url = buildSignedScreenshotUrl('rid-7', 'png');
+        vi.setSystemTime(realNow + 2 * 60 * 60 * 1000); // +2h
+        const token = url.split('token=')[1];
+        try {
+            expect(verifySignedScreenshotToken('rid-7', 'png', token)).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('verifySignedScreenshotToken rejeita token ausente/null', () => {
+        expect(verifySignedScreenshotToken('r', 'png', undefined)).toBeNull();
+        expect(verifySignedScreenshotToken('r', 'png', null)).toBeNull();
+        expect(verifySignedScreenshotToken('r', 'png', '')).toBeNull();
+        expect(verifySignedScreenshotToken('r', 'png', 'invalid')).toBeNull();
+    });
+
+    it('rejeita extensão com caracteres inválidos', () => {
+        expect(() => buildSignedScreenshotUrl('rid-x', '../../../etc/passwd')).toThrow(/Extensão/);
+        expect(() => buildSignedScreenshotUrl('rid-x', '')).toThrow(/Extensão/);
+    });
+});
+
+describe('issueReportService — filterHtmlBySelector (#1562)', () => {
+    const html = `
+        <html><body>
+            <div id="app">
+                <h1>Título</h1>
+                <table id="orders">
+                    <tr><td>linha 1</td></tr>
+                    <tr><td>linha 2</td></tr>
+                </table>
+                <span class="erro">500</span>
+                <span class="erro" data-foo="bar">outro</span>
+            </div>
+        </body></html>`;
+
+    it('retorna innerHTML do primeiro match (#id)', () => {
+        const out = filterHtmlBySelector(html, '#orders');
+        expect(out).toContain('<tr>');
+        expect(out).toContain('linha 1');
+        expect(out).toContain('linha 2');
+        // innerHTML NÃO inclui a tag #orders em si, só os filhos.
+        expect(out).not.toMatch(/<table[^>]*>/);
+    });
+
+    it('retorna innerHTML com seletor de classe (.classe)', () => {
+        const out = filterHtmlBySelector(html, '.erro');
+        expect(out).toContain('500');
+    });
+
+    it('suporta seletor com descendentes (table tr)', () => {
+        const out = filterHtmlBySelector(html, 'table#orders tr');
+        expect(out).toContain('linha 1');
+    });
+
+    it('suporta seletor com atributo ([data-foo])', () => {
+        const out = filterHtmlBySelector(html, '[data-foo="bar"]');
+        expect(out).toContain('outro');
+    });
+
+    it('lança AppError 404 SELECTOR_NO_MATCH com mensagem amigável', () => {
+        expect(() => filterHtmlBySelector(html, '#nao-existe')).toThrow(/Nenhum elemento/);
+        try {
+            filterHtmlBySelector(html, '#nao-existe');
+        } catch (e: any) {
+            expect(e.code).toBe('SELECTOR_NO_MATCH');
+            expect(e.statusCode).toBe(404);
+        }
+    });
+
+    it('rejeita seletor vazio', () => {
+        expect(() => filterHtmlBySelector(html, '')).toThrow(/obrigatório/);
+        expect(() => filterHtmlBySelector(html, '   ')).toThrow(/obrigatório/);
+    });
+
+    it('rejeita seletor > 500 chars (anti-DoS)', () => {
+        const long = '.' + 'a'.repeat(600);
+        expect(() => filterHtmlBySelector(html, long)).toThrow(/500/);
+    });
+});
+
+describe('issueReportService — loadPersistedHtmlFiltered (#1562)', () => {
+    it('lê HTML completo quando sem seletor', () => {
+        const expected = '<div>ok</div>';
+        (fs.existsSync as any).mockReturnValue(true);
+        (fs.readFileSync as any).mockReturnValue(expected);
+        const { html, truncated } = loadPersistedHtmlFiltered('rid-html-1');
+        expect(html).toBe(expected);
+        expect(truncated).toBe(false);
+    });
+
+    it('lê HTML filtrado quando seletor informado', () => {
+        (fs.existsSync as any).mockReturnValue(true);
+        (fs.readFileSync as any).mockReturnValue('<div id="a">A</div><div id="b">B</div>');
+        const { html } = loadPersistedHtmlFiltered('rid-html-2', '#a');
+        expect(html).toContain('A');
+        expect(html).not.toContain('B');
+    });
+
+    it('marca truncated=true quando HTML tem sentinel de truncamento prévio', () => {
+        (fs.existsSync as any).mockReturnValue(true);
+        (fs.readFileSync as any).mockReturnValue('<div>x</div>\n<!-- truncated -->');
+        const { truncated } = loadPersistedHtmlFiltered('rid-html-3');
+        expect(truncated).toBe(true);
+    });
+
+    it('lança 404 amigável quando HTML não existe', () => {
+        (fs.existsSync as any).mockReturnValue(false);
+        expect(() => loadPersistedHtmlFiltered('rid-missing')).toThrow(/não encontrado ou sem HTML/);
+    });
+
+    it('rejeita reportId malformado', () => {
+        expect(() => loadPersistedHtmlFiltered('../etc')).toThrow(/inválid/);
+    });
+});
+
+describe('issueReportService — listReportFiles (#1562)', () => {
+    it('retorna [] quando diretório não existe', () => {
+        (fs.existsSync as any).mockReturnValue(false);
+        expect(listReportFiles()).toEqual([]);
+    });
+
+    it('retorna nomes de arquivos do diretório', () => {
+        (fs.existsSync as any).mockReturnValue(true);
+        (fs.readdirSync as any).mockReturnValue(['abc.png', 'abc.html', 'def.jpg']);
+        expect(listReportFiles()).toEqual(['abc.png', 'abc.html', 'def.jpg']);
     });
 });
