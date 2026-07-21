@@ -2,10 +2,28 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const schedulerBroadcastMaxRecipients = parseInt(
-    process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS || '100',
-    10
-);
+// #1543 — Cap de destinatários por broadcast do scheduler.
+// Ordem de precedência (1ª vence):
+//   1. SCHEDULER_BROADCAST_MAX_RECIPIENTS  (issue #1543 — nome canônico)
+//   2. SCHEDULER_MAX_BROADCAST              (legacy — mantido p/ compat de deploy)
+//   3. default 100                          (anti-spam em massa)
+// Sem essa precedência, quem tinha SCHEDULER_MAX_BROADCAST=500 em produção teria
+// a variável silenciosamente ignorada e cairia no default 100 — regressão
+// silenciosa (Judge feedback do #1543).
+function readSchedulerBroadcastCap(): number {
+    const candidates = [
+        process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS,
+        process.env.SCHEDULER_MAX_BROADCAST,
+    ];
+    for (const raw of candidates) {
+        if (raw == null || raw === '') continue;
+        const parsed = parseInt(raw, 10);
+        if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    }
+    return 100;
+}
+
+const schedulerBroadcastMaxRecipients = readSchedulerBroadcastCap();
 
 export const config = {
     port: process.env.PORT || 3004,
@@ -52,10 +70,10 @@ export const config = {
     // Se vazio, a verificação é pulada (compat). Defina p/ exigir header x-webhook-secret.
     webhookSecret: process.env.WEBHOOK_SECRET || '',
 
-    // Cap de destinatários por broadcast do scheduler (anti-spam em massa). Configurável.
-    schedulerMaxBroadcast: Number.isInteger(schedulerBroadcastMaxRecipients) && schedulerBroadcastMaxRecipients > 0
-        ? schedulerBroadcastMaxRecipients
-        : 100,
+    // Cap de destinatários por broadcast do scheduler (anti-spam em massa).
+    // Lê SCHEDULER_BROADCAST_MAX_RECIPIENTS (#1543, canônico) ou SCHEDULER_MAX_BROADCAST
+    // (legacy, mantido p/ compat). Default 100. Veja `readSchedulerBroadcastCap` acima.
+    schedulerMaxBroadcast: schedulerBroadcastMaxRecipients,
 
     // Resiliência LLM: backoff exponencial em erros de infra (429/timeout/5xx).
     // LLM_PRIMARY_TIMEOUT_MS: tempo máximo por chamada ao provider primário (ms). Default 180s.

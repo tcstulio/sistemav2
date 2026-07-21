@@ -226,4 +226,61 @@ describe('env config', () => {
         const { config } = await importConfig();
         expect(config.itauSandbox).toBe(false);
     });
+
+    // ============================================================
+    // #1543 — schedulerMaxBroadcast (broadcast cap)
+    // ============================================================
+    describe('schedulerMaxBroadcast (#1543)', () => {
+        it('defaults to 100 when no env var is set', async () => {
+            delete process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS;
+            delete process.env.SCHEDULER_MAX_BROADCAST;
+            const { config } = await importConfig();
+            expect(config.schedulerMaxBroadcast).toBe(100);
+        });
+
+        it('reads SCHEDULER_BROADCAST_MAX_RECIPIENTS (#1543 canonical)', async () => {
+            delete process.env.SCHEDULER_MAX_BROADCAST;
+            process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS = '250';
+            const { config } = await importConfig();
+            expect(config.schedulerMaxBroadcast).toBe(250);
+        });
+
+        // Backward-compat (Judge feedback do #1543): quem tem SCHEDULER_MAX_BROADCAST=500 em
+        // produção NÃO pode ter a var silenciosamente ignorada e cair no default 100.
+        it('falls back to SCHEDULER_MAX_BROADCAST when new var is absent (legacy compat)', async () => {
+            delete process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS;
+            process.env.SCHEDULER_MAX_BROADCAST = '500';
+            const { config } = await importConfig();
+            expect(config.schedulerMaxBroadcast).toBe(500);
+        });
+
+        it('prefers SCHEDULER_BROADCAST_MAX_RECIPIENTS over legacy when both are set', async () => {
+            process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS = '100';
+            process.env.SCHEDULER_MAX_BROADCAST = '500';
+            const { config } = await importConfig();
+            expect(config.schedulerMaxBroadcast).toBe(100);
+        });
+
+        it('falls back to default 100 when both env vars are invalid', async () => {
+            process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS = '0';
+            delete process.env.SCHEDULER_MAX_BROADCAST;
+            const { config } = await importConfig();
+            expect(config.schedulerMaxBroadcast).toBe(100);
+
+            process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS = '-5';
+            const { config: c2 } = await importConfig();
+            expect(c2.schedulerMaxBroadcast).toBe(100);
+
+            process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS = 'abc';
+            const { config: c3 } = await importConfig();
+            expect(c3.schedulerMaxBroadcast).toBe(100);
+        });
+
+        it('treats empty string env vars as unset and tries the next candidate', async () => {
+            process.env.SCHEDULER_BROADCAST_MAX_RECIPIENTS = '';
+            process.env.SCHEDULER_MAX_BROADCAST = '350';
+            const { config } = await importConfig();
+            expect(config.schedulerMaxBroadcast).toBe(350);
+        });
+    });
 });
