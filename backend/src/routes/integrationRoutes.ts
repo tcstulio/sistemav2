@@ -646,7 +646,8 @@ router.post('/sync/run', async (req, res) => {
 
         const options = syncRunSchema.parse(req.body);
         const { entity, autoCreate, autoLink, dryRun, limit } = options;
-        const userId = (req as any).user?.login || (req as any).user?.id || 'unknown';
+        const reqUser = req.user as { login?: string; id?: string | number } | undefined;
+        const userId = reqUser?.login || (reqUser?.id != null ? String(reqUser.id) : 'unknown');
 
         // Auditoria (#1569): loga toda chamada com os parâmetros relevantes.
         log.info('sync/run invoked', { entity, autoCreate, autoLink, dryRun, limit, userId });
