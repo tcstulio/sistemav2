@@ -614,6 +614,7 @@ class TaskRunnerService {
             // preservada. Resetar o lock poderia deixar 2 executeTask concorrentes (corrupção git).
             this.pendingExecs = 0;
             this.execChains.clear(); // #slot-chain: reseta as cadeias de TODOS os slots (com 1 slot = a única)
+            this.slotQueueDepth.clear(); // #slot-elect: zera a profundidade por-slot junto (senão o slot fica inelegível)
             // #accelerate-sweep: workers fantasmas abandonados não podem excluir issues do sweep p/ sempre.
             // Um finally tardio decrementa um mapa já limpo sem efeito negativo (clamp em >0).
             this.execInFlight.clear();
@@ -1163,7 +1164,7 @@ class TaskRunnerService {
         return Object.values(this.store.tasks).sort((a, b) => b.issueNumber - a.issueNumber);
     }
 
-    async startTask(issueNumber: number, opts?: { mode?: 'synthesis' | 'cumulative' }): Promise<Task> {
+    async startTask(issueNumber: number, opts?: { mode?: 'synthesis' | 'cumulative'; slot?: Slot }): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (task.status === 'running' || task.status === 'fixing') throw new Error(`Task #${issueNumber} is already ${task.status}`);
@@ -1172,8 +1173,8 @@ class TaskRunnerService {
         task.branch = branch;
         task.error = undefined;
         if (opts?.mode) task.executionMode = opts.mode;
-        // Serializa: roda agora se livre, senão entra na FILA.
-        this.scheduleExec(task, branch, 'running', slotManager.slot1); // #slot-chain: eleição de slot vem na PR-4a-iii
+        // Serializa na cadeia do SLOT (eleito pelo autoPlayNext via opts.slot; default slot-1 p/ starts manuais).
+        this.scheduleExec(task, branch, 'running', opts?.slot ?? slotManager.slot1);
         this.save();
         return task;
     }
@@ -1232,6 +1233,14 @@ class TaskRunnerService {
     // `await chainFor(id)` veria pendingExecs=1 e quebraria os testes-sentinela (p2/stuckEpics).
     private execChains = new Map<number, Promise<void>>();
     private chainFor(slotId: number): Promise<void> { return this.execChains.get(slotId) ?? Promise.resolve(); }
+    // #slot-elect (PR-4a-iii): profundidade de fila POR-SLOT (o pendingExecs GLOBAL não distingue slots).
+    // Claim SÍNCRONO no prólogo do scheduleExec; release no .finally com DELETE-AO-ZERAR = clamp
+    // anti-starvation (Fable provou: sem o clamp, um reset do checkQueueHealth + finally-órfão deixa a
+    // profundidade negativa → o slot fica inelegível p/ SEMPRE). `freeSlot` = 1º slot com profundidade <= 0.
+    // REGRA DURA: nenhum `await` pode entrar entre freeSlot() e o prólogo do scheduleExec (o claim precisa
+    // ser síncrono — autoPlayNext→startTask→scheduleExec não tem await antes do prólogo, verificado).
+    private slotQueueDepth = new Map<number, number>();
+    private freeSlot(): Slot | undefined { return slotManager.slots().find(s => (this.slotQueueDepth.get(s.id) ?? 0) <= 0); }
     // #slot-ctx (PR-4a-i): o global currentExecTask morreu — a task de contexto do ensureWorktree agora
     // vem por PARÂMETRO (só o exec passa; proof/preview passam undefined). Ver ensureWorktree.
 
@@ -1377,6 +1386,8 @@ class TaskRunnerService {
         task.mergeHoldKind = undefined;   // #1168: limpa também a classificação do hold
         const willQueue = this.pendingExecs > 0;
         this.pendingExecs++;
+        // #slot-elect: claim SÍNCRONO da profundidade do slot (par do freeSlot). Aqui, sem await desde o freeSlot().
+        this.slotQueueDepth.set(slot.id, (this.slotQueueDepth.get(slot.id) ?? 0) + 1);
         // #accelerate-sweep: marca esta issue como EM VOO (dispatch agendado) — o sweep de épicas usa
         // isto para nunca decompor uma issue que está no pipeline de execução (fecha O2).
         this.execInFlight.set(task.issueNumber, (this.execInFlight.get(task.issueNumber) ?? 0) + 1);
@@ -1564,6 +1575,10 @@ class TaskRunnerService {
             const inFlight = (this.execInFlight.get(task.issueNumber) ?? 0) - 1;
             if (inFlight > 0) this.execInFlight.set(task.issueNumber, inFlight);
             else this.execInFlight.delete(task.issueNumber);
+            // #slot-elect: libera o slot (delete-ao-zerar = clamp anti-starvation — nunca deixa negativo).
+            const depth = (this.slotQueueDepth.get(slot.id) ?? 0) - 1;
+            if (depth > 0) this.slotQueueDepth.set(slot.id, depth);
+            else this.slotQueueDepth.delete(slot.id);
             // Após um cancel (kill bem-sucedido OU falho) o cascade retoma aqui (#644).
             this.autoPlayNext();
         });
@@ -1738,8 +1753,14 @@ class TaskRunnerService {
         // (pendingExecs=0 → a guarda passou) → find === queued[0] → BYTE-IDÊNTICO.
         const next = queued.find(t => !this.execInFlight.has(t.issueNumber));
         if (!next) return;
-        log.info(`Auto-play: iniciando #${next.issueNumber} automaticamente`);
-        this.startTask(next.issueNumber).catch((e: any) => {
+        // #slot-elect (PR-4a-iii): escolhe um SLOT livre p/ despachar. Com clamp=1 há 1 slot → freeSlot()
+        // devolve o slot-1 enquanto ele não tem exec (pendingExecs=0 aqui, então livre) → BYTE-IDÊNTICO.
+        // Com N slots, cada autoPlayNext (via .finally/pollSync) preenche o próximo slot livre. NENHUM
+        // await entre freeSlot() e o claim síncrono do scheduleExec (startTask não awaita antes dele).
+        const slot = this.freeSlot();
+        if (!slot) return;
+        log.info(`Auto-play: iniciando #${next.issueNumber} automaticamente (slot ${slot.id})`);
+        this.startTask(next.issueNumber, { slot }).catch((e: any) => {
             log.warn(`Auto-play falhou para #${next.issueNumber}: ${e?.message || e}`);
         });
     }
