@@ -18,6 +18,9 @@ import { config } from './config/env';
 import whatsappRoutes from './routes/whatsappRoutes';
 import schedulerRoutes from './routes/schedulerRoutes';
 import githubRoutes from './routes/githubRoutes';
+// #1561 sub-tarefa 2: endpoint dedicado de report (screenshot + html + body).
+// Reutiliza `createGitHubIssue` (utils/githubIssue.ts) — ver issueReportService.
+import issueReportRoutes from './routes/issueReportRoutes';
 import { sessionService } from './services/legacy/sessionService';
 import { schedulerService } from './services/schedulerService';
 import { healthLimiter } from './middleware/healthRateLimiter';
@@ -275,6 +278,9 @@ import simulatorRoutes from './routes/simulatorRoutes';
 app.use('/api/simulator', simulatorRoutes);
 
 app.use('/api/github', githubRoutes);
+// #1561: endpoint dedicado de report. Não compartilha router com `/api/github`
+// porque tem papel distinto (persiste screenshot/html + audit log + reportId).
+app.use('/api', issueReportRoutes);
 
 // Health Check (#1042, #1415) — verifica dependências externas via healthCheckService.
 // Rate-limit dedicado (healthLimiter) impede fan-out abusivo de chamadas externas a cada hit.

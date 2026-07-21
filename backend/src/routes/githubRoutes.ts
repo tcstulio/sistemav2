@@ -1,39 +1,27 @@
 import { Router, Request, Response } from 'express';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
 import { normalizePeriod, filterIssuesByPeriod, ISSUE_PERIOD_FETCH_LIMIT } from '../utils/issuePeriodFilter';
 import { buildIssueBody } from '../utils/issueBodyBuilder';
+import {
+    createGitHubIssue,
+    runGh,
+    ensureGitHubLabel,
+    GITHUB_REPO,
+} from '../utils/githubIssue';
 
 const log = createLogger('GitHub');
 const router = Router();
-const execFileAsync = promisify(execFile);
-const REPO = 'tcstulio/sistemav2';
 
 router.use(requireDolibarrLogin);
-
-async function runGh(args: string[]): Promise<string> {
-    const { stdout } = await execFileAsync('gh', args, { timeout: 30000 });
-    return stdout;
-}
 
 // Monta o corpo (markdown) do report a partir do contexto capturado in-app.
 // (Reexportado de utils/issueBodyBuilder para compat; novos testes devem importar de lá.)
 export { buildIssueBody } from '../utils/issueBodyBuilder';
 
-// Garante que um label existe (best-effort; ignora se já existe).
-async function ensureLabel(name: string): Promise<void> {
-    try {
-        await execFileAsync('gh', ['label', 'create', name, '--repo', REPO, '--color', 'D4C5F9', '--description', 'Reportado pelo app'], { timeout: 15000 });
-    } catch { /* já existe — ok */ }
-}
-
 // Cria uma issue no GitHub a partir de um report in-app.
 // NÃO usa o label opencode-task por padrão (não dispara o TaskRunner automaticamente — triagem humana).
+// #1561: delega ao helper compartilhado `createGitHubIssue` (utils/githubIssue.ts).
 router.post('/issues', async (req: Request, res: Response) => {
     try {
         const { title, description, context, labels } = req.body || {};
@@ -42,25 +30,14 @@ router.post('/issues', async (req: Request, res: Response) => {
         }
         const reporter = (req as any).user?.login || (req as any).user?.firstname;
         const labelList: string[] = Array.isArray(labels) && labels.length ? labels.slice(0, 5) : ['from-app'];
-        for (const l of labelList) await ensureLabel(l);
-
         const body = buildIssueBody(String(description || ''), context, reporter);
-        const tmp = path.join(os.tmpdir(), `app-report-${Date.now()}.md`);
-        fs.writeFileSync(tmp, body.slice(0, 60000));
-
-        const args = ['issue', 'create', '--repo', REPO, '--title', String(title).trim().slice(0, 250), '--body-file', tmp];
-        for (const l of labelList) args.push('--label', l);
-
-        let stdout = '';
-        try {
-            stdout = await runGh(args);
-        } finally {
-            fs.rmSync(tmp, { force: true });
-        }
-        const url = stdout.trim().split('\n').filter(Boolean).pop() || '';
-        const m = url.match(/\/issues\/(\d+)/);
-        log.info('Issue criada via report in-app', { url, reporter });
-        res.json({ ok: true, url, number: m ? Number(m[1]) : undefined });
+        const result = await createGitHubIssue({
+            title: String(title).trim(),
+            body: body.slice(0, 60000),
+            labels: labelList,
+        });
+        log.info('Issue criada via report in-app', { url: result.url, reporter });
+        res.json({ ok: true, url: result.url, number: result.number });
     } catch (error: any) {
         log.error('Failed to create issue', { error: error.message });
         res.status(500).json({ error: error.message });
@@ -73,8 +50,8 @@ router.post('/issues/:number/labels', async (req: Request, res: Response) => {
         const num = Number(req.params.number);
         const { label } = req.body || {};
         if (!num || !label) return res.status(400).json({ error: 'number e label são obrigatórios' });
-        await ensureLabel(String(label));
-        await runGh(['issue', 'edit', String(num), '--repo', REPO, '--add-label', String(label)]);
+        await ensureGitHubLabel(String(label));
+        await runGh(['issue', 'edit', String(num), '--repo', GITHUB_REPO, '--add-label', String(label)]);
         log.info('Label adicionado à issue', { number: num, label });
         res.json({ ok: true, number: num, label });
     } catch (error: any) {
@@ -92,11 +69,11 @@ router.post('/issues/:number/state', async (req: Request, res: Response) => {
             return res.status(400).json({ error: "number e state ('open'|'closed') são obrigatórios" });
         }
         if (state === 'closed') {
-            const args = ['issue', 'close', String(num), '--repo', REPO];
+            const args = ['issue', 'close', String(num), '--repo', GITHUB_REPO];
             if (reason === 'not planned') args.push('--reason', 'not planned');
             await runGh(args);
         } else {
-            await runGh(['issue', 'reopen', String(num), '--repo', REPO]);
+            await runGh(['issue', 'reopen', String(num), '--repo', GITHUB_REPO]);
         }
         log.info('Issue state alterado', { number: num, state, reason });
         res.json({ ok: true, number: num, state });
