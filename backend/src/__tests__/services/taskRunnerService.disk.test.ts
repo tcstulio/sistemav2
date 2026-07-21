@@ -34,6 +34,10 @@ import { taskRunnerService } from '../../services/taskRunnerService';
 import { getFreeDiskBytes } from '../../utils/diskSpace';
 import type { Task } from '../../services/taskRunnerService';
 
+// Degrau-2 PR-2: os métodos que tocam o workspace recebem o `slot` por parâmetro. Slot fake
+// (root arbitrário — o git/disco estão mockados, então o path não afeta o comportamento sob teste).
+const fakeSlot = { id: 1, root: '/tmp/fake-slot', dataDir: null };
+
 function makeTask(n: number): Task {
     return {
         issueNumber: n, title: `#${n}`, body: 'b', labels: ['opencode-task'],
@@ -80,13 +84,13 @@ describe('taskRunnerService — guard de disco (#1111)', () => {
     it('disco BAIXO persistente → lança "disco insuficiente" com GB (não zumbi)', async () => {
         const t = makeTask(1);
         freeBytesQueue.push(1 * GB, 1 * GB); // antes e depois da limpeza = ainda baixo
-        await expect(svc.ensureDiskSpace(t)).rejects.toThrow(/disco insuficiente: 1\.00 GB livres.*3\.00 GB/i);
+        await expect(svc.ensureDiskSpace(fakeSlot, t)).rejects.toThrow(/disco insuficiente: 1\.00 GB livres.*3\.00 GB/i);
     });
 
     it('disco BAIXO persistente → registra evento task_failed + meta diskFull', async () => {
         const t = makeTask(2);
         freeBytesQueue.push(0.5 * GB, 0.5 * GB);
-        await expect(svc.ensureDiskSpace(t)).rejects.toThrow();
+        await expect(svc.ensureDiskSpace(fakeSlot, t)).rejects.toThrow();
         const failEvt = t.events.find((e: any) => e.type === 'task_failed');
         expect(failEvt).toBeTruthy();
         expect(failEvt.meta?.diskFull).toBe(true);
@@ -96,7 +100,7 @@ describe('taskRunnerService — guard de disco (#1111)', () => {
         const t = makeTask(3);
         freeBytesQueue.push(0.2 * GB, 0.2 * GB);
         const sweepSpy = vi.spyOn(svc, 'sweepOrphanedOpencode' as any).mockResolvedValue(true);
-        await expect(svc.ensureDiskSpace(t)).rejects.toThrow(/disco insuficiente/i);
+        await expect(svc.ensureDiskSpace(fakeSlot, t)).rejects.toThrow(/disco insuficiente/i);
         // worktree prune (git) e sweepOrphanedOpencode foram acionados durante a limpeza.
         expect(vi.mocked(execFile).mock.calls.some((c: any[]) => c[0] === 'git' && c[1]?.[0] === 'worktree' && c[1]?.[1] === 'prune')).toBe(true);
         expect(sweepSpy).toHaveBeenCalled();
@@ -106,7 +110,7 @@ describe('taskRunnerService — guard de disco (#1111)', () => {
     it('disco BAIXO mas limpeza RECUPERA → não lança e registra recovery', async () => {
         const t = makeTask(4);
         freeBytesQueue.push(1 * GB, 5 * GB); // baixo antes, OK depois da limpeza
-        await expect(svc.ensureDiskSpace(t)).resolves.toBeUndefined();
+        await expect(svc.ensureDiskSpace(fakeSlot, t)).resolves.toBeUndefined();
         const recEvt = t.events.find((e: any) => e.type === 'worktree_cleanup' && e.meta?.diskRecovered);
         expect(recEvt).toBeTruthy();
     });
@@ -115,13 +119,13 @@ describe('taskRunnerService — guard de disco (#1111)', () => {
     it('medição indisponível (null) → não bloqueia (best-effort)', async () => {
         const t = makeTask(5);
         freeBytesQueue.push(null);
-        await expect(svc.ensureDiskSpace(t)).resolves.toBeUndefined();
+        await expect(svc.ensureDiskSpace(fakeSlot, t)).resolves.toBeUndefined();
     });
 
     it('disco OK → não bloqueia nem registra cleanup', async () => {
         const t = makeTask(6);
         freeBytesQueue.push(20 * GB);
-        await expect(svc.ensureDiskSpace(t)).resolves.toBeUndefined();
+        await expect(svc.ensureDiskSpace(fakeSlot, t)).resolves.toBeUndefined();
         expect(t.events.some((e: any) => e.meta?.diskLow)).toBe(false);
     });
 
@@ -129,7 +133,7 @@ describe('taskRunnerService — guard de disco (#1111)', () => {
     it('ensureWorktree com disco cheio → lança ANTES de fetch/worktree-add', async () => {
         svc.currentExecTask = makeTask(7);
         freeBytesQueue.push(1 * GB, 1 * GB); // baixo persistente
-        await expect(svc.ensureWorktree('fix-7')).rejects.toThrow(/disco insuficiente/i);
+        await expect(svc.ensureWorktree('fix-7', fakeSlot)).rejects.toThrow(/disco insuficiente/i);
         // Prova que o guard abortou ANTES de tocar o git do worktree: nenhum fetch foi emitido.
         const issuedFetch = vi.mocked(execFile).mock.calls.some(
             (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'fetch',
@@ -140,7 +144,7 @@ describe('taskRunnerService — guard de disco (#1111)', () => {
     it('ensureWorktree com disco OK → prossegue para o setup normal (fetch emitido)', async () => {
         svc.currentExecTask = makeTask(8);
         freeBytesQueue.push(50 * GB);
-        await svc.ensureWorktree('fix-8');
+        await svc.ensureWorktree('fix-8', fakeSlot);
         const issuedFetch = vi.mocked(execFile).mock.calls.some(
             (c: any[]) => c[0] === 'git' && c[1]?.[0] === 'fetch',
         );

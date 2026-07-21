@@ -25,7 +25,7 @@ import { recordUsage, getUsageForTask } from './taskUsageTracker';
 import { formatJudgeComment } from './judgeComment';
 import { findSimilarIssue } from '../utils/issueDedup';
 import { extractCiLogExcerpt, jobIdsFromRollup } from '../utils/ciLogExcerpt';
-import { slotManager } from './slotManager';
+import { slotManager, Slot } from './slotManager';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -35,11 +35,10 @@ const BIG = 20 * 1024 * 1024; // maxBuffer p/ saídas grandes (diff, npm, openco
 const STORE_PATH = path.join(__dirname, '../../data/tasks.json');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 // Worktree ISOLADO do TaskRunner — o agente nunca toca o diretório do dev/main.
-// Fase 2.1 (degrau-2): o path do worktree passa a vir do slotManager (fonte única slot-aware).
-// slot1.root é byte-idêntico ao antigo path.resolve(REPO_ROOT,'..','sistemav2-taskrunner-wt') —
-// zero mudança de comportamento. O threading do `slot` por parâmetro (troca de WT_ROOT p/ slot.root)
-// é a PR seguinte; esta só estabelece o SlotManager como dono do path. Ver slotManager.ts.
-const WT_ROOT = slotManager.slot1.root;
+// Fase 2.1 (degrau-2 PR-2): o path do worktree é o `slot.root`, THREADED por parâmetro (`slot: Slot`)
+// pelos métodos que tocam o workspace do coder — NÃO mais uma const global. Com maxParallelExec()=1
+// o único slot é o slotManager.slot1 (byte-idêntico ao antigo path.resolve(REPO_ROOT,'..','sistemav2-taskrunner-wt')),
+// então o threading é byte-idêntico ao comportamento anterior. Ver slotManager.ts.
 // #kill-per-slot: PROMPT_FILE / VISUAL_JUDGE_MARKER / OPENCODE_ORPHAN_NEEDLES / RUN_MARKER_PREFIX
 // vêm de ../utils/gcWorktrees (fonte ÚNICA, compartilhada com o GC e o runOpencode — evita drift).
 // - PROMPT_FILE: arquivo de spec lido pelo coder (needle do run principal).
@@ -97,7 +96,7 @@ const BASELINE_CACHE_DIR = path.join(__dirname, '../../data/baseline-cache');
 const TEST_GATE = process.env.TASKRUNNER_TEST_GATE !== '0';
 
 // Guard de DISCO (#1111): antes de criar/usar o worktree, checa o espaço livre no volume do
-// WT_ROOT. Se abaixo do limiar, tenta limpeza (prune + reap) e, se ainda baixo, FALHA a task
+// slot.root. Se abaixo do limiar, tenta limpeza (prune + reap) e, se ainda baixo, FALHA a task
 // com erro claro em vez de deixar o `worktree add`/opencode pendurar silenciosamente (causa do
 // incidente 2026-07-06: disco em ~2,4 GB travou o robô por 3h, todas as tasks zumbi). Limiar
 // configurável via env (default 3 GB). TASKRUNNER_DISK_GUARD=0 desliga (emergência).
@@ -1232,7 +1231,7 @@ class TaskRunnerService {
     // eventos/logs do guard de disco chamado de dentro de ensureWorktree, que só recebe `branch`.
     private currentExecTask: Task | undefined = undefined;
 
-    // Mutex único cobrindo TODA operação que toca o worktree compartilhado (WT_ROOT) ou o
+    // Mutex único cobrindo TODA operação que toca o worktree compartilhado (slot.root) ou o
     // projectID compartilhado do opencode: executeTask, tryAutoMerge, startPreview e o Judge
     // Visual. Sem ele, qualquer um (vários fire-and-forget) pode rodar checkout/rebase/reset ou
     // um 2º opencode concorrente com a próxima task da fila e corromper o git / colidir no
@@ -1262,7 +1261,7 @@ class TaskRunnerService {
                         // o deixa FORA do protect (pode ser morto); as demais runs vivas (Fase 2) seguem protegidas.
                         const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
                         this.sweepOrphanedOpencode(`lock-timeout-in-${label}`, [], undefined, { excludeIssue: stuckTask?.issueNumber }).catch(() => {});
-                        this.cleanStaleLocks(true);
+                        this.cleanStaleLocks(slotManager.slot1, true);
                         if (stuckTask) {
                             stuckTask.status = 'failed';
                             stuckTask.error = 'Timeout no worktree lock (holder anterior não liberou dentro do watchdog total)';
@@ -1498,7 +1497,8 @@ class TaskRunnerService {
             try {
                 // Lock do worktree: serializa com tryAutoMerge/startPreview de outras tasks.
                 this.currentExecTask = task;
-                await this.withWorktreeLock(`exec #${task.issueNumber}`, () => this.executeTask(task, branch));
+                const slot = slotManager.slot1;
+                await this.withWorktreeLock(`exec #${task.issueNumber}`, () => this.executeTask(task, branch, slot));
                 // #1154 P2 item 13: se o watchdog disparou (killRequested) e o executeTask RETORNOU (não lançou)
                 // deixando a task ainda 'running'/'fixing', ela ficaria ZUMBI para sempre (o .catch abaixo só
                 // roda em throw). Reconcilia: watchdog + status ativo → failed (evento audível).
@@ -1737,7 +1737,7 @@ class TaskRunnerService {
      */
     private async sweepOrphanedOpencode(reason: string, excludePids: number[] = [], task?: Task, opts?: { excludeIssue?: number }): Promise<boolean> {
         // Mata opencode ÓRFÃO dos DOIS entrypoints do TaskRunner — run principal (PROMPT_FILE,
-        // em WT_ROOT) e Judge Visual (VISUAL_JUDGE_MARKER, em REPO_ROOT) — que compartilham o
+        // em slot.root) e Judge Visual (VISUAL_JUDGE_MARKER, em REPO_ROOT) — que compartilham o
         // mesmo projectID; um órfão de qualquer um trava o outro. Enumera opencode.exe por nome
         // (rápido) e discrimina pelos needles (não mata opencode manual de outro projeto).
         // #kill-per-slot: POUPA os opencode de runs VIVAS (protectNeedles) — exceto o `excludeIssue`
@@ -1767,9 +1767,9 @@ class TaskRunnerService {
     }
 
     /** Resolve o gitdir real do worktree (em worktree, `.git` é um arquivo que aponta p/ ele). */
-    private worktreeGitDir(): string | null {
+    private worktreeGitDir(slot: Slot): string | null {
         try {
-            const dotgit = path.join(WT_ROOT, '.git');
+            const dotgit = path.join(slot.root, '.git');
             if (!fs.existsSync(dotgit)) return null;
             if (fs.statSync(dotgit).isDirectory()) return dotgit;
             const m = fs.readFileSync(dotgit, 'utf8').match(/gitdir:\s*(.+)/);
@@ -1796,7 +1796,7 @@ class TaskRunnerService {
     /**
      * Apaga o index.lock do snapshot do opencode cujo `config` aponta exatamente para
      * `worktreePath`. ESCOPO ESTRITO: nunca toca snapshots de OUTROS worktrees/projetos
-     * (REPO_ROOT quando alvo é WT_ROOT, dolibarr, tulipa-v4 etc.) — apagar um index.lock VIVO
+     * (REPO_ROOT quando alvo é slot.root, dolibarr, tulipa-v4 etc.) — apagar um index.lock VIVO
      * de outra sessão a corromperia. Sem config legível → pula. `force` (vindo de uma varredura
      * com confirmedGone) apaga mesmo com mtime < 30s — cobre o restart rápido do #335.
      */
@@ -1824,15 +1824,15 @@ class TaskRunnerService {
 
     /**
      * Remove locks STALE que sobram de um git/opencode interrompido, ANTES de um run no
-     * worktree isolado. Só age sobre o índice do PRÓPRIO worktree (WT_ROOT) e seu snapshot.
+     * worktree isolado. Só age sobre o índice do PRÓPRIO worktree (slot.root) e seu snapshot.
      * `opencodeGone` = a varredura confirmou que nenhum opencode vive → apaga o lock do snapshot
      * à força (sem holder), cobrindo o restart rápido (<30s) que o guard de mtime senão pularia.
      * O gitdir mantém o guard de 30s (a barreira de opencode não cobre processos `git`).
      */
-    private cleanStaleLocks(opencodeGone = false): void {
-        const gitDir = this.worktreeGitDir();
+    private cleanStaleLocks(slot: Slot, opencodeGone = false): void {
+        const gitDir = this.worktreeGitDir(slot);
         if (gitDir) this.rmStaleLock(path.join(gitDir, 'index.lock'), 'worktree gitdir');
-        this.cleanSnapshotLockFor(WT_ROOT, opencodeGone);
+        this.cleanSnapshotLockFor(slot.root, opencodeGone);
     }
 
     /**
@@ -1942,7 +1942,7 @@ class TaskRunnerService {
      * Retornos: 'changed' (produziu diff → caller cai no commit tail), 'no-changes' (rodou, sem diff →
      * fallback opencode), 'quota-blocked' (sem token → re-enfileira), 'unavailable' (CLI ausente → fallback).
      */
-    private async tryOpusCoderRound(task: Task, issueData: any): Promise<'changed' | 'no-changes' | 'quota-blocked' | 'unavailable'> {
+    private async tryOpusCoderRound(task: Task, issueData: any, slot: Slot): Promise<'changed' | 'no-changes' | 'quota-blocked' | 'unavailable'> {
         try {
             if (!(await claudeCliService.available())) {
                 this.recordEvent(task, 'attempt_started', 'Escalada Opus abortada: Claude CLI indisponível.', { opusEscalation: true, available: false });
@@ -1961,7 +1961,7 @@ class TaskRunnerService {
             // trata isto como consumido (não re-dispara). NÃO é a marca de consumo — essa vem só se rodar.
             task.opusInFlightAt = new Date().toISOString();
             this.save();
-            const r = await claudeCliService.runCode(prompt, WT_ROOT, { model, timeoutMs: OPENCODE_TIMEOUT_MS });
+            const r = await claudeCliService.runCode(prompt, slot.root, { model, timeoutMs: OPENCODE_TIMEOUT_MS });
             // SEM TOKEN (cota/billing): NÃO consome a tentativa, NÃO conta — cooldown + re-enfileira (o caller).
             // A assinatura renova (diária/semanal) → a task retenta a escalada depois.
             if (r?.isError && this.looksLikeClaudeQuota(r?.text)) {
@@ -1977,7 +1977,7 @@ class TaskRunnerService {
             this.accountOpusCost(r?.costUsd || 0);
             task.opusInFlightAt = undefined;
             this.save();
-            const changed = (await this.worktreeChanges()).length > 0;
+            const changed = (await this.worktreeChanges(slot)).length > 0;
             this.recordEvent(task, changed ? 'synthesis_completed' : 'attempt_no_changes',
                 changed ? `Opus coder produziu diff (custo $${(r?.costUsd || 0).toFixed(3)}, ${r?.numTurns ?? '?'} turns).`
                         : `Opus coder NÃO produziu mudanças (isError=${!!r?.isError}).`,
@@ -1995,7 +1995,7 @@ class TaskRunnerService {
         }
     }
 
-    private async runOpencodeIsolated(task: Task): Promise<string> {
+    private async runOpencodeIsolated(task: Task, slot: Slot): Promise<string> {
         this.accountRound(task); // #1154 item 23: conta a rodada (por task + por dia) p/ os tetos de custo
         // #kill-per-slot: marcador ÚNICO desta run, injetado no comando → aparece no CommandLine do
         // opencode. Registrado para que sweeps de OUTRAS runs (Fase 2) poupem este coder. Os sweeps
@@ -2005,7 +2005,7 @@ class TaskRunnerService {
         this.liveRunNeedles.set(task.issueNumber, runNeedle);
         try {
             const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
-            this.cleanStaleLocks(gone);
+            this.cleanStaleLocks(slot, gone);
             const basePrompt = `Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo. ${runNeedle}`;
             // Modelo do coder: PRECEDÊNCIA ui_config (tela, AO VIVO) > env (default) > default do opencode.
             // Resolvido+revalidado (charset) em resolveCoderModels — defesa em profundidade antes do shell.
@@ -2018,7 +2018,7 @@ class TaskRunnerService {
                 try {
                     return await runOpencode(
                         primaryCmd,
-                        WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                        slot.root, task, OPENCODE_TIMEOUT_MS,
                         (sample) => { task.cpuMemSamples?.push(sample); },
                         { protectNeedles: () => this.protectNeedlesExcept(task.issueNumber) },
                     );
@@ -2034,10 +2034,10 @@ class TaskRunnerService {
                     this.emitLog(task.issueNumber, 'warn', `Opencode: ${isTimeout ? 'timeout/hang' : 'cota/429'} no modelo primário — fallback para ${fallbackModel}.`);
                     // excludeIssue=self: mata o órfão do PRIMÁRIO desta run (mesmo needle), poupa vizinhos.
                     const goneMid = await this.sweepOrphanedOpencode(`fallback-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
-                    this.cleanStaleLocks(goneMid);
+                    this.cleanStaleLocks(slot, goneMid);
                     return await runOpencode(
                         fallbackModel ? `opencode run --model ${fallbackModel} "${basePrompt}"` : `opencode run "${basePrompt}"`,
-                        WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                        slot.root, task, OPENCODE_TIMEOUT_MS,
                         (sample) => { task.cpuMemSamples?.push(sample); },
                         { protectNeedles: () => this.protectNeedlesExcept(task.issueNumber) },
                     );
@@ -2049,7 +2049,7 @@ class TaskRunnerService {
                 // antes de a fase de verificação (worktreeChanges/typecheck) tocar o git do worktree.
                 // excludeIssue=self: mata os próprios órfãos, poupa vizinhos vivos (Fase 2).
                 const goneAfter = await this.sweepOrphanedOpencode(`post-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
-                this.cleanStaleLocks(goneAfter);
+                this.cleanStaleLocks(slot, goneAfter);
             }
         } finally {
             this.liveRunNeedles.delete(task.issueNumber);
@@ -2057,15 +2057,15 @@ class TaskRunnerService {
     }
 
     /**
-     * Guard de DISCO (#1111): mede o espaço livre no volume do WT_ROOT antes de criar/usar o
+     * Guard de DISCO (#1111): mede o espaço livre no volume do slot.root antes de criar/usar o
      * worktree. Se abaixo do limiar, tenta limpeza automática (prune de worktrees + reap de
      * órfãos) e re-mede; se ainda baixo, lança erro claro — quem chama (ensureWorktree →
      * executeTask → catch da execChain) marca a task como failed em vez de zumbi. Se a medição
      * falhar (null), PROSSEGUE (não trava o robô por falha da própria checagem).
      */
-    private async ensureDiskSpace(task?: Task): Promise<void> {
+    private async ensureDiskSpace(slot: Slot, task?: Task): Promise<void> {
         if (!DISK_GUARD) return;
-        const free = await getFreeDiskBytes(WT_ROOT);
+        const free = await getFreeDiskBytes(slot.root);
         if (free === null) {
             log.warn('ensureDiskSpace: não foi possível medir o disco livre — prosseguindo (best-effort)');
             return;
@@ -2083,7 +2083,7 @@ class TaskRunnerService {
         await this.sweepOrphanedOpencode('disk-low', [], task).catch(() => false);
 
         // Re-mede após a limpeza.
-        const after = await getFreeDiskBytes(WT_ROOT);
+        const after = await getFreeDiskBytes(slot.root);
         if (after !== null && after >= DISK_MIN_FREE_BYTES) {
             const afterGB = formatGB(after);
             log.warn(`ensureDiskSpace: limpeza recuperou disco — agora ${afterGB} GB livres (era ${beforeGB} GB)`);
@@ -2101,39 +2101,43 @@ class TaskRunnerService {
     }
 
     /** Garante um worktree git ISOLADO, limpo, no branch fix-N a partir de origin/main. */
-    private async ensureWorktree(branch: string, opts?: { preserveBranch?: boolean }): Promise<void> {
-        // Guard de disco (#1111): falha rápido com erro claro se o volume do WT_ROOT estiver cheio,
+    private async ensureWorktree(branch: string, slot: Slot, opts?: { preserveBranch?: boolean }): Promise<void> {
+        // Guard de disco (#1111): falha rápido com erro claro se o volume do slot.root estiver cheio,
         // ANTES de qualquer `worktree add`/fetch/checkout que penduraria silenciosamente.
         const ctxTask = this.currentExecTask;
         const abortIfKilled = () => !!ctxTask?.killRequested;
-        await this.ensureDiskSpace(ctxTask);
+        await this.ensureDiskSpace(slot, ctxTask);
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
-        this.cleanStaleLocks(gone);
+        this.cleanStaleLocks(slot, gone);
+        // #slot-2: PROVISÃO em REPO_ROOT (cwd default do git()) — o fetch alimenta o clone/repo base,
+        // não o workspace do coder; fica assim até o slot-2 (fetch-no-clone). NÃO muda de cwd.
         await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 60000 }, 3, abortIfKilled);
         // Recria o worktree se NÃO existir OU se o diretório existir mas não for um worktree git
         // VÁLIDO (ex.: .git apagado após reescrita de histórico/limpeza órfã). Sem isto, o `if
         // existsSync` antigo pulava o `worktree add` e o `reset --hard` abaixo falhava com
         // "fatal: not a git repository" — travando TODAS as tasks.
-        let needsCreate = !fs.existsSync(WT_ROOT);
+        let needsCreate = !fs.existsSync(slot.root);
         if (!needsCreate) {
             try {
-                if (!fs.existsSync(path.join(WT_ROOT, '.git'))) throw new Error('.git ausente');
-                await git(['rev-parse', '--is-inside-work-tree'], { timeout: 15000, cwd: WT_ROOT });
+                if (!fs.existsSync(path.join(slot.root, '.git'))) throw new Error('.git ausente');
+                await git(['rev-parse', '--is-inside-work-tree'], { timeout: 15000, cwd: slot.root });
             } catch {
-                log.warn(`ensureWorktree: ${WT_ROOT} existe mas não é worktree válido — recriando`);
-                try { fs.rmSync(WT_ROOT, { recursive: true, force: true }); } catch (e: any) { log.warn(`rm WT_ROOT falhou: ${e?.message}`); }
+                log.warn(`ensureWorktree: ${slot.root} existe mas não é worktree válido — recriando`);
+                try { fs.rmSync(slot.root, { recursive: true, force: true }); } catch (e: any) { log.warn(`rm slot.root falhou: ${e?.message}`); }
                 needsCreate = true;
             }
         }
         if (needsCreate) {
+            // #slot-2: PROVISÃO em REPO_ROOT (cwd default) — o prune/add operam sobre o repo base p/
+            // registrar o worktree; o path-alvo (slot.root) é o workspace do coder. NÃO muda de cwd.
             await git(['worktree', 'prune'], { timeout: 30000 });
-            await git(['worktree', 'add', '--force', WT_ROOT, 'origin/main'], { timeout: 120000 });
+            await git(['worktree', 'add', '--force', slot.root, 'origin/main'], { timeout: 120000 });
         }
         // Limpa restos de execuções anteriores ANTES de trocar de branch. Sem isto, se uma task
         // anterior deixou o worktree sujo (mudanças não commitadas / arquivos novos), o checkout
         // aborta com "local changes would be overwritten" e a task falha no setup.
-        await git(['reset', '--hard'], { timeout: 30000, cwd: WT_ROOT });
-        await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT });
+        await git(['reset', '--hard'], { timeout: 30000, cwd: slot.root });
+        await git(['clean', '-fd'], { timeout: 30000, cwd: slot.root });
         // Base do checkout. PADRÃO: branch fresco do main (run inicial — comportamento inalterado).
         // preserveBranch (caminho /fix ou auto-fix do Judge, quando JÁ existe PR/trabalho): parte da
         // branch remota existente e edita POR CIMA, em vez de regenerar do zero (não perde o feito).
@@ -2149,8 +2153,8 @@ class TaskRunnerService {
                 }
             } catch { /* sem branch remota → cai no fresco do main */ }
         }
-        await git(['checkout', '-B', branch, base], { timeout: 30000, cwd: WT_ROOT });
-        await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT }); // preserva node_modules (ignorado)
+        await git(['checkout', '-B', branch, base], { timeout: 30000, cwd: slot.root });
+        await git(['clean', '-fd'], { timeout: 30000, cwd: slot.root }); // preserva node_modules (ignorado)
         // #963 (Fase 0): re-sincroniza deps quando o package-lock MUDA (não só quando node_modules
         // falta). Antes o worktree instalava "uma vez" e ficava com deps STALE — o heic2any (add
         // depois) sumia e o tsc/vite build do worktree falhavam em TODA task (falso-negativo total).
@@ -2176,18 +2180,18 @@ class TaskRunnerService {
                 try { fs.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
             }
         };
-        await ensureDeps(WT_ROOT);
-        await ensureDeps(path.join(WT_ROOT, 'backend'));
+        await ensureDeps(slot.root);
+        await ensureDeps(path.join(slot.root, 'backend'));
     }
 
     /** Mudanças de CÓDIGO no worktree (ignora node_modules / lock / o arquivo de prompt). */
-    private async worktreeChanges(): Promise<string[]> {
+    private async worktreeChanges(slot: Slot): Promise<string[]> {
         // Retry tolerante: logo após o opencode, um lock/carga transiente pode fazer o git status
         // estourar o timeout (foi a falha do canário). Timeout maior + 1 retry após pausa curta.
         let stdout = '';
         for (let attempt = 1; attempt <= 2; attempt++) {
             try {
-                ({ stdout } = await git(['status', '--porcelain'], { timeout: 30000, cwd: WT_ROOT }));
+                ({ stdout } = await git(['status', '--porcelain'], { timeout: 30000, cwd: slot.root }));
                 break;
             } catch (e) {
                 if (attempt === 2) throw e;
@@ -2200,11 +2204,11 @@ class TaskRunnerService {
     }
 
     /** Roda os 2 tsc; devolve erros POSICIONAIS (multiset) + GLOBAIS + flag de timeout. */
-    private async collectTscErrors(): Promise<{ pos: Map<string, number>; globals: string[]; timedOut: boolean }> {
+    private async collectTscErrors(slot: Slot): Promise<{ pos: Map<string, number>; globals: string[]; timedOut: boolean }> {
         let raw = '', timedOut = false;
         for (const proj of ['backend/tsconfig.json', 'tsconfig.json']) {
             try {
-                await sh(`npx tsc --noEmit -p ${proj}`, WT_ROOT, 240000);
+                await sh(`npx tsc --noEmit -p ${proj}`, slot.root, 240000);
             } catch (e: any) {
                 if (e?.killed || /timed?\s*out|ETIMEDOUT/i.test(String(e?.signal || '') + String(e?.message || ''))) timedOut = true;
                 raw += (e.stdout || '') + '\n' + (e.stderr || e.message || '') + '\n';
@@ -2216,14 +2220,14 @@ class TaskRunnerService {
     /** Arquivos que a task tocou: diff da branch vs origin/main (committed) + mudanças não-commitadas.
      *  Robusto (não parseia status de porcelain). No auto-merge (árvore limpa pós-rebase) o `git status`
      *  daria vazio — por isso o diff vs origin/main é a fonte primária ali. */
-    private async touchedFiles(): Promise<string[]> {
+    private async touchedFiles(slot: Slot): Promise<string[]> {
         const files = new Set<string>();
         try {
-            const { stdout } = await git(['diff', '--name-only', 'origin/main...HEAD'], { timeout: 30000, cwd: WT_ROOT });
+            const { stdout } = await git(['diff', '--name-only', 'origin/main...HEAD'], { timeout: 30000, cwd: slot.root });
             stdout.split('\n').map((l) => l.trim()).filter(Boolean).forEach((f) => files.add(f));
         } catch { /* branch nova/sem merge-base — cai nas não-commitadas */ }
         try {
-            (await this.worktreeChanges()).forEach((l) =>
+            (await this.worktreeChanges(slot)).forEach((l) =>
                 files.add(l.replace(/^[A-Z?! ]{1,3}\s*/, '').replace(/^.*-> /, '').replace(/^"|"$/g, '')));
         } catch { /* ignore */ }
         return [...files];
@@ -2246,9 +2250,9 @@ class TaskRunnerService {
     }
 
     /** A branch do worktree JÁ tem commits além de origin/main? #1190. (`rev-list --count` > 0.) */
-    private async branchIsAheadOfMain(): Promise<boolean> {
+    private async branchIsAheadOfMain(slot: Slot): Promise<boolean> {
         try {
-            const { stdout } = await git(['rev-list', '--count', 'origin/main..HEAD'], { timeout: 20000, cwd: WT_ROOT });
+            const { stdout } = await git(['rev-list', '--count', 'origin/main..HEAD'], { timeout: 20000, cwd: slot.root });
             return parseInt((stdout || '').trim(), 10) > 0;
         } catch { /* sem origin/main ou worktree novo — assume não-ahead (fallback seguro) */ return false; }
     }
@@ -2266,18 +2270,18 @@ class TaskRunnerService {
      * Combina as 3 fontes de "há trabalho" via o helper puro hasCommittedWork. Usado antes dos
      * pontos de "sem mudanças → failed" (cumulativo/síntese) e no passo de commit. #1190.
      */
-    private async hasExistingCommittedWork(task: Task, worktreeChanges: string[] = []): Promise<boolean> {
+    private async hasExistingCommittedWork(task: Task, slot: Slot, worktreeChanges: string[] = []): Promise<boolean> {
         const [branchAhead, prHasDiff] = await Promise.all([
-            this.branchIsAheadOfMain(),
+            this.branchIsAheadOfMain(slot),
             this.existingPrHasDiff(task),
         ]);
         return this.hasCommittedWork(branchAhead, prHasDiff, worktreeChanges);
     }
 
     /** Captura baseline de erros do origin/main (best-effort, cache atômico por SHA em backend/data). Sem vite. */
-    private async captureBaseline(task: Task): Promise<void> {
+    private async captureBaseline(task: Task, slot: Slot): Promise<void> {
         try {
-            const { stdout: shaOut } = await git(['rev-parse', 'origin/main'], { timeout: 15000, cwd: WT_ROOT });
+            const { stdout: shaOut } = await git(['rev-parse', 'origin/main'], { timeout: 15000, cwd: slot.root });
             const sha = shaOut.trim().slice(0, 12);
             const cacheFile = path.join(BASELINE_CACHE_DIR, `${sha}.json`);
             try {
@@ -2291,7 +2295,7 @@ class TaskRunnerService {
                 log.info(`captureBaseline #${task.issueNumber}: cache do main ${sha} (${task.baselineErrors!.length} pos, ${task.baselineGlobals!.length} glob)`);
                 return;
             } catch { /* sem cache ou corrompido → recomputa (não cai em estrito) */ }
-            const { pos, globals, timedOut } = await this.collectTscErrors();
+            const { pos, globals, timedOut } = await this.collectTscErrors(slot);
             if (timedOut) { // NÃO persistir baseline PARCIAL (senão erros reais viram "novos" no verify)
                 this.recordEvent(task, 'error', 'captureBaseline: tsc estourou timeout — baseline pulado (gate usa só o filtro por arquivo-tocado)');
                 return;
@@ -2311,24 +2315,24 @@ class TaskRunnerService {
      * task TOCOU (+ global novo), e por vite build quando o diff toca o frontend. Sem DELTA_GATE ou sem
      * task: comportamento ESTRITO antigo (fail-fast no repo inteiro). O portão FINAL é a CI full-repo.
      */
-    private async verify(task?: Task): Promise<{ ok: boolean; output: string }> {
+    private async verify(slot: Slot, task?: Task): Promise<{ ok: boolean; output: string }> {
         if (!DELTA_GATE || !task) {
             try {
-                await sh('npx tsc --noEmit -p backend/tsconfig.json', WT_ROOT, 240000);
-                await sh('npx tsc --noEmit -p tsconfig.json', WT_ROOT, 240000);
-                await sh('npx vite build', WT_ROOT, 300000);
+                await sh('npx tsc --noEmit -p backend/tsconfig.json', slot.root, 240000);
+                await sh('npx tsc --noEmit -p tsconfig.json', slot.root, 240000);
+                await sh('npx vite build', slot.root, 300000);
                 return { ok: true, output: 'typecheck OK + build OK (estrito)' };
             } catch (e: any) {
                 return { ok: false, output: ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 4000) };
             }
         }
-        const { pos, globals } = await this.collectTscErrors();
-        const touched = await this.touchedFiles();
+        const { pos, globals } = await this.collectTscErrors(slot);
+        const touched = await this.touchedFiles(slot);
         const blocking = computeBlocking(pos, deserializeErrors(task.baselineErrors), globals, task.baselineGlobals || [], touched);
 
         let viteFail = '';
         if (touched.some((f) => f.replace(/\\/g, '/').startsWith('src/'))) {
-            try { await sh('npx vite build', WT_ROOT, 300000); }
+            try { await sh('npx vite build', slot.root, 300000); }
             catch (e: any) { viteFail = ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 2000); }
         }
         if (blocking.length || viteFail) {
@@ -2340,7 +2344,7 @@ class TaskRunnerService {
         // Gate de TESTE (Fase 4/B11): roda os testes AFETADOS pelos arquivos tocados. Só chega aqui se
         // tsc+vite passaram (código compila). Como o main é verde (CI), falha = regressão da task.
         if (TEST_GATE && touched.length) {
-            const t = await this.runTouchedTests(touched);
+            const t = await this.runTouchedTests(touched, slot);
             if (!t.ok) return t;
         }
         return { ok: true, output: `gate OK (0 erros novos + testes afetados verdes; ${touched.length} arquivo(s) tocado(s))` };
@@ -2352,11 +2356,11 @@ class TaskRunnerService {
      * files tocados. `--passWithNoTests` (arquivo sem teste passa), `--retry=2` (amortece flaky).
      * Timeout = advisory (não bloqueia); falha real = bloqueia. Roda no worktree (deps via ensureDeps).
      */
-    private async runTouchedTests(touched: string[]): Promise<{ ok: boolean; output: string }> {
+    private async runTouchedTests(touched: string[], slot: Slot): Promise<{ ok: boolean; output: string }> {
         const { backend, frontend } = splitTouchedByProject(touched);
         const runs: Array<{ label: string; cwd: string; files: string[] }> = [];
-        if (backend.length) runs.push({ label: 'backend', cwd: path.join(WT_ROOT, 'backend'), files: backend });
-        if (frontend.length) runs.push({ label: 'frontend', cwd: WT_ROOT, files: frontend });
+        if (backend.length) runs.push({ label: 'backend', cwd: path.join(slot.root, 'backend'), files: backend });
+        if (frontend.length) runs.push({ label: 'frontend', cwd: slot.root, files: frontend });
         for (const r of runs) {
             const arglist = r.files.map((f) => JSON.stringify(f)).join(' ');
             try {
@@ -2581,7 +2585,7 @@ class TaskRunnerService {
      * num PR só. Retorna `aborted=true` (status já setado) se nada foi produzido / cancelado.
      */
     private async runCumulativeImplementation(
-        task: Task, issueData: any, promptPath: string,
+        task: Task, issueData: any, promptPath: string, slot: Slot,
     ): Promise<{ verify: { ok: boolean; output: string }; aborted: boolean }> {
         task.phase = 'exploring';
         if (!task.attempts) task.attempts = [];
@@ -2611,17 +2615,17 @@ class TaskRunnerService {
             }
             if (Date.now() - watchdogZero > CUMULATIVE_BUDGET_MS) {
                 this.recordEvent(task, 'exploration_completed', `Budget de tempo atingido no round ${round} — finalizando com o progresso atual`, { rounds: round - 1, budgetReached: true });
-                verify = await this.verify(task);
+                verify = await this.verify(slot, task);
                 break;
             }
 
             let changedSoFar: string[] = [];
-            try { changedSoFar = await this.worktreeChanges(); } catch { /* ignore */ }
+            try { changedSoFar = await this.worktreeChanges(slot); } catch { /* ignore */ }
             fs.writeFileSync(promptPath, this.buildCumulativePrompt(task, issueData, changedSoFar));
             this.recordEvent(task, 'attempt_started', `Cumulativo — round ${round}/${MAX_ROUNDS}`, { attempt: round, phase: 'exploring', maxAttempts: MAX_ROUNDS });
 
             try {
-                const stdout = await this.runOpencodeIsolated(task);
+                const stdout = await this.runOpencodeIsolated(task, slot);
                 this.recordEvent(task, 'opencode_output', `Round ${round} — output`, { attempt: round, phase: 'exploring', output: String(stdout).substring(0, 5000) });
                 // opencode usa o GLM por dentro: se a saída tem marcador de cota (429/limit exhausted),
                 // sinaliza esgotamento p/ a task não ser tratada como "sem mudança = falha".
@@ -2648,11 +2652,11 @@ class TaskRunnerService {
             // convergência (diff --cached) e o commit enxergam o MESMO conjunto (tests/, scripts/,
             // configs etc., não só src/). Sem isso, um round que só mexe fora de src/ daria falso "convergiu".
             try {
-                await git(['add', '-A'], { timeout: 15000, cwd: WT_ROOT });
-                await git(['reset', '-q', '--', PROMPT_FILE], { timeout: 15000, cwd: WT_ROOT });
+                await git(['add', '-A'], { timeout: 15000, cwd: slot.root });
+                await git(['reset', '-q', '--', PROMPT_FILE], { timeout: 15000, cwd: slot.root });
             } catch { /* ignore */ }
-            const changes = await this.worktreeChanges();
-            const { stdout: diff } = await git(['diff', '--cached'], { timeout: 30000, cwd: WT_ROOT });
+            const changes = await this.worktreeChanges(slot);
+            const { stdout: diff } = await git(['diff', '--cached'], { timeout: 30000, cwd: slot.root });
             const diffHash = crypto.createHash('sha1').update(diff).digest('hex');
             if (changes.length > 0) anyChange = true;
 
@@ -2660,7 +2664,7 @@ class TaskRunnerService {
             // Exige `anyChange` para não confundir 2 rounds completamente vazios no início com "convergência".
             if (round > 1 && diffHash === lastDiffHash && anyChange) {
                 this.recordEvent(task, 'exploration_completed', `Convergiu no round ${round} (sem mudanças novas)`, { rounds: round, converged: true });
-                if (anyChange) verify = await this.verify(task); // só revalida se há algo a entregar
+                if (anyChange) verify = await this.verify(slot, task); // só revalida se há algo a entregar
                 break;
             }
             lastDiffHash = diffHash;
@@ -2685,7 +2689,7 @@ class TaskRunnerService {
             }
 
             this.recordEvent(task, 'typecheck_started', `Typecheck round ${round} (${changes.length} arquivos acumulados)...`);
-            verify = await this.verify(task);
+            verify = await this.verify(slot, task);
             task.attempts.push({
                 index: task.attempts.length + 1, phase: 'exploring',
                 diff: diff.substring(0, 30000), typecheckOk: verify.ok,
@@ -2713,17 +2717,17 @@ class TaskRunnerService {
             }
             // #963 Tier RESGATE: o Claude Code assume o worktree antes de desistir. Se produzir
             // mudanças, revalida e segue pro caminho de sucesso (PR) em vez de abortar.
-            if (await this.tryClaudeRescue(task, issueData) && (await this.worktreeChanges()).length > 0) {
-                verify = await this.verify(task);
+            if (await this.tryClaudeRescue(task, issueData, slot) && (await this.worktreeChanges(slot)).length > 0) {
+                verify = await this.verify(slot, task);
                 anyChange = true;
             }
             // #1190: re-work cujo worktree está limpo MAS a branch já tem trabalho COMMITADO sobre
             // origin/main (ou um PR existente com diff) NÃO falha — a rodada vazia significa
             // "convergiu", não "fracassou". Sem isto, o trabalho bom de uma rodada anterior (JÁ
             // commitado na branch) era descartado e a task marcava 'failed'. Segue p/ commit/push/judge.
-            if (!anyChange && await this.hasExistingCommittedWork(task)) {
+            if (!anyChange && await this.hasExistingCommittedWork(task, slot)) {
                 this.recordEvent(task, 'synthesis_completed', 'Re-work cumulativo convergiu — branch já tem trabalho commitado; seguindo p/ commit/push/judge', { converged: true, reworkRescue: true });
-                verify = await this.verify(task);
+                verify = await this.verify(slot, task);
                 anyChange = true;
             }
             if (!anyChange) {
@@ -2739,7 +2743,7 @@ class TaskRunnerService {
         return { verify, aborted: false };
     }
 
-    private async executeTask(task: Task, branch: string): Promise<void> {
+    private async executeTask(task: Task, branch: string, slot: Slot): Promise<void> {
         const { issueNumber } = task;
         log.info(`Starting task #${issueNumber} on branch ${branch} (worktree isolado)`);
         this.recordEvent(task, 'task_started', `Iniciando #${issueNumber} em worktree isolado (branch ${branch})`, { branch });
@@ -2772,13 +2776,13 @@ class TaskRunnerService {
         this.recordEvent(task, 'worktree_setup_started', preserveBranch
             ? `Preparando worktree preservando a branch ${branch} (correção incremental)...`
             : 'Preparando worktree a partir de origin/main...');
-        await this.ensureWorktree(branch, { preserveBranch });
-        this.recordEvent(task, 'worktree_setup_completed', 'Worktree pronto', { path: WT_ROOT });
+        await this.ensureWorktree(branch, slot, { preserveBranch });
+        this.recordEvent(task, 'worktree_setup_completed', 'Worktree pronto', { path: slot.root });
 
         // Gate por DELTA (Fase 0): captura baseline do main (best-effort, idempotente por SHA). Condição
         // é "não tenho baseline" — NÃO "run fresco" — p/ cobrir self-heal/preserve/Retry-com-PR (a análise
         // adversarial mostrou que preserve pulava a captura e caía em estrito, reprovando erro pré-existente).
-        if (DELTA_GATE && task.baselineErrors === undefined) await this.captureBaseline(task);
+        if (DELTA_GATE && task.baselineErrors === undefined) await this.captureBaseline(task, slot);
 
         // 2) Lê a issue
         this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
@@ -2788,7 +2792,7 @@ class TaskRunnerService {
         issueData._imageContext = await this.describeIssueImages(issueData);
 
         // 3) Multi-Attempt Synthesis: Fase 1 (exploração 3x) + Fase 2 (síntese 3x)
-        const promptPath = path.join(WT_ROOT, PROMPT_FILE);
+        const promptPath = path.join(slot.root, PROMPT_FILE);
         let verify = { ok: false, output: 'não verificado' };
 
         if (!task.attempts) task.attempts = [];
@@ -2815,7 +2819,7 @@ class TaskRunnerService {
 
         let escalatedInline = false;
         if (this.shouldEscalateToOpus(task)) {
-            const outcome = await this.tryOpusCoderRound(task, issueData);
+            const outcome = await this.tryOpusCoderRound(task, issueData, slot);
             if (outcome === 'quota-blocked') {
                 // Sem token: NÃO consumiu a tentativa. Re-enfileira (igual ao judge quota-hold) — a task
                 // retenta a escalada quando a assinatura renovar. NÃO cai no opencode, NÃO vai pra humano.
@@ -2844,7 +2848,7 @@ class TaskRunnerService {
             task.coderEscalationModelOverride = undefined;
             if (outcome === 'changed') {
                 escalatedInline = true;
-                verify = await this.verify(task);
+                verify = await this.verify(slot, task);
             }
             // 'no-changes' | 'unavailable' → cai no fluxo opencode normal (opusEscalated já resolvido dentro).
         }
@@ -2854,7 +2858,7 @@ class TaskRunnerService {
         } else if (task.executionMode === 'cumulative') {
             // Modo CUMULATIVO: loop incremental gated (substitui exploração+síntese). Não reseta
             // entre rounds — constrói sobre o progresso parcial até convergir. Bom p/ tasks grandes.
-            const result = await this.runCumulativeImplementation(task, issueData, promptPath);
+            const result = await this.runCumulativeImplementation(task, issueData, promptPath, slot);
             if (result.aborted) return;
             verify = result.verify;
         } else {
@@ -2872,7 +2876,7 @@ class TaskRunnerService {
             this.recordEvent(task, 'attempt_started', `Fase 1 — Exploração ${attempt}/${MAX_EXPLORE}`, { attempt, phase: 'exploring', maxAttempts: MAX_EXPLORE });
 
             try {
-                const stdout = await this.runOpencodeIsolated(task);
+                const stdout = await this.runOpencodeIsolated(task, slot);
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Exploração ${attempt} — output`, { attempt, phase: 'exploring', output: output.substring(0, 5000) });
@@ -2884,7 +2888,7 @@ class TaskRunnerService {
                 this.recordEvent(task, 'error', `opencode erro: ${String(e.message || e).substring(0, 300)}`, { attempt, phase: 'exploring', error: e.message });
             }
 
-            const changes = await this.worktreeChanges();
+            const changes = await this.worktreeChanges(slot);
             if (changes.length === 0) {
                 this.recordEvent(task, 'attempt_no_changes', `Exploração ${attempt}: nenhuma mudança`, { attempt, phase: 'exploring' });
                 if (attempt < MAX_EXPLORE) {
@@ -2912,20 +2916,20 @@ class TaskRunnerService {
                         this.emitStatus(task);
                         return;
                     }
-                    if (await this.tryClaudeRescue(task, issueData) && (await this.worktreeChanges()).length > 0) {
+                    if (await this.tryClaudeRescue(task, issueData, slot) && (await this.worktreeChanges(slot)).length > 0) {
                         // Resgate produziu trabalho: registra como uma tentativa de exploração e segue o
                         // fluxo normal (a Fase 2 de síntese NÃO reseta o worktree → o diff do resgate
                         // persiste → typecheck + commit + PR). Idêntico a "1 exploração teve sucesso".
                         this.recordEvent(task, 'synthesis_started', '🛟 Resgate: exploração toda vazia — Claude Code assumiu o worktree.', { rescue: 'claude', fromEmpty: true });
-                        verify = await this.verify(task);
-                        const { stdout: rescueDiff } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
+                        verify = await this.verify(slot, task);
+                        const { stdout: rescueDiff } = await git(['diff'], { timeout: 30000, cwd: slot.root });
                         task.attempts.push({
                             index: task.attempts.length + 1,
                             phase: 'exploring',
                             diff: rescueDiff.substring(0, 30000),
                             typecheckOk: verify.ok,
                             typecheckErrors: verify.ok ? undefined : verify.output.substring(0, 4000),
-                            filesChanged: await this.worktreeChanges(),
+                            filesChanged: await this.worktreeChanges(slot),
                         });
                         continue; // última exploração → o for termina → Fase 2 usa a tentativa do resgate
                     }
@@ -2944,8 +2948,8 @@ class TaskRunnerService {
 
             // Captura diff e typecheck desta tentativa
             this.recordEvent(task, 'typecheck_started', `Typecheck exploração ${attempt}...`);
-            verify = await this.verify(task);
-            const { stdout: diffOut } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
+            verify = await this.verify(slot, task);
+            const { stdout: diffOut } = await git(['diff'], { timeout: 30000, cwd: slot.root });
 
             const attemptResult: AttemptResult = {
                 index: task.attempts.length + 1,
@@ -2963,11 +2967,11 @@ class TaskRunnerService {
 
             // Reset worktree para próxima tentativa (se não for a última)
             if (attempt < MAX_EXPLORE) {
-                await git(['checkout', '--', '.'], { timeout: 15000, cwd: WT_ROOT });
+                await git(['checkout', '--', '.'], { timeout: 15000, cwd: slot.root });
                 // #1154 P3 item 25: clean TOTAL (não só src/ + backend/src/) — a tentativa anterior pode ter
                 // criado arquivos untracked em qualquer pasta (docs, configs, testes fora dessas raízes) que
                 // vazavam para a próxima. `-fd` sem `-x` preserva o gitignored (node_modules).
-                await git(['clean', '-fd'], { timeout: 15000, cwd: WT_ROOT });
+                await git(['clean', '-fd'], { timeout: 15000, cwd: slot.root });
                 task.feedbackHistory = [];
             }
         }
@@ -2993,7 +2997,7 @@ class TaskRunnerService {
             this.recordEvent(task, 'synthesis_started', `Fase 2 — Síntese ${synthAttempt}/${MAX_SYNTH}`, { synthAttempt, maxSynth: MAX_SYNTH });
 
             try {
-                const stdout = await this.runOpencodeIsolated(task);
+                const stdout = await this.runOpencodeIsolated(task, slot);
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Síntese ${synthAttempt} — output`, { synthAttempt, phase: 'synthesizing', output: output.substring(0, 5000) });
@@ -3007,7 +3011,7 @@ class TaskRunnerService {
                 if (isQuotaError(e?.message)) markQuotaExhausted(`opencode síntese ${synthAttempt}: ${String(e?.message).slice(0, 80)}`);
             }
 
-            let changes = await this.worktreeChanges();
+            let changes = await this.worktreeChanges(slot);
             if (changes.length === 0) {
                 if (synthAttempt < MAX_SYNTH) {
                     this.recordEvent(task, 'attempt_no_changes', `Síntese ${synthAttempt}: nenhuma mudança`, { synthAttempt });
@@ -3026,17 +3030,17 @@ class TaskRunnerService {
                 }
                 // #963 Tier RESGATE: antes de desistir, o Claude Code assume o worktree parcial.
                 // Se produzir mudanças, cai no caminho de sucesso (typecheck + PR) logo abaixo.
-                if (await this.tryClaudeRescue(task, issueData)) {
-                    changes = await this.worktreeChanges();
+                if (await this.tryClaudeRescue(task, issueData, slot)) {
+                    changes = await this.worktreeChanges(slot);
                 }
                 if (changes.length === 0) {
                     // #1190: re-work cujo worktree está limpo MAS a branch já tem trabalho COMMITADO
                     // sobre origin/main (ou um PR existente com diff) NÃO falha — a rodada vazia
                     // significa "convergiu", não "fracassou". Sai do loop de síntese e segue p/ o
                     // passo de commit/push/PR/judge, que entrega o trabalho já existente na branch.
-                    if (await this.hasExistingCommittedWork(task)) {
+                    if (await this.hasExistingCommittedWork(task, slot)) {
                         this.recordEvent(task, 'synthesis_completed', 'Re-work síntese convergiu — branch já tem trabalho commitado; seguindo p/ commit/push/judge', { converged: true, reworkRescue: true });
-                        verify = await this.verify(task);
+                        verify = await this.verify(slot, task);
                         break;
                     }
                     task.status = 'failed';
@@ -3052,8 +3056,8 @@ class TaskRunnerService {
 
             // Typecheck gate
             this.recordEvent(task, 'typecheck_started', `Typecheck síntese ${synthAttempt}...`);
-            verify = await this.verify(task);
-            const { stdout: synthDiff } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
+            verify = await this.verify(slot, task);
+            const { stdout: synthDiff } = await git(['diff'], { timeout: 30000, cwd: slot.root });
 
             const synthResult: AttemptResult = {
                 index: task.attempts.length + 1,
@@ -3086,10 +3090,10 @@ class TaskRunnerService {
 
         // 4) Commit + push (remove o arquivo de prompt antes de commitar)
         fs.rmSync(promptPath, { force: true });
-        await git(['add', '-A'], { timeout: 15000, cwd: WT_ROOT });
+        await git(['add', '-A'], { timeout: 15000, cwd: slot.root });
         let commitSha: string | undefined;
         try {
-            const { stdout: commitOut } = await git(['commit', '-m', `feat(#${issueNumber}): ${String(issueData.title).substring(0, 72)}`], { timeout: 20000, cwd: WT_ROOT });
+            const { stdout: commitOut } = await git(['commit', '-m', `feat(#${issueNumber}): ${String(issueData.title).substring(0, 72)}`], { timeout: 20000, cwd: slot.root });
             const shaMatch = commitOut.match(/\[[\w\-/]+ ([a-f0-9]+)\]/);
             commitSha = shaMatch?.[1];
             this.recordEvent(task, 'git_committed', 'Mudanças commitadas', { sha: commitSha });
@@ -3097,7 +3101,7 @@ class TaskRunnerService {
             // #1190: "nada a commitar" num re-work cujo trabalho JÁ está commitado na branch (worktree
             // limpo, mas branch diverge da main / PR existente com diff) NÃO é falha — o trabalho bom
             // já existe. Prossegue para o push (força a branch) e judge em vez de descartar a task.
-            if (await this.hasExistingCommittedWork(task)) {
+            if (await this.hasExistingCommittedWork(task, slot)) {
                 this.recordEvent(task, 'git_committed', 'Nada novo a commitar — re-using trabalho já commitado na branch', { reused: true, reworkRescue: true });
             } else {
                 task.status = 'failed';
@@ -3111,7 +3115,7 @@ class TaskRunnerService {
                 return;
             }
         }
-        await git(['push', 'origin', branch, '--force'], { timeout: 60000, cwd: WT_ROOT });
+        await git(['push', 'origin', branch, '--force'], { timeout: 60000, cwd: slot.root });
         this.recordEvent(task, 'git_pushed', 'Push realizado. Criando PR...', { branch });
 
         // 5) PR (marca o resultado da verificação; NUNCA faz merge — portão humano)
@@ -3754,7 +3758,8 @@ Return ONLY a JSON:
         //    sob o lock (livre-de-corrida).
         let paths: { beforePath: string; afterPath: string; screenVerify?: Task['screenVerify'] };
         try {
-            paths = await this.captureVisualProofPngs(task);
+            const slot = slotManager.slot1;
+            paths = await this.captureVisualProofPngs(task, slot);
             if (paths.screenVerify) task.screenVerify = paths.screenVerify;
         } catch (e: any) {
             this.recordEvent(task, 'judge_error', `Prova visual: captura falhou — ${e.message}`, { error: e.message });
@@ -3789,17 +3794,17 @@ Return ONLY a JSON:
      * o vite) SEM precisar de um worktree isolado dedicado (isso fica p/ a fase autônoma). O vite
      * faz proxy de /api -> :3004 (backend principal), então não sobe backend por-preview.
      */
-    private async captureVisualProofPngs(task: Task): Promise<{ beforePath: string; afterPath: string; screenVerify?: Task['screenVerify'] }> {
+    private async captureVisualProofPngs(task: Task, slot: Slot): Promise<{ beforePath: string; afterPath: string; screenVerify?: Task['screenVerify'] }> {
         const issueNumber = task.issueNumber;
         const { frontendPort } = previewPortsFor(issueNumber);
         return this.withWorktreeLock(`visual-proof #${issueNumber}`, async () => {
             // derruba um preview persistente na mesma porta (evita conflito de porta com o efêmero)
             await this.stopPreview(issueNumber).catch(() => {});
-            await this.ensureWorktree(task.branch!);
-            await git(['checkout', task.branch!], { timeout: 15000, cwd: WT_ROOT });
+            await this.ensureWorktree(task.branch!, slot);
+            await git(['checkout', task.branch!], { timeout: 15000, cwd: slot.root });
 
             const child = spawn(GIT_BASH, ['-lc', `npx vite --port ${frontendPort} --host`], {
-                cwd: WT_ROOT,
+                cwd: slot.root,
                 detached: false,
                 stdio: ['ignore', 'pipe', 'pipe'],
                 windowsHide: true,
@@ -3815,7 +3820,7 @@ Return ONLY a JSON:
                     issueNumber, 'http://localhost:3003', `http://localhost:${frontendPort}`, { auth: true },
                 );
                 // Com o preview de pé: o robô verifica a(s) TELA(S) que ele MEXEU (dado mockado). (#1069)
-                const screenVerify = await this.verifyAffectedScreensForTask(task, frontendPort);
+                const screenVerify = await this.verifyAffectedScreensForTask(task, frontendPort, slot);
                 return { ...pngs, screenVerify };
             } finally {
                 if (child.pid) await killTree(child.pid).catch(() => {});
@@ -3828,9 +3833,9 @@ Return ONLY a JSON:
      * renderizando cada uma com dado MOCKADO contra o preview em `frontendPort` e checando se renderizam.
      * Advisory — grava o veredito e nunca lança. É o "robô verifica a tela que mexeu" (#1069).
      */
-    private async verifyAffectedScreensForTask(task: Task, frontendPort: number): Promise<Task['screenVerify']> {
+    private async verifyAffectedScreensForTask(task: Task, frontendPort: number, slot: Slot): Promise<Task['screenVerify']> {
         try {
-            const { stdout } = await git(['diff', '--name-only', 'origin/main...HEAD'], { timeout: 20000, cwd: WT_ROOT });
+            const { stdout } = await git(['diff', '--name-only', 'origin/main...HEAD'], { timeout: 20000, cwd: slot.root });
             const changed = stdout.split('\n').map((s) => s.trim()).filter(Boolean);
             const res = await screenVerifyService.verifyAffectedScreens(`http://localhost:${frontendPort}`, changed);
             const failSummary = res.screens.filter((s) => !s.ok).map((s) => `${s.route}: ${s.errors[0] || 'falha'}`).join('; ');
@@ -3943,7 +3948,7 @@ Return ONLY a JSON:
      * maior fonte de falha do robô ("sem mudanças", 61 casos). Fallback obrigatório: se o Claude CLI
      * estiver indisponível ou falhar, retorna false e o chamador aborta como antes (nunca trava por Claude).
      */
-    private async tryClaudeRescue(task: Task, issueData: any): Promise<boolean> {
+    private async tryClaudeRescue(task: Task, issueData: any, slot: Slot): Promise<boolean> {
         try {
             if (!(await claudeCliService.available())) {
                 this.emitLog(task.issueNumber, 'warn', 'Resgate Claude indisponível (CLI ausente) — abortando como antes.');
@@ -3953,8 +3958,8 @@ Return ONLY a JSON:
             this.emitLog(task.issueNumber, 'info', '🛟 Resgate Claude Code: assumindo o worktree para terminar a tarefa...');
             const base = this.buildSynthesisPrompt(task, issueData);
             const prompt = `[RESGATE] O coder automatizado anterior (opencode) NÃO gerou nenhuma mudança de código após várias tentativas. Você é o Claude Code, no worktree isolado do repositório. ASSUMA e IMPLEMENTE a tarefa editando os arquivos AGORA, sem pedir confirmação. Ao terminar, garanta que o typecheck do projeto passa.\n\n${base}`;
-            const r = await claudeCliService.runCode(prompt, WT_ROOT, { timeoutMs: OPENCODE_TIMEOUT_MS });
-            const changed = (await this.worktreeChanges()).length > 0;
+            const r = await claudeCliService.runCode(prompt, slot.root, { timeoutMs: OPENCODE_TIMEOUT_MS });
+            const changed = (await this.worktreeChanges(slot)).length > 0;
             this.recordEvent(task, changed ? 'synthesis_completed' : 'attempt_no_changes',
                 changed ? `🛟 Resgate Claude produziu mudanças (${r.numTurns} turns, $${r.costUsd?.toFixed(3)})` : 'Resgate Claude também não produziu mudanças',
                 { rescue: 'claude', cost: r.costUsd, changed, isError: r.isError });
@@ -4159,6 +4164,7 @@ Return ONLY a JSON:
     }
 
     private async tryAutoMergeInner(task: Task): Promise<void> {
+        const slot = slotManager.slot1;
         const config = this.getAutomationConfig();
         if (!config.autoMerge) {
             // #1154 P1 item 10: aprovado, mas auto-merge DESLIGADO → aguarda merge manual. Audível (antes: return mudo).
@@ -4223,19 +4229,19 @@ Return ONLY a JSON:
                     // worktree é lixo — descartar é seguro (estamos sob withWorktreeLock, nenhuma
                     // outra task usa o worktree agora). Cobre tanto o auto-merge fresco quanto o
                     // resumePendingMerges (que foi onde o #1435 estacionou).
-                    await git(['reset', '--hard', 'HEAD'], { timeout: 15000, cwd: WT_ROOT }).catch(() => { /* worktree pode estar sem HEAD válido; o checkout abaixo resolve */ });
-                    await git(['clean', '-fd'], { timeout: 15000, cwd: WT_ROOT }).catch(() => { /* best-effort */ });
-                    await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
+                    await git(['reset', '--hard', 'HEAD'], { timeout: 15000, cwd: slot.root }).catch(() => { /* worktree pode estar sem HEAD válido; o checkout abaixo resolve */ });
+                    await git(['clean', '-fd'], { timeout: 15000, cwd: slot.root }).catch(() => { /* best-effort */ });
+                    await git(['checkout', task.branch], { timeout: 15000, cwd: slot.root });
                     try {
-                        await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
+                        await git(['rebase', 'origin/main'], { timeout: 60000, cwd: slot.root });
                     } catch (rebaseErr: any) {
                         // #1154 P3 item 32: um rebase CONFLITADO deixa o worktree num rebase EM ANDAMENTO — o
                         // `reset --hard` do próximo setup NÃO desfaz isso, e a próxima task colide. Aborta antes
                         // de propagar (o chamador classifica: conflito real → revisão; transitório → retry).
-                        await git(['rebase', '--abort'], { timeout: 30000, cwd: WT_ROOT }).catch(() => { /* nada a abortar */ });
+                        await git(['rebase', '--abort'], { timeout: 30000, cwd: slot.root }).catch(() => { /* nada a abortar */ });
                         throw rebaseErr;
                     }
-                    await git(['push', 'origin', task.branch, '--force'], { timeout: 30000, cwd: WT_ROOT });
+                    await git(['push', 'origin', task.branch, '--force'], { timeout: 30000, cwd: slot.root });
                     this.recordEvent(task, 'task_started', 'Auto-merge: rebase OK');
                 }
 
@@ -4259,7 +4265,7 @@ Return ONLY a JSON:
                 }
 
                 this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
-                verify = await this.verify(task);
+                verify = await this.verify(slot, task);
             });
             if (!verify.ok) {
                 // #1154 P1 item 6: typecheck/build quebrou APÓS o rebase com a main (conflito semântico com
@@ -4736,8 +4742,9 @@ Return ONLY a JSON:
                 const { stdout } = await gh(['pr', 'diff', String(task.prNumber), '--repo', REPO], { timeout: 30000 });
                 return stdout;
             }
-            if (task.branch && fs.existsSync(WT_ROOT)) {
-                const { stdout } = await git(['diff', `origin/main...${task.branch}`], { timeout: 15000, cwd: WT_ROOT });
+            const slot = slotManager.slot1;
+            if (task.branch && fs.existsSync(slot.root)) {
+                const { stdout } = await git(['diff', `origin/main...${task.branch}`], { timeout: 15000, cwd: slot.root });
                 return stdout;
             }
             return 'Sem PR/branch ainda.';
@@ -4797,7 +4804,7 @@ Return ONLY a JSON:
         // alvo e, de brinde, protege os coders VIZINHOS vivos (cancelar #7 não mata o coder de #5).
         try {
             const gone = await this.sweepOrphanedOpencode(`cancel #${issueNumber}`, [], task, { excludeIssue: issueNumber });
-            this.cleanStaleLocks(gone);
+            this.cleanStaleLocks(slotManager.slot1, gone);
         } catch (e: any) {
             log.warn(`killTask #${issueNumber}: sweep/limpeza de locks falhou (não-fatal): ${e?.message || e}`);
         }
@@ -5061,14 +5068,15 @@ The first element should be the task to execute first.`;
 
         // Setup do worktree sob o lock: serializa com execução de tasks e auto-merge, evitando
         // que um reset/checkout concorrente corrompa o git do worktree compartilhado.
+        const slot = slotManager.slot1;
         await this.withWorktreeLock(`preview #${issueNumber}`, async () => {
-            await this.ensureWorktree(task.branch!);
-            await git(['checkout', task.branch!], { timeout: 15000, cwd: WT_ROOT });
+            await this.ensureWorktree(task.branch!, slot);
+            await git(['checkout', task.branch!], { timeout: 15000, cwd: slot.root });
         });
 
         const { frontendPort: previewPort, backendPort } = previewPortsFor(issueNumber);
 
-        const previewRoot = WT_ROOT;
+        const previewRoot = slot.root;
 
         const mainEnvPath = path.join(REPO_ROOT, 'backend', '.env');
         const previewEnvPath = path.join(previewRoot, 'backend', '.env');

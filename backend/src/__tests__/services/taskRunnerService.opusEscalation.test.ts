@@ -38,6 +38,10 @@ import { taskRunnerService } from '../../services/taskRunnerService';
 const svc = taskRunnerService as any;
 const today = () => new Date().toISOString().slice(0, 10);
 
+// Degrau-2 PR-2: tryOpusCoderRound recebe o `slot` por parâmetro (era a const global WT_ROOT).
+// Slot fake — o claudeCliService.runCode e worktreeChanges estão stubados, então o path não pesa.
+const fakeSlot = { id: 1, root: '/tmp/fake-slot', dataDir: null };
+
 // Config default que SATISFAZ todas as condições de escalada (cada teste desliga uma).
 const CFG_OK = {
     opusEscalationEnabled: true, judgeModel: 'opus', minMergeScore: 8, minApproveScore: 9,
@@ -160,7 +164,7 @@ describe('tryOpusCoderRound — modelo de ASSINATURA (marca só se rodou; sem-to
         claudeMock.runCode.mockResolvedValue({ isError: false, text: 'ok', costUsd: 1.5, numTurns: 4 });
         svc.worktreeChanges = vi.fn(async () => ['a.ts', 'b.ts']);
         const t = taskOk();
-        expect(await svc.tryOpusCoderRound(t, {})).toBe('changed');
+        expect(await svc.tryOpusCoderRound(t, {}, fakeSlot)).toBe('changed');
         expect(t.opusEscalated).toBe(true);
         expect(svc.opusEscalationsToday()).toBe(1);
         expect(svc.opusCostToday()).toBe(1.5);
@@ -172,7 +176,7 @@ describe('tryOpusCoderRound — modelo de ASSINATURA (marca só se rodou; sem-to
         claudeMock.runCode.mockResolvedValue({ isError: true, text: 'You have hit your monthly spend limit', costUsd: 0 });
         svc.worktreeChanges = vi.fn(async () => []);
         const t = taskOk();
-        expect(await svc.tryOpusCoderRound(t, {})).toBe('quota-blocked');
+        expect(await svc.tryOpusCoderRound(t, {}, fakeSlot)).toBe('quota-blocked');
         expect(t.opusEscalated).toBeFalsy();        // tentativa NÃO consumida (retenta depois)
         expect(svc.opusEscalationsToday()).toBe(0); // NÃO contou
         expect(svc.opusInCooldown()).toBe(true);    // cooldown aplicado
@@ -185,7 +189,7 @@ describe('tryOpusCoderRound — modelo de ASSINATURA (marca só se rodou; sem-to
         claudeMock.runCode.mockResolvedValue({ isError: true, text: 'rate limit exceeded', costUsd: 0 });
         svc.worktreeChanges = vi.fn(async () => []);
         const t = taskOk();
-        await svc.tryOpusCoderRound(t, {});
+        await svc.tryOpusCoderRound(t, {}, fakeSlot);
         expect(svc.shouldEscalateToOpus(t)).toBe(false); // em cooldown
         // simula renovação: cooldown expirou
         svc.store.opusDay.cooldownUntil = new Date(Date.now() - 1000).toISOString();
@@ -196,7 +200,7 @@ describe('tryOpusCoderRound — modelo de ASSINATURA (marca só se rodou; sem-to
         claudeMock.available.mockResolvedValue(true);
         claudeMock.runCode.mockRejectedValue(new Error('opencode timeout'));
         const t = taskOk();
-        expect(await svc.tryOpusCoderRound(t, {})).toBe('no-changes');
+        expect(await svc.tryOpusCoderRound(t, {}, fakeSlot)).toBe('no-changes');
         expect(t.opusEscalated).toBe(true);         // consumida (não re-escala)
         expect(svc.opusEscalationsToday()).toBe(1);
         expect(t.opusInFlightAt).toBeUndefined();
@@ -205,7 +209,7 @@ describe('tryOpusCoderRound — modelo de ASSINATURA (marca só se rodou; sem-to
     it('CLI indisponível → "unavailable": NÃO marca (nada rodou)', async () => {
         claudeMock.available.mockResolvedValue(false);
         const t = taskOk();
-        expect(await svc.tryOpusCoderRound(t, {})).toBe('unavailable');
+        expect(await svc.tryOpusCoderRound(t, {}, fakeSlot)).toBe('unavailable');
         expect(t.opusEscalated).toBeFalsy();
         expect(svc.opusEscalationsToday()).toBe(0);
     });
@@ -215,7 +219,7 @@ describe('tryOpusCoderRound — modelo de ASSINATURA (marca só se rodou; sem-to
         claudeMock.runCode.mockResolvedValue({ isError: true, text: 'compilation failed in foo.ts', costUsd: 0.5 });
         svc.worktreeChanges = vi.fn(async () => []);
         const t = taskOk();
-        expect(await svc.tryOpusCoderRound(t, {})).toBe('no-changes');
+        expect(await svc.tryOpusCoderRound(t, {}, fakeSlot)).toBe('no-changes');
         expect(t.opusEscalated).toBe(true);     // rodou de fato → consome
         expect(svc.opusInCooldown()).toBe(false); // não é cota → sem cooldown
     });

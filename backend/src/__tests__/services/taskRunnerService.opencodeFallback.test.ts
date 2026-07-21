@@ -26,6 +26,11 @@ import { taskRunnerService, shouldFallbackOpencode } from '../../services/taskRu
 
 const svc = taskRunnerService as any;
 
+// Degrau-2 PR-2: runOpencodeIsolated recebe o `slot` por parâmetro (era a const global WT_ROOT).
+// Slot fake — o cwd (slot.root) vai como 2º arg do runOpencode mockado; as asserções são sobre
+// o comando ([0]), então o path do slot não afeta o que é verificado.
+const fakeSlot = { id: 1, root: '/tmp/fake-slot', dataDir: null };
+
 function makeTask(num: number) {
     svc.store.tasks[num] = {
         issueNumber: num, title: `Task ${num}`, body: '', labels: ['opencode-task'],
@@ -48,7 +53,7 @@ describe('opencode fallback GLM→MiniMax (diretriz 2026-07-11)', () => {
             .mockRejectedValueOnce(new Error('opencode exited code=1: HTTP 429 too many requests'))
             .mockResolvedValueOnce('ok do fallback');
 
-        const out = await svc.runOpencodeIsolated(task);
+        const out = await svc.runOpencodeIsolated(task, fakeSlot);
 
         expect(out).toBe('ok do fallback');
         expect(runOpencode).toHaveBeenCalledTimes(2);
@@ -65,7 +70,7 @@ describe('opencode fallback GLM→MiniMax (diretriz 2026-07-11)', () => {
             .mockRejectedValueOnce(new Error('opencode timeout (1800s) — últimas linhas do output:\n...'))
             .mockResolvedValueOnce('ok do fallback pós-timeout');
 
-        const out = await svc.runOpencodeIsolated(task);
+        const out = await svc.runOpencodeIsolated(task, fakeSlot);
 
         expect(out).toBe('ok do fallback pós-timeout');
         expect(runOpencode).toHaveBeenCalledTimes(2);
@@ -78,7 +83,7 @@ describe('opencode fallback GLM→MiniMax (diretriz 2026-07-11)', () => {
         const task = makeTask(801);
         vi.mocked(runOpencode).mockRejectedValueOnce(new Error('opencode exited code=1: SyntaxError em foo.ts'));
 
-        await expect(svc.runOpencodeIsolated(task)).rejects.toThrow(/SyntaxError/);
+        await expect(svc.runOpencodeIsolated(task, fakeSlot)).rejects.toThrow(/SyntaxError/);
         expect(runOpencode).toHaveBeenCalledTimes(1);
     });
 
@@ -87,7 +92,7 @@ describe('opencode fallback GLM→MiniMax (diretriz 2026-07-11)', () => {
         task.killRequested = true;
         vi.mocked(runOpencode).mockRejectedValueOnce(new Error('HTTP 429 too many requests'));
 
-        await expect(svc.runOpencodeIsolated(task)).rejects.toThrow(/429/);
+        await expect(svc.runOpencodeIsolated(task, fakeSlot)).rejects.toThrow(/429/);
         expect(runOpencode).toHaveBeenCalledTimes(1);
     });
 
@@ -95,7 +100,7 @@ describe('opencode fallback GLM→MiniMax (diretriz 2026-07-11)', () => {
         const task = makeTask(803);
         vi.mocked(runOpencode).mockResolvedValueOnce('ok primário');
 
-        const out = await svc.runOpencodeIsolated(task);
+        const out = await svc.runOpencodeIsolated(task, fakeSlot);
         expect(out).toBe('ok primário');
         expect(runOpencode).toHaveBeenCalledTimes(1);
     });
@@ -106,7 +111,7 @@ describe('opencode fallback GLM→MiniMax (diretriz 2026-07-11)', () => {
             .mockRejectedValueOnce(new Error('rate limit'))
             .mockRejectedValueOnce(new Error('insufficient balance (1008)'));
 
-        await expect(svc.runOpencodeIsolated(task)).rejects.toThrow(/1008/);
+        await expect(svc.runOpencodeIsolated(task, fakeSlot)).rejects.toThrow(/1008/);
         expect(runOpencode).toHaveBeenCalledTimes(2);
     });
 });
@@ -140,7 +145,7 @@ describe('#coder-model-ui: precedência ui>env>default + anti-injeção no ponto
         const task = makeTask(810);
         svc.getAutomationConfig = vi.fn(() => ({ coderModel: 'zai-coding-plan/glm-5.2', coderFallbackModel: 'minimax/MiniMax-M3', dailyRoundBudget: 200 }));
         vi.mocked(runOpencode).mockResolvedValueOnce('ok');
-        await svc.runOpencodeIsolated(task);
+        await svc.runOpencodeIsolated(task, fakeSlot);
         expect(vi.mocked(runOpencode).mock.calls[0][0] as string).toContain('--model zai-coding-plan/glm-5.2');
     });
 
@@ -148,7 +153,7 @@ describe('#coder-model-ui: precedência ui>env>default + anti-injeção no ponto
         const task = makeTask(811);
         svc.getAutomationConfig = vi.fn(() => ({ coderModel: '', coderFallbackModel: '', dailyRoundBudget: 200 }));
         vi.mocked(runOpencode).mockResolvedValueOnce('ok');
-        await svc.runOpencodeIsolated(task);
+        await svc.runOpencodeIsolated(task, fakeSlot);
         expect(vi.mocked(runOpencode).mock.calls[0][0] as string).not.toContain('--model'); // env vazio no teste
     });
 
@@ -156,7 +161,7 @@ describe('#coder-model-ui: precedência ui>env>default + anti-injeção no ponto
         const task = makeTask(812);
         svc.getAutomationConfig = vi.fn(() => ({ coderModel: 'x; touch PWNED', coderFallbackModel: '', dailyRoundBudget: 200 }));
         vi.mocked(runOpencode).mockResolvedValueOnce('ok');
-        await svc.runOpencodeIsolated(task);
+        await svc.runOpencodeIsolated(task, fakeSlot);
         const cmd = vi.mocked(runOpencode).mock.calls[0][0] as string;
         expect(cmd).not.toContain('touch');
         expect(cmd).not.toContain(';');
