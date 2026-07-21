@@ -89,17 +89,10 @@ export function InterSettingsTab({ onSave }: InterSettingsTabProps) {
         setTestResult(null);
         try {
             const result = await testConnection();
-            if (result.success) {
-                setTestResult({
-                    success: true,
-                    message: `Conexão OK! Saldo disponível: ${formatCurrency(result.saldo?.disponivel ?? 0)}`,
-                });
-            } else {
-                setTestResult({
-                    success: false,
-                    message: result.error || 'Falha na conexão',
-                });
-            }
+            setTestResult({
+                success: true,
+                message: `Conexão OK! Saldo disponível: ${formatCurrency(result.saldo.disponivel)}`,
+            });
         } catch (error: any) {
             setTestResult({
                 success: false,

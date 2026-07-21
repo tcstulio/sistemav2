@@ -213,7 +213,8 @@ describe('bankingRoutes', () => {
                 .send({ accountId: 'acc1', lineId: 'line1', reconciled: false });
 
             expect(res.status).toBe(200);
-            expect(res.body.success).toBe(false);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.success).toBe(false);
         });
 
         it('returns 400 when accountId is missing', async () => {
@@ -417,6 +418,17 @@ describe('bankingRoutes', () => {
             expect(mockBankingService.categorizeTransactions).not.toHaveBeenCalled();
         });
 
+        it('rejeita com 401 quando userApiKey é inválido', async () => {
+            const res = await request(app)
+                .post('/api/banking/analyze/categorize')
+                .set('userApiKey', 'invalida')
+                .send({});
+
+            expect(res.status).toBe(401);
+            expect(res.body.error.code).toBe('UNAUTHORIZED');
+            expect(mockBankingService.categorizeTransactions).not.toHaveBeenCalled();
+        });
+
         it('aceita (200) quando DOLAPIKEY tem formato válido', async () => {
             const res = await request(app)
                 .post('/api/banking/analyze/categorize')
@@ -450,7 +462,7 @@ describe('bankingRoutes', () => {
             expect(res.body).toHaveProperty('data');
         });
 
-        it('resposta de sucesso de /analyze/anomalies inclui count e data', async () => {
+        it('resposta de sucesso de /analyze/anomalies inclui data e total em meta', async () => {
             const res = await request(app)
                 .post('/api/banking/analyze/anomalies')
                 .send({ transactions: [{ date: '2024-01-01', amount: 100, description: 'X' }] });
@@ -458,12 +470,10 @@ describe('bankingRoutes', () => {
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(res.body).toHaveProperty('data');
-            expect(res.body).toHaveProperty('count');
+            expect(res.body).toHaveProperty('meta.total');
         });
 
-        it('resposta de sucesso de /reconcile/toggle mantém { success, message } (legado)', async () => {
-            // Toggle preserva o shape antigo `{ success: boolean, message: string }`
-            // para não quebrar consumidores existentes do frontend (#630).
+        it('resposta de sucesso de /reconcile/toggle usa o envelope padronizado', async () => {
             mockDolibarrService.reconcileBankLine.mockResolvedValue(true);
             const res = await request(app)
                 .post('/api/banking/reconcile/toggle')
@@ -472,7 +482,8 @@ describe('bankingRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.message).toMatch(/sucesso/i);
+            expect(res.body.data.success).toBe(true);
+            expect(res.body.data.message).toMatch(/sucesso/i);
         });
     });
 });

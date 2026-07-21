@@ -115,20 +115,19 @@ export const UserApiKeyHeaderSchema = z.string()
 
 export function validateUserApiKey() {
     return (req: Request, res: Response, next: NextFunction) => {
-        const raw = (req.headers['dolapikey']
-            || req.headers['DOLAPIKEY']
-            || req.query.DOLAPIKEY
-            || req.query.dolapikey) as string | undefined;
-
-        const authHeader = req.headers['authorization'];
-        const fromBearer = authHeader && authHeader.startsWith('Bearer ')
+        const raw = req.headers['userapikey']
+            ?? req.headers['x-user-api-key']
+            ?? req.headers['dolapikey']
+            ?? req.query.userApiKey
+            ?? req.query.DOLAPIKEY
+            ?? req.query.dolapikey;
+        const authHeader = req.headers.authorization;
+        const fromBearer = authHeader?.startsWith('Bearer ')
             ? authHeader.substring(7)
             : undefined;
+        const candidate = raw ?? fromBearer;
 
-        const candidate = (raw || fromBearer || '').toString();
-
-        if (!candidate) {
-            // Ausente: deixa passar (sessão/cookie já autenticou).
+        if (candidate === undefined || candidate === '') {
             return next();
         }
 
@@ -137,6 +136,7 @@ export function validateUserApiKey() {
             return fail(res, 'UNAUTHORIZED', 'userApiKey inválido (formato/alfanumérico/tamanho)', 401);
         }
 
+        req.headers['dolapikey'] = parsed.data;
         return next();
     };
 }
@@ -159,6 +159,9 @@ export const PagamentoBoletoSchema = z.object({
     dataPagamento: z.string()
         .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD')
         .optional(),
+    dataVencimento: z.string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD')
+        .optional(),
     descricao: z.string().max(500).optional()
 });
 
@@ -175,12 +178,26 @@ export const PagamentoBoletoSchema = z.object({
  * futuro, abrimos exceção pontual, não no schema raiz.
  */
 export const PixCobrancaSchema = z.object({
+    calendario: z.object({
+        expiracao: z.number().int().positive().optional(),
+        dataDeVencimento: z.string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD')
+            .optional(),
+        validadeAposVencimento: z.number().int().min(0).optional()
+    }).optional(),
     valor: z.object({
         original: z.string()
-            .regex(/^\d+\.\d{2}$/, 'Valor deve estar no formato 0.00')
+            .regex(/^\d+\.\d{2}$/, 'Valor deve estar no formato 0.00'),
+        modalidadeAlteracao: z.number().int().optional()
     }),
     chave: z.string()
-        .min(1, 'Chave Pix é obrigatória'),
+        .min(1, 'Chave Pix é obrigatória')
+        .max(200),
+    txid: z.string()
+        .min(26, 'TxId deve ter no mínimo 26 caracteres')
+        .max(35, 'TxId deve ter no máximo 35 caracteres')
+        .regex(/^[a-zA-Z0-9]+$/, 'TxId deve conter apenas caracteres alfanuméricos')
+        .optional(),
     devedor: z.object({
         cpf: z.string()
             .length(11, 'CPF deve ter 11 dígitos')
@@ -205,52 +222,63 @@ export const PixCobrancaSchema = z.object({
  * Pix payment schema
  */
 export const PixPagamentoSchema = z.object({
-    valor: z.number()
-        .positive('Valor deve ser positivo')
-        .max(10000000, 'Valor máximo: R$ 10.000.000,00'),
+    valor: z.string()
+        .regex(/^\d+\.\d{2}$/, 'Valor deve estar no formato 0.00')
+        .refine(valor => Number(valor) > 0, 'Valor deve ser positivo')
+        .refine(valor => Number(valor) <= 10000000, 'Valor máximo: R$ 10.000.000,00'),
     descricao: z.string().max(140).optional(),
-    destinatario: z.object({
-        tipo: z.enum(['CHAVE', 'DADOS_BANCARIOS']),
-        chave: z.string().optional(),
-        banco: z.string().optional(),
-        agencia: z.string().optional(),
-        conta: z.string().optional(),
-        tipoConta: z.enum(['CORRENTE', 'POUPANCA']).optional(),
-        cpfCnpj: z.string().optional(),
-        nome: z.string().optional()
-    }).refine(data => {
-        if (data.tipo === 'CHAVE') return !!data.chave;
-        if (data.tipo === 'DADOS_BANCARIOS') {
-            return data.banco && data.agencia && data.conta && data.cpfCnpj;
-        }
-        return false;
-    }, {
-        message: 'Dados do destinatário incompletos'
-    })
+    destinatario: z.discriminatedUnion('tipo', [
+        z.object({
+            tipo: z.literal('CHAVE'),
+            chave: z.string().min(1, 'Chave Pix é obrigatória').max(200)
+        }),
+        z.object({
+            tipo: z.literal('DADOS_BANCARIOS'),
+            contaCorrente: z.object({
+                banco: z.string().min(1),
+                agencia: z.string().min(1),
+                conta: z.string().min(1),
+                tipoConta: z.enum(['CACC', 'SLRY', 'SVGS'])
+            }),
+            pessoa: z.object({
+                cpf: z.string().length(11).regex(/^\d+$/).optional(),
+                cnpj: z.string().length(14).regex(/^\d+$/).optional(),
+                nome: z.string().min(1).max(200)
+            }).refine(data => data.cpf || data.cnpj, {
+                message: 'CPF ou CNPJ é obrigatório'
+            })
+        })
+    ])
 });
 
 /**
  * Boleto creation schema
  */
 export const BoletoEmissaoSchema = z.object({
-    seuNumero: z.string().max(15),
+    seuNumero: z.string().min(1).max(15),
     valorNominal: z.number()
         .positive('Valor deve ser positivo')
         .max(10000000, 'Valor máximo: R$ 10.000.000,00'),
+    valorAbatimento: z.number().min(0).max(10000000).optional(),
     dataVencimento: z.string()
         .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
     numDiasAgenda: z.number().int().min(0).max(60).optional(),
     pagador: z.object({
         cpfCnpj: z.string()
             .min(11, 'CPF/CNPJ inválido')
-            .max(14, 'CPF/CNPJ inválido'),
+            .max(14, 'CPF/CNPJ inválido')
+            .regex(/^\d+$/, 'CPF/CNPJ deve conter apenas números'),
         tipoPessoa: z.enum(['FISICA', 'JURIDICA']),
         nome: z.string().min(1).max(100),
-        endereco: z.string().max(90).optional(),
-        cidade: z.string().max(60).optional(),
-        uf: z.string().length(2).optional(),
-        cep: z.string().length(8).regex(/^\d+$/).optional(),
+        endereco: z.string().min(1).max(90),
+        numero: z.string().max(20).optional(),
+        complemento: z.string().max(30).optional(),
+        bairro: z.string().min(1).max(60),
+        cidade: z.string().min(1).max(60),
+        uf: z.string().length(2),
+        cep: z.string().length(8).regex(/^\d+$/),
         email: z.string().email().optional(),
+        ddd: z.string().max(3).optional(),
         telefone: z.string().max(15).optional()
     }),
     mensagem: z.object({
@@ -260,20 +288,20 @@ export const BoletoEmissaoSchema = z.object({
         linha4: z.string().max(78).optional(),
         linha5: z.string().max(78).optional()
     }).optional(),
-    desconto: z.object({
-        codigoDesconto: z.enum(['NAOTEMDESCONTO', 'VALORFIXODATAINFORMADA', 'PERCENTUALDATAINFORMADA']),
+    desconto1: z.object({
+        codigo: z.enum(['NAOTEMDESCONTO', 'VALORFIXODATAINFORMADA', 'PERCENTUALDATAINFORMADA']),
         data: z.string().optional(),
         taxa: z.number().optional(),
         valor: z.number().optional()
     }).optional(),
     multa: z.object({
-        codigoMulta: z.enum(['NAOTEMMULTA', 'VALORFIXO', 'PERCENTUAL']),
+        codigo: z.enum(['NAOTEMMULTA', 'VALORFIXO', 'PERCENTUAL']),
         data: z.string().optional(),
         taxa: z.number().optional(),
         valor: z.number().optional()
     }).optional(),
     mora: z.object({
-        codigoMora: z.enum(['VALORDIA', 'TAXAMENSAL', 'ISENTO']),
+        codigo: z.enum(['VALORDIA', 'TAXAMENSAL', 'ISENTO']),
         data: z.string().optional(),
         taxa: z.number().optional(),
         valor: z.number().optional()
@@ -324,18 +352,26 @@ export const PixWebhookSchema = z.object({
         txid: z.string().optional(),
         valor: z.string(),
         horario: z.string(),
+        pagador: z.object({
+            cpf: z.string().optional(),
+            cnpj: z.string().optional(),
+            nome: z.string()
+        }).optional(),
         infoPagador: z.string().optional(),
         devolucoes: z.array(z.any()).optional()
-    })).optional()
+    }).passthrough())
 }).passthrough();
 
 /**
  * Boleto webhook payload schema — mesma observação do Pix.
  */
 export const BoletoWebhookSchema = z.object({
+    nossoNumero: z.string().min(1),
+    seuNumero: z.string().min(1),
+    situacao: z.enum(['EMABERTO', 'PAGO', 'CANCELADO', 'EXPIRADO', 'VENCIDO', 'BAIXADO']),
+    valorPago: z.number().optional(),
+    dataPagamento: z.string().optional(),
     codigoSolicitacao: z.string().optional(),
-    seuNumero: z.string().optional(),
-    situacao: z.enum(['EMABERTO', 'PAGO', 'CANCELADO', 'EXPIRADO', 'VENCIDO']).optional(),
     dataSituacao: z.string().optional(),
     valorNominal: z.number().optional(),
     valorTotalRecebimento: z.number().optional()
@@ -478,6 +514,9 @@ export const BalanceCalculateSchema = z.object({
 export const BankSyncSchema = CategorizeTransactionsSchema;
 export const BankTransferSchema = ReconciliationToggleSchema;
 export const BankConfigSchema = CSVImportSchema;
+export const BankStatementImportSchema = z.object({}).strict().optional().default({});
+export const InterConnectionTestSchema = z.object({}).strict().optional().default({});
+export const CertificateUploadSchema = z.object({}).strict().optional().default({});
 
 // =============================================
 // Inter Banking Schemas (issue #1542)
@@ -486,12 +525,12 @@ export const BankConfigSchema = CSVImportSchema;
 /**
  * Body do /pix/cobranca-vencimento — txid + dados completos da cobrança.
  */
-export const PixCobrancaVencimentoSchema = z.object({
+export const PixCobrancaVencimentoSchema = PixCobrancaSchema.extend({
     txid: z.string()
         .min(26, 'TxId deve ter no mínimo 26 caracteres')
         .max(35, 'TxId deve ter no máximo 35 caracteres')
-        .regex(/^[a-zA-Z0-9]+$/, 'TxId deve conter apenas caracteres alfanuméricos'),
-}).passthrough();
+        .regex(/^[a-zA-Z0-9]+$/, 'TxId deve conter apenas caracteres alfanuméricos')
+});
 
 /**
  * Body do /boleto/:nossoNumero/cancelar — motivo do cancelamento.
@@ -543,53 +582,7 @@ export const SyncSchema = z.object({
  * `BoletoEmissaoSchema` (sem `.passthrough()`), preservando o contrato
  * tipado `{ seuNumero, valorNominal, dataVencimento, pagador, ... }`.
  */
-export const BoletoSchema = z.object({
-    seuNumero: z.string().max(15),
-    valorNominal: z.number()
-        .positive('Valor deve ser positivo')
-        .max(10000000, 'Valor máximo: R$ 10.000.000,00'),
-    dataVencimento: z.string()
-        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
-    numDiasAgenda: z.number().int().min(0).max(60).optional(),
-    pagador: z.object({
-        cpfCnpj: z.string()
-            .min(11, 'CPF/CNPJ inválido')
-            .max(14, 'CPF/CNPJ inválido'),
-        tipoPessoa: z.enum(['FISICA', 'JURIDICA']),
-        nome: z.string().min(1).max(100),
-        endereco: z.string().max(90).optional(),
-        cidade: z.string().max(60).optional(),
-        uf: z.string().length(2).optional(),
-        cep: z.string().length(8).regex(/^\d+$/).optional(),
-        email: z.string().email().optional(),
-        telefone: z.string().max(15).optional()
-    }),
-    mensagem: z.object({
-        linha1: z.string().max(78).optional(),
-        linha2: z.string().max(78).optional(),
-        linha3: z.string().max(78).optional(),
-        linha4: z.string().max(78).optional(),
-        linha5: z.string().max(78).optional()
-    }).optional(),
-    desconto: z.object({
-        codigoDesconto: z.enum(['NAOTEMDESCONTO', 'VALORFIXODATAINFORMADA', 'PERCENTUALDATAINFORMADA']),
-        data: z.string().optional(),
-        taxa: z.number().optional(),
-        valor: z.number().optional()
-    }).optional(),
-    multa: z.object({
-        codigoMulta: z.enum(['NAOTEMMULTA', 'VALORFIXO', 'PERCENTUAL']),
-        data: z.string().optional(),
-        taxa: z.number().optional(),
-        valor: z.number().optional()
-    }).optional(),
-    mora: z.object({
-        codigoMora: z.enum(['VALORDIA', 'TAXAMENSAL', 'ISENTO']),
-        data: z.string().optional(),
-        taxa: z.number().optional(),
-        valor: z.number().optional()
-    }).optional()
-});
+export const BoletoSchema = BoletoEmissaoSchema;
 
 /**
  * `PixSchema` — schema genérico para operações Pix (issue #1542).
@@ -599,43 +592,11 @@ export const BoletoSchema = z.object({
  * continuam obrigatórios quando fornecidos (sem `.optional()`/`passthrough()`
  * no schema raiz, alinhado com a correção do `PixCobrancaSchema`).
  */
-export const PixSchema = z.object({
-    valor: z.union([
-        z.number().positive().max(10000000),
-        z.object({
-            original: z.string().regex(/^\d+\.\d{2}$/, 'Valor deve estar no formato 0.00')
-        })
-    ]),
-    chave: z.string().min(1, 'Chave Pix é obrigatória').max(200).optional(),
-    txid: z.string()
-        .min(26, 'TxId deve ter no mínimo 26 caracteres')
-        .max(35, 'TxId deve ter no máximo 35 caracteres')
-        .regex(/^[a-zA-Z0-9]+$/, 'TxId deve conter apenas caracteres alfanuméricos')
-        .optional(),
-    destinatario: z.object({
-        tipo: z.enum(['CHAVE', 'DADOS_BANCARIOS']).optional(),
-        chave: z.string().optional(),
-        banco: z.string().optional(),
-        agencia: z.string().optional(),
-        conta: z.string().optional(),
-        tipoConta: z.enum(['CORRENTE', 'POUPANCA']).optional(),
-        cpfCnpj: z.string().optional(),
-        nome: z.string().optional()
-    }).optional(),
-    descricao: z.string().max(140).optional(),
-    solicitacaoPagador: z.string().max(140).optional(),
-    devedor: z.object({
-        cpf: z.string()
-            .length(11, 'CPF deve ter 11 dígitos')
-            .regex(/^\d+$/, 'CPF deve conter apenas números')
-            .optional(),
-        cnpj: z.string()
-            .length(14, 'CNPJ deve ter 14 dígitos')
-            .regex(/^\d+$/, 'CNPJ deve conter apenas números')
-            .optional(),
-        nome: z.string().min(1).max(200)
-    }).optional()
-});
+export const PixSchema = z.union([
+    PixCobrancaVencimentoSchema,
+    PixCobrancaSchema,
+    PixPagamentoSchema
+]);
 
 export default {
     validateBody,
@@ -665,6 +626,9 @@ export default {
     BankSyncSchema,
     BankTransferSchema,
     BankConfigSchema,
+    BankStatementImportSchema,
+    InterConnectionTestSchema,
+    CertificateUploadSchema,
     PixCobrancaVencimentoSchema,
     BoletoCancelSchema,
     WebhookConfigSchema,

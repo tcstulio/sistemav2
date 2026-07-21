@@ -82,38 +82,38 @@ export interface PixRecebido {
 const api = {
     // Status
     getStatus: async (): Promise<InterStatus> => {
-        const { data } = await axios.get(`${API_BASE}/status`);
-        return data;
+        const response = await axios.get(`${API_BASE}/status`);
+        return response.data.data;
     },
 
-    testConnection: async (): Promise<{ success: boolean; error?: string; saldo?: SaldoInter }> => {
+    testConnection: async (): Promise<{ message: string; saldo: SaldoInter }> => {
         const { data } = await axios.post(`${API_BASE}/test`);
-        return data;
+        return data.data;
     },
 
-    uploadCertificates: async (files: File[]): Promise<{ success: boolean; uploaded: string[] }> => {
+    uploadCertificates: async (files: File[]): Promise<{ uploaded: string[]; message: string }> => {
         const formData = new FormData();
         files.forEach(file => formData.append('files', file));
         const { data } = await axios.post(`${API_BASE}/certificates`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
-        return data;
+        return data.data;
     },
 
     // Banking
     getSaldo: async (): Promise<SaldoInter> => {
         const { data } = await axios.get(`${API_BASE}/saldo`);
-        return data;
+        return data.data;
     },
 
     getExtrato: async (dataInicio: string, dataFim: string): Promise<{ transacoes: TransacaoInter[] }> => {
         const { data } = await axios.get(`${API_BASE}/extrato`, { params: { dataInicio, dataFim } });
-        return data;
+        return data.data;
     },
 
     pagarBoleto: async (params: { codBarraLinhaDigitavel: string; valorPagar: number }) => {
         const { data } = await axios.post(`${API_BASE}/pagamento/boleto`, params);
-        return data;
+        return data.data;
     },
 
     // Pix
@@ -121,20 +121,20 @@ const api = {
         valor: { original: string };
         chave: string;
         solicitacaoPagador?: string;
-        devedor?: { cpf?: string; cnpj?: string; nome: string };
+        devedor: { cpf?: string; cnpj?: string; nome: string };
     }): Promise<PixCobranca> => {
         const { data } = await axios.post(`${API_BASE}/pix/cobranca`, params);
-        return data;
+        return data.data;
     },
 
     consultarPixCobranca: async (txid: string): Promise<PixCobranca> => {
         const { data } = await axios.get(`${API_BASE}/pix/cobranca/${txid}`);
-        return data;
+        return data.data;
     },
 
     listarPixRecebidos: async (inicio: string, fim: string): Promise<{ pix: PixRecebido[] }> => {
         const { data } = await axios.get(`${API_BASE}/pix/recebidos`, { params: { inicio, fim } });
-        return data;
+        return data.data;
     },
 
     enviarPix: async (params: {
@@ -146,7 +146,7 @@ const api = {
         descricao?: string;
     }) => {
         const { data } = await axios.post(`${API_BASE}/pix/enviar`, params);
-        return data;
+        return data.data;
     },
 
     // Boletos
@@ -166,7 +166,7 @@ const api = {
         };
     }): Promise<BoletoResponse> => {
         const { data } = await axios.post(`${API_BASE}/boleto`, params);
-        return data;
+        return data.data;
     },
 
     listarBoletos: async (params?: {
@@ -175,12 +175,12 @@ const api = {
         situacao?: string;
     }) => {
         const { data } = await axios.get(`${API_BASE}/boleto`, { params });
-        return data;
+        return data.data;
     },
 
     consultarBoleto: async (nossoNumero: string): Promise<BoletoResponse> => {
         const { data } = await axios.get(`${API_BASE}/boleto/${nossoNumero}`);
-        return data;
+        return data.data;
     },
 
     downloadBoletoPdf: async (nossoNumero: string) => {
@@ -192,13 +192,13 @@ const api = {
 
     cancelarBoleto: async (nossoNumero: string, motivo: string) => {
         const { data } = await axios.post(`${API_BASE}/boleto/${nossoNumero}/cancelar`, { motivo });
-        return data;
+        return data.data;
     },
 
     // Utils
     generateTxId: async (): Promise<{ txid: string }> => {
         const { data } = await axios.get(`${API_BASE}/txid/generate`);
-        return data;
+        return data.data;
     },
 };
 

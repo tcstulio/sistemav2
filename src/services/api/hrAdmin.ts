@@ -193,8 +193,8 @@ export const reconcileBankLine = async (
         const errText = await response.text().catch(() => 'unknown error');
         throw new Error(`Falha ao persistir conciliação: ${errText}`);
     }
-    const data = await response.json();
-    return Boolean(data.success);
+    const result = await response.json();
+    return Boolean(result.data?.success);
 };
 
 export const createBankAccount = async (config: DolibarrConfig, data: Record<string, unknown>) => {

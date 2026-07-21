@@ -103,7 +103,7 @@ describe('interBankingRoutes', () => {
         it('returns 200 with valid boleto webhook', async () => {
             const res = await request(app)
                 .post('/api/inter/webhook/boleto')
-                .send({ nossoNumero: '123', situacao: 'PAGO' });
+                .send({ nossoNumero: '123', seuNumero: 'pedido-123', situacao: 'PAGO' });
 
             expect(res.status).toBe(200);
         });
@@ -239,11 +239,34 @@ describe('interBankingRoutes', () => {
             expect(mockBankingService.processInterWebhook).toHaveBeenCalled();
         });
 
+        it('executa timingSafeEqual para x-signature em NODE_ENV=development', async () => {
+            const timingSafeEqual = vi.spyOn(crypto, 'timingSafeEqual');
+            const res = await request(app)
+                .post('/api/inter/webhook/pix')
+                .set('x-signature', '0'.repeat(64))
+                .send({ pix: [] });
+
+            expect(res.status).toBe(401);
+            expect(timingSafeEqual).toHaveBeenCalledOnce();
+        });
+
+        it('valida o body somente depois de aceitar a assinatura', async () => {
+            const body = {};
+            const res = await request(app)
+                .post('/api/inter/webhook/pix')
+                .set('x-signature', sign(body))
+                .send(body);
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockBankingService.processInterWebhook).not.toHaveBeenCalled();
+        });
+
         it('rejeita (401) webhook do Boleto com x-webhook-signature inválido, mesmo em dev', async () => {
             const res = await request(app)
                 .post('/api/inter/webhook/boleto')
                 .set('x-webhook-signature', 'deadbeef')
-                .send({ nossoNumero: '123', situacao: 'PAGO' });
+                .send({ nossoNumero: '123', seuNumero: 'pedido-123', situacao: 'PAGO' });
 
             expect(res.status).toBe(401);
             expect(res.body).toMatchObject({
@@ -253,7 +276,7 @@ describe('interBankingRoutes', () => {
         });
 
         it('aceita (200) webhook do Boleto com x-webhook-signature válido em dev', async () => {
-            const body = { nossoNumero: '123', situacao: 'PAGO' };
+            const body = { nossoNumero: '123', seuNumero: 'pedido-123', situacao: 'PAGO' };
             const res = await request(app)
                 .post('/api/inter/webhook/boleto')
                 .set('x-webhook-signature', sign(body))
@@ -427,10 +450,18 @@ describe('interBankingRoutes', () => {
             const validTxid = 'a'.repeat(26);
             const res = await request(app)
                 .post('/api/inter/pix/cobranca-vencimento')
-                .send({ txid: validTxid });
+                .send({
+                    txid: validTxid,
+                    valor: { original: '100.00' },
+                    chave: 'teste@email.com',
+                    devedor: { cpf: '12345678901', nome: 'Joao da Silva' },
+                });
 
             expect(res.status).toBe(200);
-            expect(mockInterApiService.criarPixCobrancaVencimento).toHaveBeenCalled();
+            expect(mockInterApiService.criarPixCobrancaVencimento).toHaveBeenCalledWith(
+                validTxid,
+                expect.objectContaining({ chave: 'teste@email.com' })
+            );
         });
 
         it('POST /pix/enviar rejeita valor ausente com 400', async () => {
@@ -448,7 +479,7 @@ describe('interBankingRoutes', () => {
             const res = await request(app)
                 .post('/api/inter/pix/enviar')
                 .send({
-                    valor: 100.5,
+                    valor: '100.50',
                     destinatario: { tipo: 'CHAVE', chave: 'teste@email.com' },
                 });
 
@@ -483,6 +514,11 @@ describe('interBankingRoutes', () => {
                         cpfCnpj: '12345678901',
                         tipoPessoa: 'FISICA',
                         nome: 'Joao',
+                        endereco: 'Rua 1',
+                        bairro: 'Centro',
+                        cidade: 'Sao Paulo',
+                        uf: 'SP',
+                        cep: '12345678',
                     },
                 });
 

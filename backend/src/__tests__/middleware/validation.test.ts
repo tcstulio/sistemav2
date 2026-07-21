@@ -13,6 +13,9 @@ import {
     TxIdParamSchema,
     PixWebhookSchema,
     BoletoWebhookSchema,
+    PixCobrancaVencimentoSchema,
+    BoletoSchema,
+    PixSchema,
 } from '../../middleware/validation';
 
 function mockRes() {
@@ -311,127 +314,80 @@ describe('PixCobrancaSchema', () => {
 });
 
 describe('PixPagamentoSchema', () => {
-    it('accepts valid CHAVE type with chave field', () => {
-        const data = {
-            valor: 100,
-            destinatario: { tipo: 'CHAVE', chave: 'test@pix.com' },
-        };
-        expect(() => PixPagamentoSchema.parse(data)).not.toThrow();
-    });
-
-    it('accepts valid DADOS_BANCARIOS type', () => {
-        const data = {
-            valor: 100,
-            destinatario: {
-                tipo: 'DADOS_BANCARIOS',
+    const validChave = {
+        valor: '100.00',
+        destinatario: { tipo: 'CHAVE' as const, chave: 'test@pix.com' },
+    };
+    const validDadosBancarios = {
+        valor: '100.00',
+        destinatario: {
+            tipo: 'DADOS_BANCARIOS' as const,
+            contaCorrente: {
                 banco: '001',
                 agencia: '1234',
                 conta: '56789',
-                cpfCnpj: '12345678901',
+                tipoConta: 'CACC' as const,
             },
-        };
-        expect(() => PixPagamentoSchema.parse(data)).not.toThrow();
+            pessoa: { cpf: '12345678901', nome: 'Joao' },
+        },
+    };
+
+    it('accepts valid CHAVE type with chave field', () => {
+        expect(() => PixPagamentoSchema.parse(validChave)).not.toThrow();
+    });
+
+    it('accepts valid DADOS_BANCARIOS type', () => {
+        expect(() => PixPagamentoSchema.parse(validDadosBancarios)).not.toThrow();
     });
 
     it('accepts with optional fields', () => {
-        const data = {
-            valor: 100,
-            descricao: 'pagamento',
-            destinatario: {
-                tipo: 'CHAVE',
-                chave: 'test@pix.com',
-                tipoConta: 'CORRENTE',
-                nome: 'Joao',
-            },
-        };
-        expect(() => PixPagamentoSchema.parse(data)).not.toThrow();
+        expect(() => PixPagamentoSchema.parse({ ...validChave, descricao: 'pagamento' })).not.toThrow();
     });
 
     it('rejects negative valor', () => {
-        const data = { valor: -1, destinatario: { tipo: 'CHAVE', chave: 'key' } };
-        expect(() => PixPagamentoSchema.parse(data)).toThrow();
+        expect(() => PixPagamentoSchema.parse({ ...validChave, valor: '-1.00' })).toThrow();
     });
 
     it('rejects valor exceeding max', () => {
-        const data = { valor: 20000000, destinatario: { tipo: 'CHAVE', chave: 'key' } };
-        expect(() => PixPagamentoSchema.parse(data)).toThrow();
+        expect(() => PixPagamentoSchema.parse({ ...validChave, valor: '20000000.00' })).toThrow();
     });
 
     it('rejects CHAVE type without chave field', () => {
-        const data = { valor: 100, destinatario: { tipo: 'CHAVE' } };
+        const data = { valor: '100.00', destinatario: { tipo: 'CHAVE' } };
         expect(() => PixPagamentoSchema.parse(data)).toThrow();
     });
 
     it('rejects DADOS_BANCARIOS without banco', () => {
-        const data = {
-            valor: 100,
-            destinatario: {
-                tipo: 'DADOS_BANCARIOS',
-                agencia: '1234',
-                conta: '56789',
-                cpfCnpj: '12345678901',
-            },
-        };
+        const data = structuredClone(validDadosBancarios) as any;
+        delete data.destinatario.contaCorrente.banco;
         expect(() => PixPagamentoSchema.parse(data)).toThrow();
     });
 
     it('rejects DADOS_BANCARIOS without agencia', () => {
-        const data = {
-            valor: 100,
-            destinatario: {
-                tipo: 'DADOS_BANCARIOS',
-                banco: '001',
-                conta: '56789',
-                cpfCnpj: '12345678901',
-            },
-        };
+        const data = structuredClone(validDadosBancarios) as any;
+        delete data.destinatario.contaCorrente.agencia;
         expect(() => PixPagamentoSchema.parse(data)).toThrow();
     });
 
     it('rejects DADOS_BANCARIOS without conta', () => {
-        const data = {
-            valor: 100,
-            destinatario: {
-                tipo: 'DADOS_BANCARIOS',
-                banco: '001',
-                agencia: '1234',
-                cpfCnpj: '12345678901',
-            },
-        };
+        const data = structuredClone(validDadosBancarios) as any;
+        delete data.destinatario.contaCorrente.conta;
         expect(() => PixPagamentoSchema.parse(data)).toThrow();
     });
 
     it('rejects DADOS_BANCARIOS without cpfCnpj', () => {
-        const data = {
-            valor: 100,
-            destinatario: {
-                tipo: 'DADOS_BANCARIOS',
-                banco: '001',
-                agencia: '1234',
-                conta: '56789',
-            },
-        };
+        const data = structuredClone(validDadosBancarios) as any;
+        delete data.destinatario.pessoa.cpf;
         expect(() => PixPagamentoSchema.parse(data)).toThrow();
     });
 
     it('rejects descricao over 140 chars', () => {
-        const data = {
-            valor: 100,
-            descricao: 'a'.repeat(141),
-            destinatario: { tipo: 'CHAVE', chave: 'key' },
-        };
-        expect(() => PixPagamentoSchema.parse(data)).toThrow();
+        expect(() => PixPagamentoSchema.parse({ ...validChave, descricao: 'a'.repeat(141) })).toThrow();
     });
 
     it('refine returns false for unknown tipo (direct call)', () => {
-        const destSchema = (PixPagamentoSchema as any).shape.destinatario;
-        const checks = destSchema._def.checks || [];
-        const refineCheck = checks.find((c: any) => c.def?.fn);
-        if (refineCheck) {
-            const fn = refineCheck.def.fn;
-            const result = fn({ tipo: 'UNKNOWN', chave: 'test' });
-            expect(result).toBe(false);
-        }
+        const data = { valor: '100.00', destinatario: { tipo: 'UNKNOWN', chave: 'test' } };
+        expect(() => PixPagamentoSchema.parse(data)).toThrow();
     });
 });
 
@@ -444,6 +400,11 @@ describe('BoletoEmissaoSchema', () => {
             cpfCnpj: '12345678901',
             tipoPessoa: 'FISICA' as const,
             nome: 'Joao',
+            endereco: 'Rua 1',
+            bairro: 'Centro',
+            cidade: 'Sao Paulo',
+            uf: 'SP',
+            cep: '12345678',
         },
     };
 
@@ -465,9 +426,9 @@ describe('BoletoEmissaoSchema', () => {
                 telefone: '11999999999',
             },
             mensagem: { linha1: 'msg1' },
-            desconto: { codigoDesconto: 'NAOTEMDESCONTO' as const },
-            multa: { codigoMulta: 'NAOTEMMULTA' as const },
-            mora: { codigoMora: 'ISENTO' as const },
+            desconto1: { codigo: 'NAOTEMDESCONTO' as const },
+            multa: { codigo: 'NAOTEMMULTA' as const },
+            mora: { codigo: 'ISENTO' as const },
         };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
@@ -514,47 +475,47 @@ describe('BoletoEmissaoSchema', () => {
     });
 
     it('accepts desconto VALORFIXODATAINFORMADA', () => {
-        const data = { ...valid, desconto: { codigoDesconto: 'VALORFIXODATAINFORMADA' as const, valor: 10 } };
+        const data = { ...valid, desconto1: { codigo: 'VALORFIXODATAINFORMADA' as const, valor: 10 } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 
     it('accepts desconto PERCENTUALDATAINFORMADA', () => {
-        const data = { ...valid, desconto: { codigoDesconto: 'PERCENTUALDATAINFORMADA' as const, taxa: 5 } };
+        const data = { ...valid, desconto1: { codigo: 'PERCENTUALDATAINFORMADA' as const, taxa: 5 } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 
     it('accepts multa VALORFIXO', () => {
-        const data = { ...valid, multa: { codigoMulta: 'VALORFIXO' as const, valor: 10 } };
+        const data = { ...valid, multa: { codigo: 'VALORFIXO' as const, valor: 10 } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 
     it('accepts multa PERCENTUAL', () => {
-        const data = { ...valid, multa: { codigoMulta: 'PERCENTUAL' as const, taxa: 2 } };
+        const data = { ...valid, multa: { codigo: 'PERCENTUAL' as const, taxa: 2 } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 
     it('accepts mora VALORDIA', () => {
-        const data = { ...valid, mora: { codigoMora: 'VALORDIA' as const, valor: 1 } };
+        const data = { ...valid, mora: { codigo: 'VALORDIA' as const, valor: 1 } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 
     it('accepts mora TAXAMENSAL', () => {
-        const data = { ...valid, mora: { codigoMora: 'TAXAMENSAL' as const, taxa: 1 } };
+        const data = { ...valid, mora: { codigo: 'TAXAMENSAL' as const, taxa: 1 } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 
     it('accepts desconto with data', () => {
-        const data = { ...valid, desconto: { codigoDesconto: 'NAOTEMDESCONTO' as const, data: '2024-05-01' } };
+        const data = { ...valid, desconto1: { codigo: 'NAOTEMDESCONTO' as const, data: '2024-05-01' } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 
     it('accepts multa with data', () => {
-        const data = { ...valid, multa: { codigoMulta: 'NAOTEMMULTA' as const, data: '2024-05-01' } };
+        const data = { ...valid, multa: { codigo: 'NAOTEMMULTA' as const, data: '2024-05-01' } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 
     it('accepts mora with data', () => {
-        const data = { ...valid, mora: { codigoMora: 'ISENTO' as const, data: '2024-05-01' } };
+        const data = { ...valid, mora: { codigo: 'ISENTO' as const, data: '2024-05-01' } };
         expect(() => BoletoEmissaoSchema.parse(data)).not.toThrow();
     });
 });
@@ -639,8 +600,8 @@ describe('PixWebhookSchema', () => {
         expect(() => PixWebhookSchema.parse(data)).not.toThrow();
     });
 
-    it('accepts payload without pix array (optional)', () => {
-        expect(() => PixWebhookSchema.parse({})).not.toThrow();
+    it('rejects payload without pix array', () => {
+        expect(() => PixWebhookSchema.parse({})).toThrow();
     });
 
     it('accepts pix entry without optional fields', () => {
@@ -670,30 +631,77 @@ describe('PixWebhookSchema', () => {
 });
 
 describe('BoletoWebhookSchema', () => {
-    it('accepts empty object (all optional)', () => {
-        expect(() => BoletoWebhookSchema.parse({})).not.toThrow();
+    const valid = {
+        nossoNumero: 'nosso-1',
+        seuNumero: 'seu-1',
+        situacao: 'PAGO' as const,
+    };
+
+    it('rejects empty object', () => {
+        expect(() => BoletoWebhookSchema.parse({})).toThrow();
     });
 
     it('accepts valid situacao values', () => {
-        const situacoes = ['EMABERTO', 'PAGO', 'CANCELADO', 'EXPIRADO', 'VENCIDO'];
-        situacoes.forEach((s) => {
-            expect(() => BoletoWebhookSchema.parse({ situacao: s })).not.toThrow();
+        const situacoes = ['EMABERTO', 'PAGO', 'CANCELADO', 'EXPIRADO', 'VENCIDO', 'BAIXADO'];
+        situacoes.forEach((situacao) => {
+            expect(() => BoletoWebhookSchema.parse({ ...valid, situacao })).not.toThrow();
         });
     });
 
     it('rejects invalid situacao', () => {
-        expect(() => BoletoWebhookSchema.parse({ situacao: 'INVALID' })).toThrow();
+        expect(() => BoletoWebhookSchema.parse({ ...valid, situacao: 'INVALID' })).toThrow();
     });
 
     it('accepts all optional fields', () => {
         const data = {
+            ...valid,
             codigoSolicitacao: 'solicitacao-1',
-            seuNumero: 'seu-1',
-            situacao: 'PAGO',
             dataSituacao: '2024-01-01',
             valorNominal: 100,
             valorTotalRecebimento: 100,
+            valorPago: 100,
+            dataPagamento: '2024-01-01',
         };
         expect(() => BoletoWebhookSchema.parse(data)).not.toThrow();
+    });
+});
+
+describe('schemas nomeados da issue #1542', () => {
+    const cobranca = {
+        valor: { original: '100.00' },
+        chave: 'test@pix.com',
+        devedor: { cpf: '12345678901', nome: 'Joao' },
+    };
+
+    it('PixCobrancaVencimentoSchema exige os dados completos da cobrança', () => {
+        expect(() => PixCobrancaVencimentoSchema.parse({ txid: 'a'.repeat(26) })).toThrow();
+        expect(() => PixCobrancaVencimentoSchema.parse({ ...cobranca, txid: 'a'.repeat(26) })).not.toThrow();
+    });
+
+    it('BoletoSchema reutiliza o contrato validado de emissão', () => {
+        const boleto = {
+            seuNumero: '123',
+            valorNominal: 100,
+            dataVencimento: '2024-06-01',
+            pagador: {
+                cpfCnpj: '12345678901',
+                tipoPessoa: 'FISICA',
+                nome: 'Joao',
+                endereco: 'Rua 1',
+                bairro: 'Centro',
+                cidade: 'Sao Paulo',
+                uf: 'SP',
+                cep: '12345678',
+            },
+        };
+        expect(() => BoletoSchema.parse(boleto)).not.toThrow();
+    });
+
+    it('PixSchema aceita cobrança e pagamento válidos', () => {
+        expect(() => PixSchema.parse(cobranca)).not.toThrow();
+        expect(() => PixSchema.parse({
+            valor: '100.00',
+            destinatario: { tipo: 'CHAVE', chave: 'test@pix.com' },
+        })).not.toThrow();
     });
 });

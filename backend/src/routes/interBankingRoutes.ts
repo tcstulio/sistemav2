@@ -47,11 +47,10 @@ import {
     BoletoCancelSchema,
     WebhookConfigSchema,
     SyncSchema,
-    // BoletoSchema e PixSchema são exportados pela issue #1542 para uso
-    // genérico em endpoints de boleto/Pix. Os endpoints atuais usam schemas
-    // mais específicos (BoletoEmissaoSchema, PixCobrancaSchema, etc.) que
-    // carregam validações mais estritas — os genéricos ficam disponíveis
-    // via validation.ts para novos endpoints ou consumidores externos.
+    PixWebhookSchema,
+    BoletoWebhookSchema,
+    InterConnectionTestSchema,
+    CertificateUploadSchema,
 } from '../middleware/validation';
 import { asyncHandler } from '../middleware/errorHandler';
 import { ok as apiOk, fail as apiFail } from '../utils/apiResponse';
@@ -97,8 +96,6 @@ const certUpload = multer({
  * Pure helper — não toca em req/res; quem decide se chama é o handler.
  */
 function verifyWebhookSignature(payload: string, signature: string | undefined, secret: string): boolean {
-    if (!signature) return false;
-
     const expectedSignature = crypto
         .createHmac('sha256', secret)
         .update(payload)
@@ -106,7 +103,7 @@ function verifyWebhookSignature(payload: string, signature: string | undefined, 
 
     try {
         return crypto.timingSafeEqual(
-            Buffer.from(signature),
+            Buffer.from(signature || ''),
             Buffer.from(expectedSignature)
         );
     } catch {
@@ -125,46 +122,49 @@ function verifyWebhookSignature(payload: string, signature: string | undefined, 
  * Retorna `true` se a request pode prosseguir; em caso de rejeição,
  * já respondeu a request e retorna `false`.
  */
-function enforceWebhookAuth(req: Request, res: Response, label: string): boolean {
-    const signature = req.headers['x-webhook-signature'] as string | undefined;
+function enforceWebhookAuth(label: string) {
+    return (req: Request, res: Response, next: NextFunction) => {
+        const rawSignature = req.headers['x-signature'] ?? req.headers['x-webhook-signature'];
+        const signature = Array.isArray(rawSignature) ? rawSignature[0] : rawSignature;
 
-    if (signature) {
-        // Regra #1542: verificação é INCONDICIONAL quando o header existe.
-        if (!config.interWebhookSecret) {
-            log.error(`${label} webhook rejeitado: INTER_WEBHOOK_SECRET não configurado (mas x-signature foi enviado)`);
-            apiFail(
-                res,
-                'WEBHOOK_NOT_CONFIGURED',
-                'Webhook signature verification not configured',
-                503
+        if (rawSignature !== undefined) {
+            const configuredSecret = config.interWebhookSecret;
+            const verified = verifyWebhookSignature(
+                JSON.stringify(req.body),
+                signature,
+                configuredSecret || 'unconfigured-webhook-secret'
             );
-            return false;
-        }
-        const payload = JSON.stringify(req.body);
-        if (!verifyWebhookSignature(payload, signature, config.interWebhookSecret)) {
-            log.warn(`Invalid signature for ${label} webhook`);
-            apiFail(res, 'INVALID_SIGNATURE', 'Invalid webhook signature', 401);
-            return false;
-        }
-        return true;
-    }
 
-    // Sem header de assinatura.
-    if (!config.interWebhookSecret) {
-        if (process.env.NODE_ENV === 'production') {
-            log.error(`${label} webhook rejeitado: INTER_WEBHOOK_SECRET não configurado em produção`);
-            apiFail(res, 'WEBHOOK_NOT_CONFIGURED', 'Webhook signature verification not configured', 503);
-            return false;
-        }
-        // dev: compat — segue sem verificação
-        return true;
-    }
+            if (!configuredSecret) {
+                log.error(`${label} webhook rejeitado: INTER_WEBHOOK_SECRET não configurado`);
+                return apiFail(
+                    res,
+                    'WEBHOOK_NOT_CONFIGURED',
+                    'Webhook signature verification not configured',
+                    503
+                );
+            }
 
-    // Secret configurado mas header ausente → 401 (não aceitamos webhook "anônimo"
-    // quando temos como verificar; falha fechada).
-    log.warn(`${label} webhook sem x-webhook-signature (secret configurado)`);
-    apiFail(res, 'MISSING_SIGNATURE', 'Missing webhook signature', 401);
-    return false;
+            if (!verified) {
+                log.warn(`Invalid signature for ${label} webhook`);
+                return apiFail(res, 'INVALID_SIGNATURE', 'Invalid webhook signature', 401);
+            }
+
+            return next();
+        }
+
+        if (!config.interWebhookSecret) {
+            if (process.env.NODE_ENV === 'production') {
+                log.error(`${label} webhook rejeitado: INTER_WEBHOOK_SECRET não configurado em produção`);
+                return apiFail(res, 'WEBHOOK_NOT_CONFIGURED', 'Webhook signature verification not configured', 503);
+            }
+
+            return next();
+        }
+
+        log.warn(`${label} webhook sem assinatura (secret configurado)`);
+        return apiFail(res, 'MISSING_SIGNATURE', 'Missing webhook signature', 401);
+    };
 }
 
 // ===== PUBLIC Webhook Receiver Endpoints (no auth - bank callbacks) =====
@@ -172,17 +172,12 @@ function enforceWebhookAuth(req: Request, res: Response, label: string): boolean
 /**
  * POST /api/inter/webhook/pix
  * Receive Pix webhooks from Inter.
- *
- * ATENÇÃO: NÃO usar validateBody aqui — a verificação de assinatura HMAC
- * é feita sobre `JSON.stringify(req.body)`, e o Zod com passthrough/strict
- * reordena campos, quebrando a assinatura (#1542). O payload do banco é
- * confiado por construção (já passou pela verificação de assinatura).
  */
 router.post(
     '/webhook/pix',
+    enforceWebhookAuth('Pix'),
+    validateBody(PixWebhookSchema),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
-        if (!enforceWebhookAuth(req, res, 'Pix')) return;
-
         const webhookPayload: PixWebhookPayload = req.body;
 
         log.debug('Received Pix webhook', webhookPayload);
@@ -202,13 +197,12 @@ router.post(
 /**
  * POST /api/inter/webhook/boleto
  * Receive Boleto webhooks from Inter.
- * Mesma observação do Pix webhook acima quanto a validateBody.
  */
 router.post(
     '/webhook/boleto',
+    enforceWebhookAuth('Boleto'),
+    validateBody(BoletoWebhookSchema),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
-        if (!enforceWebhookAuth(req, res, 'Boleto')) return;
-
         const webhookPayload: BoletoWebhookPayload = req.body;
 
         log.debug('Received Boleto webhook', webhookPayload);
@@ -250,6 +244,7 @@ router.get(
  */
 router.post(
     '/test',
+    validateBody(InterConnectionTestSchema),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const initialized = await interApiService.initialize();
         if (!initialized) {
@@ -273,6 +268,7 @@ router.post(
 router.post(
     '/certificates',
     certUpload.array('files', 2),
+    validateBody(CertificateUploadSchema),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const files = req.files as Express.Multer.File[];
 

@@ -59,7 +59,7 @@ describe('reconcileBankLine — #630 persistence', () => {
     });
 
     it('calls POST /api/banking/reconcile/toggle with correct body when reconciling', async () => {
-        mockFetch.mockResolvedValue(makeResponse({ success: true }));
+        mockFetch.mockResolvedValue(makeResponse({ success: true, data: { success: true } }));
 
         const result = await reconcileBankLine(MOCK_CONFIG, 'acc1', 'line1', true);
 
@@ -74,7 +74,7 @@ describe('reconcileBankLine — #630 persistence', () => {
     });
 
     it('calls with reconciled=false when un-reconciling', async () => {
-        mockFetch.mockResolvedValue(makeResponse({ success: true }));
+        mockFetch.mockResolvedValue(makeResponse({ success: true, data: { success: true } }));
 
         await reconcileBankLine(MOCK_CONFIG, 'acc1', 'line1', false);
 
@@ -84,7 +84,7 @@ describe('reconcileBankLine — #630 persistence', () => {
     });
 
     it('sends DOLAPIKEY header with config.apiKey', async () => {
-        mockFetch.mockResolvedValue(makeResponse({ success: true }));
+        mockFetch.mockResolvedValue(makeResponse({ success: true, data: { success: true } }));
 
         await reconcileBankLine(MOCK_CONFIG, 'acc1', 'line1', true);
 
@@ -93,7 +93,7 @@ describe('reconcileBankLine — #630 persistence', () => {
     });
 
     it('returns false when backend returns success:false', async () => {
-        mockFetch.mockResolvedValue(makeResponse({ success: false }));
+        mockFetch.mockResolvedValue(makeResponse({ success: true, data: { success: false } }));
         const result = await reconcileBankLine(MOCK_CONFIG, 'acc1', 'line1', true);
         expect(result).toBe(false);
     });

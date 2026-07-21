@@ -9,6 +9,7 @@
     "dev:backend": "cd backend && npm run dev",
     "dev:all": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "typecheck": "tsc --noEmit && npm --prefix backend run typecheck",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "generate:types": "npx swagger2openapi -p -o openapi_3.json swagger_full.json && npx openapi-typescript ./openapi_3.json -o ./src/types/dolibarr.actions.d.ts",

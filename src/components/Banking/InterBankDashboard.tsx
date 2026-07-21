@@ -81,7 +81,13 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
     const [emitirBoletoDialog, setEmitirBoletoDialog] = useState(false);
 
     // Forms
-    const [receberPixForm, setReceberPixForm] = useState({ valor: '', chave: '', descricao: '' });
+    const [receberPixForm, setReceberPixForm] = useState({
+        valor: '',
+        chave: '',
+        descricao: '',
+        devedorNome: '',
+        devedorDocumento: '',
+    });
     const [enviarPixForm, setEnviarPixForm] = useState({
         valor: '',
         chave: '',
@@ -153,13 +159,24 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
     // Handlers
     const handleCriarPixCobranca = async () => {
         try {
+            const documento = receberPixForm.devedorDocumento.replace(/\D/g, '');
             await criarPixCobranca({
                 valor: { original: receberPixForm.valor },
                 chave: receberPixForm.chave,
                 solicitacaoPagador: receberPixForm.descricao,
+                devedor: {
+                    ...(documento.length > 11 ? { cnpj: documento } : { cpf: documento }),
+                    nome: receberPixForm.devedorNome,
+                },
             });
             setReceberPixDialog(false);
-            setReceberPixForm({ valor: '', chave: '', descricao: '' });
+            setReceberPixForm({
+                valor: '',
+                chave: '',
+                descricao: '',
+                devedorNome: '',
+                devedorDocumento: '',
+            });
         } catch (error) {
             log.error("Failed to create Pix charge", error);
         }
@@ -582,6 +599,24 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                 />
                             </div>
                             <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome do pagador</label>
+                                <input
+                                    type="text"
+                                    value={receberPixForm.devedorNome}
+                                    onChange={(e) => setReceberPixForm(prev => ({ ...prev, devedorNome: e.target.value }))}
+                                    className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CPF/CNPJ do pagador</label>
+                                <input
+                                    type="text"
+                                    value={receberPixForm.devedorDocumento}
+                                    onChange={(e) => setReceberPixForm(prev => ({ ...prev, devedorDocumento: e.target.value }))}
+                                    className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white"
+                                />
+                            </div>
+                            <div>
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
                                 <textarea
                                     value={receberPixForm.descricao}
@@ -600,7 +635,13 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                             </button>
                             <button
                                 onClick={handleCriarPixCobranca}
-                                disabled={criarPixLoading || !receberPixForm.valor}
+                                disabled={
+                                    criarPixLoading
+                                    || !receberPixForm.valor
+                                    || !receberPixForm.chave
+                                    || !receberPixForm.devedorNome
+                                    || !receberPixForm.devedorDocumento
+                                }
                                 className="inline-flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
                             >
                                 {criarPixLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}

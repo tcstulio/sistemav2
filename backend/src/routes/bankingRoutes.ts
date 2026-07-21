@@ -34,6 +34,7 @@ import {
     ReconciliationSaveSchema,
     ReconciliationToggleSchema,
     BalanceCalculateSchema,
+    BankStatementImportSchema,
 } from '../middleware/validation';
 
 const log = createLogger('Banking');
@@ -41,6 +42,7 @@ const router = Router();
 
 // Protect all banking routes
 router.use(requireDolibarrLogin);
+router.use(validateUserApiKey());
 
 // Configure multer for file uploads with enhanced validation
 const upload = multer({
@@ -68,7 +70,7 @@ function toDateOrNow(value: any): Date {
 router.post(
     '/import/ofx',
     upload.single('file'),
-    validateUserApiKey(),
+    validateBody(BankStatementImportSchema),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         if (!req.file) {
             return apiFail(res, 'NO_FILE', 'Nenhum arquivo enviado', 400);
@@ -106,7 +108,6 @@ router.post(
     '/import/csv',
     upload.single('file'),
     validateBody(CSVImportSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         if (!req.file) {
             return apiFail(res, 'NO_FILE', 'Nenhum arquivo enviado', 400);
@@ -171,7 +172,7 @@ router.post(
 router.post(
     '/import/auto',
     upload.single('file'),
-    validateUserApiKey(),
+    validateBody(BankStatementImportSchema),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         if (!req.file) {
             return apiFail(res, 'NO_FILE', 'Nenhum arquivo enviado', 400);
@@ -196,7 +197,6 @@ router.post(
 router.post(
     '/analyze/categorize',
     validateBody(CategorizeTransactionsSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { transactions } = req.body;
 
@@ -215,7 +215,6 @@ router.post(
 router.post(
     '/analyze/anomalies',
     validateBody(AnomalyDetectionSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { transactions } = req.body;
 
@@ -226,11 +225,7 @@ router.post(
 
         const anomalies = await bankingService.detectAnomalies(parsedTransactions);
 
-        return res.status(200).json({
-            success: true,
-            count: anomalies.length,
-            data: anomalies
-        });
+        return apiOk(res, anomalies, { total: anomalies.length });
     })
 );
 
@@ -240,7 +235,6 @@ router.post(
 router.post(
     '/insights/cash-flow',
     validateBody(CashFlowInsightsSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { accounts, transactions, period } = req.body;
 
@@ -263,7 +257,6 @@ router.post(
 router.post(
     '/insights/chart-data',
     validateBody(ChartDataSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { transactions, groupBy } = req.body;
 
@@ -284,17 +277,12 @@ router.post(
 router.post(
     '/reconcile/suggest',
     validateBody(ReconciliationSuggestSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { bankLines, invoices } = req.body;
 
         const suggestions = await bankingService.suggestReconciliation(bankLines, invoices);
 
-        return res.status(200).json({
-            success: true,
-            count: suggestions.length,
-            data: suggestions
-        });
+        return apiOk(res, suggestions, { total: suggestions.length });
     })
 );
 
@@ -302,14 +290,13 @@ router.post(
 router.post(
     '/reconcile/save',
     validateBody(ReconciliationSaveSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { lineId, invoiceId } = req.body;
         const userApiKey = req.headers['dolapikey'] as string;
 
         const success = await bankingService.saveReconciliation(lineId, invoiceId, userApiKey);
 
-        return res.status(200).json({
+        return apiOk(res, {
             success,
             message: success ? 'Conciliação salva com sucesso' : 'Falha ao salvar conciliação'
         });
@@ -320,14 +307,13 @@ router.post(
 router.post(
     '/reconcile/toggle',
     validateBody(ReconciliationToggleSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { accountId, lineId, reconciled } = req.body;
         const userApiKey = req.headers['dolapikey'] as string;
 
         const success = await dolibarrService.reconcileBankLine(accountId, lineId, reconciled, userApiKey);
 
-        return res.status(200).json({
+        return apiOk(res, {
             success,
             message: success ? 'Conciliação atualizada com sucesso' : 'Falha ao atualizar conciliação'
         });
@@ -338,7 +324,6 @@ router.post(
 router.post(
     '/balance/calculate',
     validateBody(BalanceCalculateSchema),
-    validateUserApiKey(),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { initialBalance, transactions } = req.body;
 
