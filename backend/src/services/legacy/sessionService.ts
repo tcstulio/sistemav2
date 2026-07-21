@@ -42,8 +42,11 @@ export class SessionService {
     private initializationLocks: Map<string, boolean> = new Map();
     private sessionStartTimes: Map<string, number> = new Map();
 
-    // #wa-autorecover: sessões que o usuário desconectou DE PROPÓSITO (LOGOUT) — o sweep NÃO as ressuscita.
-    private loggedOut: Set<string> = new Set();
+    // #wa-autorecover: o discriminador de "usuário removeu de propósito" é a EXISTÊNCIA da pasta de
+    // auth — deleteSession (rota DELETE /sessions) apaga a pasta; o sweep então pula (não ressuscita).
+    // NÃO usamos o evento 'disconnected(LOGOUT)' p/ isso: ele dispara em desconexões TRANSITÓRIAS do
+    // WhatsApp com auth ainda VÁLIDA (visto em 21/07: sessão marcada "logout" reconectou a WORKING no
+    // start manual) — marcar loggedOut ali travava a recuperação de uma sessão perfeitamente boa.
     private healthTimer: NodeJS.Timeout | null = null;
 
     private constructor() {
@@ -113,7 +116,7 @@ export class SessionService {
                 const m = dirent.name.match(/^session-(.+)$/);
                 if (!m) continue;
                 const sessionId = m[1];
-                if (this.loggedOut.has(sessionId)) continue;           // logout deliberado — não mexe
+                // A pasta de auth existir = a sessão deve estar de pé (deleteSession apaga a pasta).
                 if (this.initializationLocks.get(sessionId)) continue; // já iniciando/reconectando
                 if (this.getStatus(sessionId) !== 'STOPPED') continue; // SCAN_QR/WORKING/STARTING = ok
                 log.warn(`[${sessionId}] health monitor: STOPPED com auth salva — auto-recuperando (regenera QR/reconecta).`);
@@ -152,8 +155,6 @@ export class SessionService {
     }
 
     async startSession(sessionId: string) {
-        // #wa-autorecover: pedir para iniciar (usuário ou auto) limpa a marca de logout deliberado.
-        this.loggedOut.delete(sessionId);
         if (this.initializationLocks.get(sessionId)) {
             log.info(`Session ${sessionId} is already initializing. Skipping.`);
             return { status: 'STARTING' };
@@ -444,11 +445,11 @@ export class SessionService {
                         this.startSession(sessionId);
                     }
                 }, 5000);
-            } else {
-                // #wa-autorecover: logout/sessão deletada = intenção do usuário → o sweep NÃO ressuscita.
-                this.loggedOut.add(sessionId);
-                log.info(`[${sessionId}] Desconexão deliberada (${reason}) — auto-recover desligado até novo start manual.`);
             }
+            // #wa-autorecover: NÃO marcamos "loggedOut" aqui — um LOGOUT do whatsapp-web.js NÃO significa
+            // que o usuário quer a sessão fora (a auth costuma seguir válida). Se o usuário REMOVER a
+            // sessão (rota DELETE), a pasta de auth some e o sweep pula naturalmente. Aqui, se a auth
+            // persistir em disco, o sweep vai reerguer (reconecta OU mostra QR p/ re-scan).
         });
 
         client.on('message_create', async msg => {
