@@ -2281,7 +2281,12 @@ class TaskRunnerService {
             const sha = shaOut.trim().slice(0, 12);
             const cacheFile = path.join(BASELINE_CACHE_DIR, `${sha}.json`);
             try {
-                const c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                let c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                // #baseline-fix: caches ANTIGOS foram gravados double-encoded (JSON.stringify + o
+                // JSON.stringify interno do atomicWriteSync) → JSON.parse devolve uma STRING, não o
+                // objeto. Sem isto, c.errors era undefined → baseline VAZIO no cache-hit → gate delta
+                // estrito demais (erro pré-existente vira "novo"). Re-parseia se veio string (legado).
+                if (typeof c === 'string') c = JSON.parse(c);
                 task.baselineErrors = c.errors || []; task.baselineGlobals = c.globals || []; task.baselineSha = sha;
                 log.info(`captureBaseline #${task.issueNumber}: cache do main ${sha} (${task.baselineErrors!.length} pos, ${task.baselineGlobals!.length} glob)`);
                 return;
@@ -2292,7 +2297,9 @@ class TaskRunnerService {
                 return;
             }
             task.baselineErrors = serializeErrors(pos); task.baselineGlobals = globals; task.baselineSha = sha;
-            try { fs.mkdirSync(BASELINE_CACHE_DIR, { recursive: true }); atomicWriteSync(cacheFile, JSON.stringify({ errors: task.baselineErrors, globals })); } catch { /* ignore */ }
+            // #baseline-fix: passa o OBJETO — o atomicWriteSync já faz JSON.stringify. Antes passávamos
+            // JSON.stringify(...) → double-encode → cache-hit lia baseline vazio (ver o read acima).
+            try { fs.mkdirSync(BASELINE_CACHE_DIR, { recursive: true }); atomicWriteSync(cacheFile, { errors: task.baselineErrors, globals }); } catch { /* ignore */ }
             log.info(`captureBaseline #${task.issueNumber}: ${task.baselineErrors.length} pos + ${globals.length} glob no main ${sha} (cacheado)`);
         } catch (e: any) {
             this.recordEvent(task, 'error', `captureBaseline falhou (${String(e?.message).slice(0, 120)}) — gate usa só o filtro por arquivo-tocado`);
