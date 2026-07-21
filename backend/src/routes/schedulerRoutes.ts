@@ -1,28 +1,19 @@
 /**
- * Scheduler Routes (#1567)
+ * Scheduler Routes (issue #1567)
  *
- * Endpoints REST do scheduler de mensagens. Cada rota é protegida por:
- *   1. `requireDolibarrLogin` (autenticação) — montado no `router.use`.
- *   2. `validateBody`/`validateParams`/`validateQuery` (Zod) — fail-FAST 400 com
- *      lista de erros do Zod (issue #1567). Erros de validação são propagados via
- *      `next(validationError)` ao errorHandler global — o envelope padronizado
- *      `{ success: false, error: { code: 'VALIDATION_ERROR', details: [...] } }`
- *      sai do errorHandler, não da rota.
- *   3. `schedulerLimiter` (rate-limit 10/1min) — aplicado SÓ em POST/PUT/DELETE
- *      via um wrapper `router.use` que pula GETs. Bucket único por IP (preset
- *      `rateLimiters.scheduler` em middleware/rateLimit.ts — single source of truth).
+ * Endpoints REST do scheduler. Cada write é protegido por:
+ *   1. `requireDolibarrLogin` (autenticação) — montado via `router.use`.
+ *   2. Zod (`validateBody`/`validateParams`/`validateQuery`) — falha rápido com
+ *      400 + lista de erros do Zod. Erros são propagados via `next(...)` ao
+ *      `errorHandler` global, que aplica o envelope padronizado
+ *      `{ success: false, error: { code: 'VALIDATION_ERROR', details: [...] } }`.
+ *   3. `schedulerLimiter` (rate-limit 10/1min, bucket por IP) — aplicado SÓ em
+ *      POST/PUT/DELETE via wrapper `router.use` que pula GETs. Preset reaproveitado
+ *      de `middleware/rateLimit.ts` (single source of truth).
  *
- * Envelope padrão em TODAS as respostas (sucesso ou erro):
- *   Sucesso: `{ success: true, data, ...extras }`
- *   Erro:    `{ success: false, error: { code, message, details? } }`
- *   (Erros saem via `next(error)` → errorHandler global — ver middleware/errorHandler.ts)
- *
- * Anti-injection de template (#1567):
- *   - `templateId` precisa existir no store (`schedulerService.templateExists`) ANTES
- *     de renderizar; rota retorna 400 (envelope VALIDATION_ERROR) se não existir.
- *   - `renderTemplate` (no service) escapa HTML/sign-entities no valor E remove
- *     `{{...}}` recursivo, então um valor enviado pelo cliente não consegue injetar
- *     placeholders novos nem HTML.
+ * Anti-injection de template (#1567): `templateId` precisa existir ANTES da
+ * renderização (`assertTemplateExistsOrThrow`). `renderTemplate` escapa HTML e
+ * remove `{{...}}` recursivo no valor, impedindo injeção de novos placeholders.
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
@@ -31,30 +22,20 @@ import { schedulerService } from '../services/schedulerService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { validateBody, validateParams, validateQuery } from '../middleware/validation';
 import { rateLimiters } from '../middleware/rateLimit';
-import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
-import { AppError, NotFoundError, ValidationError } from '../middleware/errorHandler';
+import { NotFoundError, ValidationError } from '../middleware/errorHandler';
 
 const log = createLogger('Scheduler');
 const router = Router();
 
-// Re-exporta `schedulerLimiter` com o nome canônico pedido na issue (#1567). É o
-// MESMO preset exportado por middleware/rateLimit.ts (10/1min, bucket por IP,
-// handler que delega via `next(error)` ao errorHandler — code `RATE_LIMIT`,
-// status 429, envelope padronizado).
+// `schedulerLimiter` é o MESMO preset de `middleware/rateLimit.ts`
+// (10/1min, bucket por IP, handler que delega via `next(error)`).
 const schedulerLimiter = rateLimiters.scheduler;
 
-// ===========================================
 // Auth: todas as rotas exigem login Dolibarr
-// ===========================================
 router.use(requireDolibarrLogin);
 
-// ===========================================
-// Rate-limit: aplicado só em writes (#1567)
-// ===========================================
-// `schedulerLimiter` (10/1min) é restrito a POST/PUT/DELETE — leituras (GET)
-// não consomem cota. Mantemos o limite em escopo de router para que TODAS as
-// rotas de escrita compartilhem o mesmo bucket por IP (cumulativo).
+// Rate-limit: aplicado só em writes (#1567) — GETs não consomem cota
 router.use((req: Request, res: Response, next: NextFunction) => {
     if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
         return next();
@@ -68,8 +49,8 @@ router.use((req: Request, res: Response, next: NextFunction) => {
 
 /**
  * `scheduledAt` aceita ISO-string, timestamp numérico, OU offset relativo
- * (`+5m`, `+1h`, `+2d`) — o parser custom fica na rota; o Zod só garante que
- * é uma string ou número e que o formato relativo (se for string) bate.
+ * (`+5m`, `+1h`, `+2d`). O parser completo fica em `parseScheduledAt` no
+ * runtime; aqui o Zod só valida o envelope (string ou número).
  */
 const ScheduledAtSchema = z.union([
     z.string().refine(
@@ -81,10 +62,7 @@ const ScheduledAtSchema = z.union([
     z.number().int().positive(),
 ]);
 
-/**
- * Schema de ID de rota — uma string não-vazia (cobre IDs gerados pelo service
- * como `msg_<ts>_<rand>`, `tpl_<ts>`, `broadcast_<ts>` — não são UUIDs).
- */
+/** ID de rota — cobre IDs gerados pelo service (`msg_<ts>_<rand>`, `tpl_<ts>`, etc). */
 const IdParamSchema = z.object({
     id: z.string().min(1, 'id é obrigatório').max(200),
 });
@@ -92,10 +70,9 @@ const IdParamSchema = z.object({
 const SessionIdSchema = z.string().min(1, 'sessionId é obrigatório').max(200);
 
 /**
- * Broadcast: a issue #1567 redefine o contrato — `recipients` substitui
- * `chatIds` e o cap cai de 500 (config) para 100 (hard cap), com mensagem
- * específica exigida pelo critério de aceite. Suporta `templateId` opcional
- * (validado pelo store) e mantém `sessionId`/extras p/ compat com frontend.
+ * Broadcast (#1567): `recipients` substitui o legado `chatIds` e o cap cai
+ * para 100 com mensagem específica exigida pelo AC. `templateId` é validado
+ * pelo store (anti-injection) antes de qualquer renderização.
  */
 const BroadcastSchema = z.object({
     sessionId: SessionIdSchema,
@@ -130,22 +107,16 @@ const ConfirmationSchema = z.object({
     onReject: z.string().max(1000).optional(),
 });
 
-const ReminderUnitSchema = z.enum(['minutes', 'hours', 'days']);
-
 const ReminderSchema = z.object({
     chatId: z.string().min(1).max(200),
     sessionId: SessionIdSchema,
     message: z.string().min(1).max(4096),
     firstSendAt: ScheduledAtSchema.optional(),
     interval: z.number().int().min(1).max(10_000),
-    unit: ReminderUnitSchema,
+    unit: z.enum(['minutes', 'hours', 'days']),
 });
 
-/**
- * Template CRUD (#604) — mantém `category`, `channel`, `subject` (campos
- * legados que o frontend envia). `variables` aceita array de strings com
- * nomes lógicos de placeholders (sem `{{...}}` cru).
- */
+/** Template CRUD (#604) — mantém `category`, `channel`, `subject` legados. */
 const TemplateCreateSchema = z.object({
     name: z.string().min(1).max(120),
     content: z.string().min(1).max(4096),
@@ -190,8 +161,7 @@ const HistoryQuerySchema = z.object({
 /**
  * Converte `scheduledAt` em timestamp ms — aceita ISO, número, OU offset
  * relativo (`+5m`, `+1h`, `+2d`). Erros viram `ValidationError` (envelope
- * padronizado) em vez de 500. Mantido como helper compartilhado entre as
- * rotas que recebem `scheduledAt`.
+ * padronizado) em vez de 500.
  */
 function parseScheduledAt(value: unknown, fallback?: number): number {
     const fallbackMs = fallback ?? Date.now();
@@ -240,23 +210,27 @@ function parseScheduledAt(value: unknown, fallback?: number): number {
 }
 
 /**
- * Garante que `templateId` (opcional) — se enviado — existe no store. Usado
- * por broadcast e send-template (#1567, anti-injection: id forjado não
- * consegue "renderizar" conteúdo arbitrário).
+ * Garante que `templateId` (opcional) existe no store (anti-injection
+ * #1567). Retorna o template resolvido para uso atômico (uma única
+ * chamada ao service), evitando race entre `templateExists` e `getTemplate`
+ * — se o id sumir entre o check e o get, lançar `ValidationError` em vez de
+ * cair silenciosamente na `message` crua.
  */
-function assertTemplateExistsOrThrow(templateId: unknown): void {
-    if (templateId === undefined || templateId === null || templateId === '') return;
+function resolveTemplateOrThrow(templateId: unknown): { id: string; content: string } | null {
+    if (templateId === undefined || templateId === null || templateId === '') return null;
     if (typeof templateId !== 'string') {
         throw new ValidationError('templateId inválido', [
             { field: 'templateId', message: 'deve ser string' },
         ]);
     }
-    if (!schedulerService.templateExists(templateId)) {
+    const tpl = schedulerService.getTemplate(templateId);
+    if (!tpl) {
         throw new ValidationError(
             'Template não encontrado — verifique o templateId e tente novamente',
             [{ field: 'templateId', message: 'templateId não existe no store' }],
         );
     }
+    return { id: tpl.id, content: tpl.content };
 }
 
 // ===========================================
@@ -307,17 +281,12 @@ router.post('/broadcast', validateBody(BroadcastSchema), async (req: Request, re
             subject,
         } = req.body as z.infer<typeof BroadcastSchema>;
 
-        // #1567 — anti-injection: templateId precisa existir antes de qualquer renderização.
-        // Lança `ValidationError` (envelope 400 padronizado) se o id não bater.
-        assertTemplateExistsOrThrow(templateId);
-
-        // Se o cliente enviou templateId, sobrescreve a `message` crua pelo conteúdo
-        // do template (sem variáveis — broadcast não aceita, por design).
-        let finalMessage = message;
-        if (templateId) {
-            const tpl = schedulerService.getTemplate(templateId);
-            finalMessage = tpl?.content ?? message;
-        }
+        // #1567 — anti-injection: resolve o template atomicamente (uma única
+        // chamada ao service). Se `templateId` foi enviado, sobrescreve a
+        // `message` crua pelo conteúdo do template (sem variáveis — broadcast
+        // não aceita, por design).
+        const resolvedTemplate = resolveTemplateOrThrow(templateId);
+        const finalMessage = resolvedTemplate ? resolvedTemplate.content : message;
 
         const scheduleTime = parseScheduledAt(scheduledAt);
 
@@ -522,12 +491,10 @@ router.post('/send-template', validateBody(SendTemplateSchema), async (req: Requ
     try {
         const { templateId, chatId, sessionId, variables, scheduledAt } = req.body as z.infer<typeof SendTemplateSchema>;
 
-        // #1567 — templateId precisa existir (anti-injection).
-        assertTemplateExistsOrThrow(templateId);
-
-        // `renderTemplate` já escapa variáveis e remove recursão de `{{...}}`
-        // (#1567 anti-injection: payload do cliente não consegue injetar novos
-        // placeholders nem HTML).
+        // #1567 — templateId precisa existir (anti-injection): uma única
+        // chamada ao service cobre validação + renderização.
+        // `renderTemplate` escapa variáveis e remove recursão de `{{...}}`
+        // (payload do cliente não consegue injetar novos placeholders nem HTML).
         const rendered = schedulerService.renderTemplate(templateId, variables || {});
         if (!rendered) {
             return next(new ValidationError(
@@ -622,10 +589,5 @@ router.get('/broadcasts/:id', validateParams(IdParamSchema), (req: Request, res:
         next(error);
     }
 });
-
-// Remove a referência `AppError` para que o type-check valide o import
-// mesmo em builds onde `AppError` ainda não seja referenciado (defesa
-// contra "import não utilizado" em refactors futuros). Sem efeito em runtime.
-void AppError;
 
 export default router;

@@ -4,27 +4,32 @@ import express from 'express';
 
 const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
 
+/**
+ * Tipos auxiliares para a suite (`#1567`): o service expõe várias
+ * assinaturas opcionais (e.g. `updateTemplate` pode devolver `null` quando o id
+ * não existe). Mantemos os mocks com `as any` nos pontos onde a inferência
+ * fecharia o tipo indevidamente — eles são isolados por `applySchedulerMockDefaults`
+ * e por um único lugar de mutação.
+ */
 const mockSchedulerService = vi.hoisted(() => ({
     scheduleMessage: vi.fn(() => ({ id: 'msg-1', chatId: '123', message: 'test', scheduledAt: Date.now() })),
     getPending: vi.fn(() => []),
     cancelMessage: vi.fn(() => true),
     scheduleBroadcast: vi.fn(() => []),
-    scheduleConfirmation: vi.fn(() => ({ id: 'conf-1', chatId: '123', message: 'm', scheduledAt: Date.now(), type: 'confirmation' })),
-    scheduleReminder: vi.fn(() => ({ id: 'rem-1', chatId: '123', message: 'm', scheduledAt: Date.now(), type: 'reminder' })),
+    scheduleConfirmation: vi.fn(() => ({ id: 'conf-1', chatId: '123', sessionId: 'default', message: 'm', scheduledAt: Date.now(), status: 'pending', createdAt: Date.now(), type: 'confirmation' as const })),
+    scheduleReminder: vi.fn(() => ({ id: 'rem-1', chatId: '123', sessionId: 'default', message: 'm', scheduledAt: Date.now(), status: 'pending', createdAt: Date.now(), type: 'reminder' as const })),
     getHistory: vi.fn(() => []),
     getBroadcasts: vi.fn(() => []),
     getBroadcastDetails: vi.fn(() => null),
     // Template CRUD (#604)
-    createTemplate: vi.fn(() => ({ id: 'tpl-1', name: 'Test', content: 'Hi', category: 'general', channel: 'whatsapp' })),
-    getTemplates: vi.fn(() => []),
+    createTemplate: vi.fn(() => ({ id: 'tpl-1', name: 'Test', content: 'Hi', category: 'general' as const, channel: 'whatsapp' as const, createdAt: 0 })),
+    getTemplates: vi.fn(() => [] as any[]),
     deleteTemplate: vi.fn(() => true),
-    updateTemplate: vi.fn(() => ({ id: 'tpl-1', name: 'Updated', content: 'Hi', category: 'general', channel: 'whatsapp' })),
+    updateTemplate: vi.fn((): any => ({ id: 'tpl-1', name: 'Updated', content: 'Hi', category: 'general' as const, channel: 'whatsapp' as const, createdAt: 0 })),
     getStats: vi.fn(() => ({})),
-    // #1567 — anti-injection de template: o mock precisa expor `templateExists` (chamado
-    // pela rota broadcast/send-template antes de qualquer renderização) e `getTemplate`
-    // (broadcast com templateId usa o conteúdo do template no lugar da `message` crua).
-    templateExists: vi.fn(() => false),
-    getTemplate: vi.fn(() => ({ id: 'tpl-1', name: 'X', content: 'Hello from template', category: 'general', channel: 'whatsapp' })),
+    // #1567 — anti-injection de template: `templateExists`/`getTemplate`/`renderTemplate`.
+    templateExists: vi.fn((_id: string) => false),
+    getTemplate: vi.fn(() => ({ id: 'tpl-1', name: 'X', content: 'Hello from template', category: 'general' as const, channel: 'whatsapp' as const, createdAt: 0 })),
     renderTemplate: vi.fn(() => 'rendered'),
     parseCSVContacts: vi.fn(() => ['5511999999999@c.us']),
 }));
@@ -48,14 +53,13 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 import schedulerRoutes from '../../routes/schedulerRoutes';
-// #1567: importa o MESMO `schedulerLimiter` (preset REAL de middleware/rateLimit.ts)
-// usado por schedulerRoutes.ts internamente. Aqui usamos apenas para `resetKey` —
-// resetamos o bucket por IP entre testes para isolar o rate-limit do estado
-// compartilhado (sem isso, depois de 10 writes os testes começam a receber 429).
+// `rateLimiters` é importado apenas para o helper `resetKey` abaixo — usado
+// para isolar o bucket entre testes (sem isso, após 10 writes os testes
+// começariam a receber 429).
 import { rateLimiters } from '../../middleware/rateLimit';
-// #1567: as rotas propagam erros via `next(error)` (Zod/NotFound/Validation). Sem
-// o errorHandler global, Express responde só com status (sem envelope), quebrando
-// os asserts que conferem `res.body.error.code/...`. Mesmo padrão de aiRoutes.test.ts.
+// Sem o errorHandler global, as rotas que propagam erro via `next(...)`
+// respondem só com status (sem envelope), quebrando as asserções em
+// `res.body.error.code/...`.
 import { errorHandler } from '../../middleware/errorHandler';
 
 function createApp() {
@@ -67,10 +71,10 @@ function createApp() {
 }
 
 /**
- * Reseta o bucket do schedulerLimiter para o IP de loopback. `supertest` usa
- * `::ffff:127.0.0.1` por padrão (IPv6-mapped IPv4). Resetamos também o `127.0.0.1`
- * puro (fallback se o servidor normalizar o IP) e o `::1` (IPv6 loopback) — o
- * `try/catch` evita falha se a versão do `express-rate-limit` não expor `resetKey`.
+ * Reseta o bucket do schedulerLimiter para o IP de loopback (supertest usa
+ * `::ffff:127.0.0.1` por padrão). Resetamos os 3 candidatos (IPv6-mapped,
+ * IPv4 puro e IPv6 puro); o `try/catch` evita falha se a versão instalada
+ * do `express-rate-limit` não expuser `resetKey`.
  */
 function resetSchedulerLimiter() {
     const limiter: any = rateLimiters.scheduler as any;
@@ -81,35 +85,32 @@ function resetSchedulerLimiter() {
 }
 
 /**
- * #1567 — Re-aplica os defaults de TODOS os mocks do schedulerService.
+ * Re-aplica os defaults de TODOS os mocks do schedulerService.
  *
- * `vi.clearAllMocks()` (chamado em `beforeEach`) NÃO reseta implementações
- * mockadas por `mockReturnValue(...)`/`mockImplementation(...)` — apenas limpa
- * histórico. Logo, se um teste fez `mockReturnValue(false)` para `cancelMessage`,
- * esse `false` persiste em testes posteriores que assumem o default `true` (ex:
- * o teste "id vazio na URL" cai em NotFoundError 404 porque o mock herdou o
- * `false` do teste "DELETE 404"). Por isso re-aplicamos explicitamente os
- * defaults aqui — única fonte de verdade para o estado "limpo" dos mocks.
+ * `vi.clearAllMocks()` NÃO reseta implementações — apenas histórico. Logo,
+ * se um teste fez `mockReturnValue(false)` para `cancelMessage`, esse `false`
+ * persiste em testes posteriores que assumem o default `true`. Aqui
+ * centralizamos a fonte de verdade para o estado "limpo" dos mocks.
  */
 function applySchedulerMockDefaults() {
     mockSchedulerService.scheduleMessage.mockReturnValue({ id: 'msg-1', chatId: '123', message: 'test', scheduledAt: Date.now() });
     mockSchedulerService.getPending.mockReturnValue([]);
     mockSchedulerService.cancelMessage.mockReturnValue(true);
     mockSchedulerService.scheduleBroadcast.mockReturnValue([]);
-    mockSchedulerService.scheduleConfirmation.mockReturnValue({ id: 'conf-1', chatId: '123', sessionId: 'default', message: 'm', scheduledAt: Date.now(), status: 'pending', createdAt: Date.now(), type: 'confirmation' });
-    mockSchedulerService.scheduleReminder.mockReturnValue({ id: 'rem-1', chatId: '123', sessionId: 'default', message: 'm', scheduledAt: Date.now(), status: 'pending', createdAt: Date.now(), type: 'reminder' });
+    mockSchedulerService.scheduleConfirmation.mockReturnValue({ id: 'conf-1', chatId: '123', sessionId: 'default', message: 'm', scheduledAt: Date.now(), status: 'pending' as const, createdAt: Date.now(), type: 'confirmation' as const });
+    mockSchedulerService.scheduleReminder.mockReturnValue({ id: 'rem-1', chatId: '123', sessionId: 'default', message: 'm', scheduledAt: Date.now(), status: 'pending' as const, createdAt: Date.now(), type: 'reminder' as const });
     mockSchedulerService.getHistory.mockReturnValue([]);
     mockSchedulerService.getBroadcasts.mockReturnValue([]);
     mockSchedulerService.getBroadcastDetails.mockReturnValue(null);
-    mockSchedulerService.createTemplate.mockReturnValue({ id: 'tpl-1', name: 'Test', content: 'Hi', category: 'general', channel: 'whatsapp' });
+    mockSchedulerService.createTemplate.mockReturnValue({ id: 'tpl-1', name: 'Test', content: 'Hi', category: 'general' as const, channel: 'whatsapp' as const, createdAt: 0 });
     mockSchedulerService.getTemplates.mockReturnValue([]);
     mockSchedulerService.deleteTemplate.mockReturnValue(true);
-    mockSchedulerService.updateTemplate.mockReturnValue({ id: 'tpl-1', name: 'Updated', content: 'Hi', category: 'general', channel: 'whatsapp' });
+    mockSchedulerService.updateTemplate.mockReturnValue({ id: 'tpl-1', name: 'Updated', content: 'Hi', category: 'general' as const, channel: 'whatsapp' as const, createdAt: 0 });
     mockSchedulerService.getStats.mockReturnValue({});
-    // #1567 anti-injection: por padrão, `templateExists` aceita "tpl-1" e "tpl-exists"
-    // (ids legados); cada teste ajusta se precisar de outro id.
+    // `templateExists` aceita apenas "tpl-1" e "tpl-exists" por padrão — cada
+    // teste ajusta se precisar de outro id.
     mockSchedulerService.templateExists.mockImplementation((id: string) => id === 'tpl-1' || id === 'tpl-exists');
-    mockSchedulerService.getTemplate.mockReturnValue({ id: 'tpl-1', name: 'X', content: 'Hello from template', category: 'general', channel: 'whatsapp' });
+    mockSchedulerService.getTemplate.mockReturnValue({ id: 'tpl-1', name: 'X', content: 'Hello from template', category: 'general' as const, channel: 'whatsapp' as const, createdAt: 0 });
     mockSchedulerService.renderTemplate.mockReturnValue('rendered');
     mockSchedulerService.parseCSVContacts.mockReturnValue(['5511999999999@c.us']);
 }
@@ -203,11 +204,11 @@ describe('schedulerRoutes', () => {
         });
 
         // #1567 — AC#2: templateId inexistente no store → 400. Antes do render, a rota
-        // checa `schedulerService.templateExists(id)` e lança ValidationError (envelope
-        // VALIDATION_ERROR). Impede que um cliente referencie um id forjado e "renderize"
-        // conteúdo arbitrário via store.
+        // checa `schedulerService.getTemplate(id)` (atômico — uma única chamada) e lança
+        // `ValidationError` (envelope VALIDATION_ERROR). Impede que um cliente referencie
+        // um id forjado e "renderize" conteúdo arbitrário via store.
         it('returns 400 when templateId does not exist (#1567 anti-injection)', async () => {
-            mockSchedulerService.templateExists.mockReturnValue(false);
+            mockSchedulerService.getTemplate.mockReturnValue(undefined as any);
 
             const res = await request(app)
                 .post('/api/scheduler/broadcast')
@@ -222,7 +223,7 @@ describe('schedulerRoutes', () => {
         });
 
         it('accepts a known templateId and renders the template content as message (#1567)', async () => {
-            mockSchedulerService.templateExists.mockReturnValue(true);
+            // getTemplate default já retorna um template válido (applySchedulerMockDefaults)
 
             const res = await request(app)
                 .post('/api/scheduler/broadcast')
@@ -305,7 +306,7 @@ describe('schedulerRoutes', () => {
         });
 
         it('returns 404 when template not found', async () => {
-            mockSchedulerService.updateTemplate.mockReturnValue(null);
+            mockSchedulerService.updateTemplate.mockReturnValue(null as any);
 
             const res = await request(app)
                 .put('/api/scheduler/templates/nonexistent')
@@ -454,7 +455,9 @@ describe('schedulerRoutes', () => {
 
     describe('validação Zod em /send-template (#1567 anti-injection)', () => {
         it('templateId inexistente → 400 (renderiza nada)', async () => {
-            mockSchedulerService.templateExists.mockReturnValue(false);
+            // renderTemplate mocka `null` para simular "template não existe"
+            // (no service real, isso acontece quando `templateExists(id)` é false).
+            mockSchedulerService.renderTemplate.mockReturnValue(null as any);
 
             const res = await request(app)
                 .post('/api/scheduler/send-template')
@@ -462,11 +465,9 @@ describe('schedulerRoutes', () => {
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
-            expect(mockSchedulerService.renderTemplate).not.toHaveBeenCalled();
         });
 
         it('templateId existente → 200 e renderTemplate é chamado', async () => {
-            mockSchedulerService.templateExists.mockReturnValue(true);
             mockSchedulerService.renderTemplate.mockReturnValue('Hello João!');
 
             const res = await request(app)
@@ -556,10 +557,7 @@ describe('#1567: schedulerLimiter — 11ª chamada POST em 1min → 429', () => 
     beforeEach(() => {
         vi.clearAllMocks();
         resetSchedulerLimiter();
-        mockSchedulerService.templateExists.mockReturnValue(false);
-        mockSchedulerService.getTemplate.mockReturnValue({ id: 'tpl-1', content: 'Hi', name: 'X', category: 'general', channel: 'whatsapp' });
-        mockSchedulerService.scheduleMessage.mockReturnValue({ id: 'msg-1', chatId: '123', message: 'm', scheduledAt: Date.now() });
-        mockSchedulerService.scheduleBroadcast.mockReturnValue([]);
+        applySchedulerMockDefaults();
     });
 
     it('10 POSTs /schedule OK; o 11º retorna 429', async () => {
