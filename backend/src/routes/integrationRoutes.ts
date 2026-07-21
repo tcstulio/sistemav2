@@ -646,7 +646,11 @@ router.post('/sync/run', async (req, res) => {
 
         const options = syncRunSchema.parse(req.body);
         const { entity, autoCreate, autoLink, dryRun, limit } = options;
-        const reqUser = req.user as { login?: string; id?: string | number } | undefined;
+        // Convenção do projeto: `req.user` é populado pelo requireDolibarrLogin
+        // (authMiddleware) — lemos via cast para evitar mexer nos tipos globais
+        // do Express. Fallback `unknown` cobre o caso (defensivo) do middleware
+        // não ter rodado em algum sub-mount.
+        const reqUser = (req as any).user as { login?: string; id?: string | number } | undefined;
         const userId = reqUser?.login || (reqUser?.id != null ? String(reqUser.id) : 'unknown');
 
         // Auditoria (#1569): loga toda chamada com os parâmetros relevantes.
@@ -660,6 +664,24 @@ router.post('/sync/run', async (req, res) => {
         }
 
         // Execução real: só chega aqui quando autoCreate=true (refine do schema).
+        // #1569 (Judge feedback): o schema aceita 5 entidades mas syncService só
+        // implementa 'customer' HOJE. Sem este guarda, um POST { entity:'invoice',
+        // autoCreate:true } executaria silenciosamente o sync de CLIENTES — rotulando
+        // o resultado como 'invoice'. Em backend de ERP isso é footgun de
+        // integridade. Bloqueamos aqui com 400 explícito (envelope padrão) para que
+        // o caller use dryRun=true enquanto a entidade não é implementada.
+        if (entity !== 'customer') {
+            log.warn('sync/run blocked: entity not implemented for real sync', {
+                entity, userId, note: 'use dryRun:true para preview'
+            });
+            return fail(
+                res,
+                'UNSUPPORTED_ENTITY',
+                `entity '${entity}' ainda não está implementada para sync real. Use dryRun:true para preview ou aguarde implementação.`,
+                400
+            );
+        }
+
         const result = await syncService.syncAll({ autoCreate, autoLink });
         return ok(res, { dryRun: false, entity, autoCreate, autoLink, result });
     } catch (error: any) {

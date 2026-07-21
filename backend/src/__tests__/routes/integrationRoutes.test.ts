@@ -355,6 +355,39 @@ describe('integrationRoutes', () => {
             expect(mockSyncService.getPeopleWithMatches).not.toHaveBeenCalled();
         });
 
+        // #1569 (Judge feedback #1): o schema aceita 5 entidades, mas o syncService
+        // SÓ implementa 'customer' HOJE. Sem guarda no caminho REAL, um POST
+        // { entity:'invoice', autoCreate:true } executaria SILENCIOSAMENTE o sync
+        // de clientes e rotularia o resultado como 'invoice' (footgun de ERP).
+        // Aqui bloqueamos com 400 explícito. dryRun segue aceitando qualquer
+        // entity (preview com nota).
+        it('real sync path rejects non-customer entities with 400 (UNSUPPORTED_ENTITY)', async () => {
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'invoice', autoCreate: true });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('UNSUPPORTED_ENTITY');
+            expect(res.body.error.message).toMatch(/invoice/);
+            expect(res.body.error.message).toMatch(/dryRun/);
+            // syncAll NÃO pode ser chamado para entity não suportada.
+            expect(mockSyncService.syncAll).not.toHaveBeenCalled();
+        });
+
+        it('dryRun path STILL accepts non-customer entities (returns preview with note)', async () => {
+            // dryRun é o caminho seguro para preview de entidades ainda não
+            // implementadas — não deve ser bloqueado pelo guarda.
+            const res = await request(app)
+                .post('/api/integration/sync/run')
+                .send({ entity: 'product', dryRun: true });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.dryRun).toBe(true);
+            expect(mockSyncService.syncAll).not.toHaveBeenCalled();
+        });
+
         it('`limit` caps the number of records considered in dryRun preview', async () => {
             mockSyncService.getPeopleWithMatches.mockResolvedValue([
                 { brainPerson: { id: '1' }, dolibarrCustomer: null, confidence: 'none' },
@@ -387,14 +420,19 @@ describe('integrationRoutes', () => {
             // #1569: a rota deve logar cada chamada com entity, autoCreate, autoLink,
             // dryRun e userId. Aqui validamos de verdade (não só o envelope) inspecionando
             // o mock do logger — cobrindo o critério de aceite #5 que era stub antes.
+            //
+            // ADAPTADO (#1569 entity guard): antes usava entity:'invoice' para "diferenciar"
+            // o payload. Agora o caminho REAL só aceita 'customer', então trocamos p/ 'customer'
+            // com autoLink=false (mesma intenção semântica: evidenciar que o campo é logado
+            // com o valor enviado). Asserção equivalente preservada.
             mockLogger.info.mockClear();
 
             const res = await request(app)
                 .post('/api/integration/sync/run')
-                .send({ entity: 'invoice', autoCreate: true, autoLink: false });
+                .send({ entity: 'customer', autoCreate: true, autoLink: false });
 
             expect(res.status).toBe(200);
-            expect(res.body.data.entity).toBe('invoice');
+            expect(res.body.data.entity).toBe('customer');
             expect(res.body.data.autoCreate).toBe(true);
             expect(res.body.data.autoLink).toBe(false);
 
@@ -406,7 +444,7 @@ describe('integrationRoutes', () => {
             expect(auditCall).toBeDefined();
             const auditPayload = auditCall![1];
             expect(auditPayload).toMatchObject({
-                entity: 'invoice',
+                entity: 'customer',
                 autoCreate: true,
                 autoLink: false,
                 dryRun: false,
