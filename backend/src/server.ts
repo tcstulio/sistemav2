@@ -5,8 +5,13 @@ import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
 import { createLogger } from './utils/logger';
 import { initSentry } from './utils/sentry';
+import { installCrashHandlers } from './utils/crashLog';
 
 initSentry();
+// #29 — captura a causa de crash num arquivo (backend/logs/crash.log) antes do processo morrer.
+// Nasceu do outage de 20/07 (backend ~2h fora, causa não capturada). Cedo no boot p/ pegar
+// falhas de startup também.
+installCrashHandlers();
 
 const log = createLogger('Server');
 import { config } from './config/env';
