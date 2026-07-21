@@ -229,6 +229,11 @@ import centrovibeRoutes from './routes/centrovibeRoutes';
 app.use('/api/centrovibe', requireDolibarrLogin, centrovibeRoutes);
 
 import integrationRoutes from './routes/integrationRoutes';
+// #1569: limiter dedicado (30/min) para endpoints de sync — evita sobrecarga no
+// Dolibarr. Montado ANTES do router e no prefixo /sync para cobrir /sync/run,
+// /sync/:entity, etc. sem afetar as demais rotas de integração (status, brain,
+// channels). O handler do preset delega via next(error) ao errorHandler global.
+app.use('/api/integration/sync', rateLimiters.sync);
 app.use('/api/integration', integrationRoutes);
 
 import uiConfigRoutes from './routes/uiConfigRoutes';
