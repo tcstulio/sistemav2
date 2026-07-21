@@ -13,6 +13,13 @@ const QUOTA_MARKERS = [
   'insufficient balance',
   'too many requests',
   'quota',
+  // Esgotamento de saldo/uso do Claude (CLI local do juiz/escalada). A mensagem é
+  // "You've hit your monthly spend limit" / "usage limit reached" — NÃO casa com os
+  // marcadores acima, então sem isto o juiz contaria como erro transitório e queimaria
+  // as 3 re-tentativas → revisão humana, em vez de segurar-e-retomar quando o saldo volta.
+  'spend limit',
+  'monthly spend',
+  'usage limit',
   'econnaborted',
   'etimedout',
   'http 429',

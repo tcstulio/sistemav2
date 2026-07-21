@@ -21,6 +21,9 @@ describe('llmQuotaState', () => {
       // timeout de infra
       expect(isQuotaError('ECONNABORTED')).toBe(true);
       expect(isQuotaError('ETIMEDOUT')).toBe(true);
+      // Claude CLI (juiz/escalada) — esgotamento de saldo/uso mensal
+      expect(isQuotaError("You've hit your monthly spend limit · raise it at claude.ai/settings/usage")).toBe(true);
+      expect(isQuotaError('Claude usage limit reached. Try again later.')).toBe(true);
     });
 
     it('NÃO marca erros genuínos de código como cota', () => {
