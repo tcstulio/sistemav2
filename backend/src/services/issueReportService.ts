@@ -19,7 +19,6 @@
  */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import path from 'path';
-import sanitizeHtml from 'sanitize-html';
 import * as cheerio from 'cheerio';
 import { v4 as uuidv4 } from 'uuid';
 import { createLogger } from '../utils/logger';
@@ -27,6 +26,12 @@ import { buildIssueBody, IssueReportContext } from '../utils/issueBodyBuilder';
 import { createGitHubIssue, CreateGitHubIssueResult } from '../utils/githubIssue';
 import { signDeeplink } from '../utils/deeplinkToken';
 import { AppError } from '../middleware/errorHandler';
+import { sanitizeHtmlSnapshot } from '../utils/sanitizeHtml';
+
+// Re-exporta p/ back-compat com testes/importadores existentes (#1563):
+// a política foi centralizada em `utils/sanitizeHtml.ts` para garantir
+// consistência entre o anexo em disco (`persistHtmlSnapshot`) e o body.
+export { sanitizeHtmlSnapshot };
 
 const log = createLogger('IssueReport');
 
@@ -202,32 +207,13 @@ function extForMime(mime: string): string {
  * preservando a estrutura para debug (atributos `class`, `id`, `data-*`,
  * `aria-*` etc. são mantidos nos elementos permitidos).
  *
- * Política (conservadora p/ contexto de bug report):
- *   - allowedTags: defaults do sanitize-html + style (debug visual).
- *   - script/iframe/object/embed/form/input/button → removidos junto com
- *     conteúdo (o sanitize-html já tira <script> por padrão, mas
- *     reforçamos handlers).
- *   - inline event handlers (`on*`) e `javascript:` schemes são strippados.
- *   - allowedSchemes: http, https, mailto, tel (sem `javascript:`).
+ * Política (conservadora p/ contexto de bug report) — espelha
+ * `HTML_SANITIZE_OPTS` em `utils/sanitizeHtml.ts` (single-source-of-truth
+ * consolidado na issue #1563).
+ *
+ * Função re-exportada do `utils/sanitizeHtml` (acima). Mantida como JSDoc
+ * aqui apenas p/ aparecer no help/IDE de quem consome `services/...`.
  */
-export function sanitizeHtmlSnapshot(html: string): string {
-    return sanitizeHtml(html, {
-        allowedTags: sanitizeHtml.defaults.allowedTags.concat([
-            'img', 'style', 'figure', 'figcaption', 'picture', 'source',
-            'details', 'summary', 'mark', 'kbd', 'code', 'pre',
-        ]),
-        allowedAttributes: {
-            ...sanitizeHtml.defaults.allowedAttributes,
-            '*': ['class', 'id', 'style', 'role', 'data-*', 'aria-*', 'title'],
-            img: ['src', 'alt', 'width', 'height', 'loading'],
-            a: ['href', 'name', 'target', 'rel'],
-        },
-        allowedSchemes: ['http', 'https', 'mailto', 'tel', 'data'],
-        allowedSchemesByTag: { img: ['http', 'https', 'data'] },
-        allowProtocolRelative: false,
-        disallowedTagsMode: 'discard',
-    });
-}
 
 /**
  * Garante que `<REPORTS_DIR>` existe. Idempotente.
@@ -339,8 +325,17 @@ export async function processIssueReport(payload: IssueReportPayload): Promise<I
         log.debug('HTML salvo em', { reportId, htmlPath });
     }
 
-    // 3) Montar context p/ o body markdown
-    const context: IssueReportContext = {
+    // 3) Montar context p/ o body markdown (#1563)
+    //    - `htmlSnapshot` é passado CRU: `buildIssueBody` chama
+    //      `sanitizeForIssueBody` (sanitiza + trunca a 5KB) antes de
+    //      incluir no `<details>` do body.
+    //    - `screenshotUrl` é passado quando há arquivo persistido em disco,
+    //      para que o body embarque `![screenshot](url)` na seção "Contexto visual".
+    //    - `screenshot` (base64) NÃO vai no body — GitHub não aceita data URI,
+    //      e nossa URL pública é a referência canônica.
+    //    - Sem `_refs` extra: agora `screenshotUrl` é campo tipado do
+    //      `IssueReportContext`, então não precisamos mais do hack `as any`.
+    const bodyContext: IssueReportContext = {
         url: payload.url,
         breadcrumb: payload.breadcrumb,
         element: payload.element,
@@ -350,14 +345,11 @@ export async function processIssueReport(payload: IssueReportPayload): Promise<I
         consoleErrors: Array.isArray(payload.consoleErrors) ? payload.consoleErrors.slice(0, 20) : undefined,
         consoleLogs: Array.isArray(payload.consoleLogs) ? payload.consoleLogs.slice(0, 20) : undefined,
         failedRequests: Array.isArray(payload.failedRequests) ? payload.failedRequests.slice(0, 20) : undefined,
-        htmlSnapshot: payload.htmlSnapshot ? '[salvo em anexo]' : undefined, // evita duplicar 20k no body
-        screenshot: undefined, // screenshot NÃO vai no body (data URI) — GitHub não aceita
+        htmlSnapshot: payload.htmlSnapshot, // cru — sanitização/truncamento delegados ao buildIssueBody (#1563)
+        screenshot: undefined,
+        screenshotUrl: screenshotUrl || undefined,
         captureMeta: payload.captureMeta,
     };
-    // Se houver arquivo salvo, adicionamos referência ao invés do base64.
-    const bodyContext = screenshotUrl
-        ? { ...context, screenshot: `[salvo em ${screenshotUrl}]`, _refs: { screenshotUrl, htmlUrl } } as any
-        : context;
 
     const reporter = payload.userLogin || payload.userId;
     const issueBody = buildIssueBody(payload.description || '', bodyContext, reporter);
