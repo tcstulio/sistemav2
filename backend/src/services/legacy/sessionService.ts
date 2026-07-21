@@ -42,6 +42,10 @@ export class SessionService {
     private initializationLocks: Map<string, boolean> = new Map();
     private sessionStartTimes: Map<string, number> = new Map();
 
+    // #wa-autorecover: sessões que o usuário desconectou DE PROPÓSITO (LOGOUT) — o sweep NÃO as ressuscita.
+    private loggedOut: Set<string> = new Set();
+    private healthTimer: NodeJS.Timeout | null = null;
+
     private constructor() {
         log.info('Instantiated.');
         this.loadSessionsFromDisk();
@@ -79,6 +83,47 @@ export class SessionService {
         socketService.emit('session_status', { sessionId, status });
     }
 
+    /**
+     * #wa-autorecover: sweep periódico que RECUPERA sessões STOPPED com auth salva. A reconexão
+     * de hoje é só event-driven (`on('disconnected')`); quando o chrome MORRE sem disparar o evento
+     * (crash do backend, kill externo, OOM), a sessão fica STOPPED sem QR/sem reconectar até um
+     * restart manual do backend — o bug que travou o dono em 21/07 (QR não aparecia). Respeita
+     * logout deliberado (`loggedOut`): não ressuscita sessão que o usuário desconectou de propósito.
+     * PREVIEW-safe: só é ligado pelo server.ts fora de PREVIEW_MODE.
+     */
+    public startHealthMonitor() {
+        if (this.healthTimer) return;
+        const INTERVAL = Number(process.env.WHATSAPP_HEALTH_INTERVAL_MS) || 90_000;
+        this.healthTimer = setInterval(() => this.recoverStoppedSessions(), INTERVAL);
+        if (this.healthTimer.unref) this.healthTimer.unref();
+        log.info(`WhatsApp health monitor started (a cada ${Math.round(INTERVAL / 1000)}s) — auto-recover de sessões STOPPED`);
+    }
+
+    public stopHealthMonitor() {
+        if (this.healthTimer) { clearInterval(this.healthTimer); this.healthTimer = null; }
+    }
+
+    /** Recupera sessões persistidas (com pasta de auth) que estão STOPPED e não foram deslogadas. */
+    private recoverStoppedSessions() {
+        try {
+            const authPath = '.wwebjs_auth';
+            if (!fs.existsSync(authPath)) return;
+            for (const dirent of fs.readdirSync(authPath, { withFileTypes: true })) {
+                if (!dirent.isDirectory()) continue;
+                const m = dirent.name.match(/^session-(.+)$/);
+                if (!m) continue;
+                const sessionId = m[1];
+                if (this.loggedOut.has(sessionId)) continue;           // logout deliberado — não mexe
+                if (this.initializationLocks.get(sessionId)) continue; // já iniciando/reconectando
+                if (this.getStatus(sessionId) !== 'STOPPED') continue; // SCAN_QR/WORKING/STARTING = ok
+                log.warn(`[${sessionId}] health monitor: STOPPED com auth salva — auto-recuperando (regenera QR/reconecta).`);
+                this.startSession(sessionId).catch(err => log.error(`[${sessionId}] auto-recover falhou`, err));
+            }
+        } catch (e: any) {
+            log.warn(`recoverStoppedSessions falhou: ${e?.message || e}`);
+        }
+    }
+
     private loadSessionsFromDisk() {
         try {
             const authPath = '.wwebjs_auth';
@@ -107,6 +152,8 @@ export class SessionService {
     }
 
     async startSession(sessionId: string) {
+        // #wa-autorecover: pedir para iniciar (usuário ou auto) limpa a marca de logout deliberado.
+        this.loggedOut.delete(sessionId);
         if (this.initializationLocks.get(sessionId)) {
             log.info(`Session ${sessionId} is already initializing. Skipping.`);
             return { status: 'STARTING' };
@@ -397,6 +444,10 @@ export class SessionService {
                         this.startSession(sessionId);
                     }
                 }, 5000);
+            } else {
+                // #wa-autorecover: logout/sessão deletada = intenção do usuário → o sweep NÃO ressuscita.
+                this.loggedOut.add(sessionId);
+                log.info(`[${sessionId}] Desconexão deliberada (${reason}) — auto-recover desligado até novo start manual.`);
             }
         });
 
