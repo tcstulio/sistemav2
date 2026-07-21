@@ -206,7 +206,8 @@ class ChannelRouter {
                 return this.sendWhatsApp(
                     payload.recipient,
                     payload.content,
-                    payload.sessionId
+                    payload.sessionId,
+                    payload.metadata
                 );
 
             case 'email':
@@ -242,7 +243,8 @@ class ChannelRouter {
     async sendWhatsApp(
         recipient: string,
         content: string,
-        sessionId?: string
+        sessionId?: string,
+        metadata?: Record<string, any>
     ): Promise<SendResult> {
         // #1438 — `resolveSession` PODE lançar `WhatsAppPrimaryUnavailableError` quando a primária
         // não está WORKING OU não está configurada, e a política é 'fail'. Diferente dos outros
@@ -282,7 +284,9 @@ class ChannelRouter {
                 };
             } else {
                 // Use legacy whatsapp-web.js
-                const result = await legacyMessageService.sendText(session, recipient, content);
+                const result = metadata
+                    ? await legacyMessageService.sendText(session, recipient, content, metadata)
+                    : await legacyMessageService.sendText(session, recipient, content);
 
                 return {
                     success: true,
