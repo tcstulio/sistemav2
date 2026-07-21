@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // === Mocks (hoisted) — espelha judgeErrorRetry.test.ts ===
 vi.mock('child_process', () => ({ execFile: vi.fn(), exec: vi.fn(), spawn: vi.fn() }));
@@ -39,6 +39,7 @@ describe('autoPlayNext — claim atômico (Degrau 2 PR-3)', () => {
         svc.dailyRoundsToday = () => 0;
         svc.pendingExecs = 0;
         svc.execInFlight = new Map();
+        svc.slotQueueDepth = new Map(); // #slot-elect: freeSlot() lê isto
         // simula o claim SÍNCRONO real do startTask→scheduleExec (pendingExecs++ + execInFlight.set)
         svc.startTask = vi.fn((n: number) => { svc.pendingExecs++; svc.execInFlight.set(n, 1); return Promise.resolve(); });
     });
@@ -51,7 +52,7 @@ describe('autoPlayNext — claim atômico (Degrau 2 PR-3)', () => {
         svc.autoPlayNext(); // pendingExecs=1 >= 1 → guarda retorna
 
         expect(svc.startTask).toHaveBeenCalledTimes(1);
-        expect(svc.startTask).toHaveBeenCalledWith(100);
+        expect(svc.startTask).toHaveBeenCalledWith(100, expect.objectContaining({ slot: expect.anything() }));
     });
 
     it('N=2: 2 chamadas despacham 100 e 101 — NUNCA 100 duas vezes (double-claim provado)', () => {
@@ -75,6 +76,28 @@ describe('autoPlayNext — claim atômico (Degrau 2 PR-3)', () => {
         svc.autoPlayNext(); // pendingExecs=1 < 2, mas 100 em voo → find=undefined → return
 
         expect(svc.startTask).toHaveBeenCalledTimes(1);
-        expect(svc.startTask).toHaveBeenCalledWith(100);
+        expect(svc.startTask).toHaveBeenCalledWith(100, expect.objectContaining({ slot: expect.anything() }));
+    });
+});
+
+describe('freeSlot — eleição de slot livre (Degrau 2 PR-4a-iii)', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('devolve o 1º slot com profundidade <= 0; pula os ocupados; undefined se todos cheios', () => {
+        const s1 = { id: 1, root: '/a', dataDir: null };
+        const s2 = { id: 2, root: '/b', dataDir: null };
+        vi.spyOn(slotManager, 'slots').mockReturnValue([s1, s2] as any);
+
+        svc.slotQueueDepth = new Map();            // ambos livres → 1º
+        expect(svc.freeSlot()).toBe(s1);
+
+        svc.slotQueueDepth = new Map([[1, 1]]);     // slot-1 ocupado → slot-2
+        expect(svc.freeSlot()).toBe(s2);
+
+        svc.slotQueueDepth = new Map([[1, 1], [2, 2]]); // ambos ocupados → undefined
+        expect(svc.freeSlot()).toBeUndefined();
+
+        svc.slotQueueDepth = new Map([[1, 0]]);     // depth 0 = livre (clamp devia ter deletado, mas <=0 cobre)
+        expect(svc.freeSlot()).toBe(s1);
     });
 });

@@ -38,7 +38,7 @@ describe('#1154 item 23 — accountRound contabiliza por task e por dia', () => 
 });
 
 describe('#1154 item 23 — autoPlayNext segura ao atingir o teto DIÁRIO', () => {
-    beforeEach(() => { svc.isPeakHold = vi.fn(() => false); svc.pendingExecs = 0; });
+    beforeEach(() => { svc.isPeakHold = vi.fn(() => false); svc.pendingExecs = 0; svc.slotQueueDepth = new Map(); });
 
     it('NÃO despacha quando o teto diário foi atingido', () => {
         svc.getAutomationConfig = vi.fn(() => ({ autoPlay: true, dailyRoundBudget: 5 }));
@@ -55,7 +55,7 @@ describe('#1154 item 23 — autoPlayNext segura ao atingir o teto DIÁRIO', () =
         svc.startTask = vi.fn(async () => {});
         svc.getQueuedTasks = vi.fn(() => [{ issueNumber: 9 }]);
         svc.autoPlayNext();
-        expect(svc.startTask).toHaveBeenCalledWith(9);
+        expect(svc.startTask).toHaveBeenCalledWith(9, expect.objectContaining({ slot: expect.anything() }));
     });
 });
 
@@ -64,6 +64,7 @@ describe('#accelerate-sweep (red-team Fable O3) — autoPlayNext não despacha c
         svc.isPeakHold = vi.fn(() => false);
         svc.getAutomationConfig = vi.fn(() => ({ autoPlay: true, dailyRoundBudget: 200 }));
         svc.dailyRounds = { date: today(), count: 0 };
+        svc.slotQueueDepth = new Map(); // #slot-elect: freeSlot() lê isto
     });
 
     it('pendingExecs>0 → NÃO despacha (evita re-eleger a MESMA task pending já agendada = dupla execução)', () => {
@@ -79,6 +80,6 @@ describe('#accelerate-sweep (red-team Fable O3) — autoPlayNext não despacha c
         svc.startTask = vi.fn(async () => {});
         svc.getQueuedTasks = vi.fn(() => [{ issueNumber: 9 }]);
         svc.autoPlayNext();
-        expect(svc.startTask).toHaveBeenCalledWith(9);
+        expect(svc.startTask).toHaveBeenCalledWith(9, expect.objectContaining({ slot: expect.anything() }));
     });
 });
