@@ -28,6 +28,30 @@ export interface IssueStats {
     recentClosed: GitHubIssue[];
 }
 
+/**
+ * Contexto capturado pelo botão "Reportar problema" e enviado ao backend.
+ * #1560: além dos campos originais (url, breadcrumb, viewport, userAgent,
+ * consoleErrors, failedRequests), inclui consoleLogs, htmlSnapshot e screenshot.
+ */
+export interface ReportContextPayload {
+    url?: string;
+    breadcrumb?: string;
+    viewport?: string;
+    userAgent?: string;
+    element?: string;
+    source?: string;
+    consoleErrors?: string[];
+    consoleLogs?: string[];
+    failedRequests?: string[];
+    htmlSnapshot?: string;
+    screenshot?: string;
+    captureMeta?: {
+        sensitiveRoute?: boolean;
+        screenshotOmitted?: boolean;
+        reason?: 'sensitive-route' | 'timeout' | 'error' | 'unavailable';
+    };
+}
+
 export const GithubService = {
     getIssues: async (params?: { state?: string; label?: string; limit?: number; period?: string }): Promise<GitHubIssue[]> => {
         try {
@@ -81,7 +105,14 @@ export const GithubService = {
     },
 
     // Cria uma issue no GitHub a partir de um report in-app (botão "Reportar problema").
-    createIssue: async (payload: { title: string; description?: string; context?: any; labels?: string[] }): Promise<{ ok: boolean; url?: string; number?: number; error?: string }> => {
+    // O `context` carrega os campos capturados (url, breadcrumb, viewport, userAgent,
+    // consoleErrors, consoleLogs, failedRequests, htmlSnapshot, screenshot base64).
+    createIssue: async (payload: {
+        title: string;
+        description?: string;
+        context?: ReportContextPayload;
+        labels?: string[];
+    }): Promise<{ ok: boolean; url?: string; number?: number; error?: string }> => {
         try {
             const res = await axios.post('/api/github/issues', payload, getAuthHeaders());
             return res.data;
