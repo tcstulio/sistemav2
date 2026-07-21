@@ -179,6 +179,22 @@ router.post(
     }),
 );
 
+router.post(
+    '/jobs/:id/visibility',
+    asyncHandler(async (req: Request, res: Response) => {
+        const jobId = String(req.params.id || '').trim();
+        if (!jobId) {
+            throw new AppError(400, 'BAD_REQUEST', 'jobId é obrigatório.');
+        }
+        if (typeof req.body?.hidden !== 'boolean') {
+            throw new AppError(400, 'BAD_REQUEST', 'hidden deve ser booleano.');
+        }
+        const stream = getProgressStream();
+        stream.setVisibility(jobId, req.body.hidden);
+        return ok(res, { jobId, hidden: req.body.hidden });
+    }),
+);
+
 /**
  * Serializa um ProgressEvent como frame SSE. Regras:
  *   - `data` é JSON.stringify (uma linha); `\n` internas viram `\u0000` (placeholder

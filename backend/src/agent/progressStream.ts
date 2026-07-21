@@ -121,6 +121,7 @@ interface JobState {
      * Idempotente: chamadas repetidas não mudam o estado.
      */
     cancelled: boolean;
+    hidden: boolean;
     /**
      * #1575: snapshot das tool_calls COMPLETADAS (com resultado) — usado para montar o
      * resumo do cancelamento ("Cancelado por você. O que já fiz: ..."). Cada entrada é
@@ -403,6 +404,15 @@ export class ProgressStream {
         return !!state?.cancelled;
     }
 
+    setVisibility(jobId: string, hidden: boolean): void {
+        const state = this.ensureJob(jobId);
+        state.hidden = hidden;
+    }
+
+    isHidden(jobId: string): boolean {
+        return this.jobs.get(jobId)?.hidden ?? false;
+    }
+
     /**
      * #1575: snapshot das tool_calls COMPLETADAS (com summary do tool_result). Usado pelo
      * `buildCancelSummary` para montar o texto do resumo do cancelamento. Retorna [] para
@@ -500,6 +510,7 @@ export class ProgressStream {
                 closed: false,
                 subscribers: new Set(),
                 cancelled: false,
+                hidden: false,
                 completedToolCalls: [],
             };
             this.jobs.set(jobId, state);
