@@ -289,12 +289,57 @@ describe('issueReportService — processIssueReport (integração)', () => {
         expect(arg.body).not.toContain('err 20');
     });
 
-    it('não inclui htmlSnapshot/base64 no body (vai em arquivo)', async () => {
+    it('não inclui htmlSnapshot/base64 no body (vai em arquivo) — #1563', async () => {
         await processIssueReport(basePayload);
         const arg = mockCreateGitHubIssue.mock.calls[0][0];
         // O base64 do screenshot tem ~100 chars; não deve vazar.
         expect(arg.body).not.toContain('iVBORw0KGgoAAAA');
-        expect(arg.body).toMatch(/Snapshot HTML|pulado|anexo|salvo/i);
+        // #1563: aceita pistas novas (`HTML snapshot`, `screenshot` na seção visual)
+        // e legadas (`Snapshot HTML|pulado|anexo|salvo`).
+        expect(arg.body).toMatch(/HTML snapshot|screenshot|Snapshot HTML|pulado|anexo|salvo/i);
+    });
+
+    it('#1563 embute ![screenshot](url) na seção "Contexto visual" quando há URL pública', async () => {
+        const result = await processIssueReport(basePayload);
+        const arg = mockCreateGitHubIssue.mock.calls[0][0];
+        expect(arg.body).toContain('### Contexto visual');
+        // Embutido com a URL pública derivada do persistScreenshot.
+        expect(arg.body).toContain(`![screenshot](${result.screenshotUrl})`);
+        // Base64 cru nunca vaza inline.
+        expect(arg.body).not.toContain('iVBORw0KGgo');
+        // A seção visual vem ANTES da seção de contexto capturado.
+        const visualIdx = arg.body.indexOf('### Contexto visual');
+        const ctxIdx = arg.body.indexOf('### Contexto capturado automaticamente');
+        expect(visualIdx).toBeGreaterThanOrEqual(0);
+        expect(ctxIdx).toBeGreaterThan(visualIdx);
+    });
+
+    it('#1563 inclui a seção "Console logs/erros" consolidando consoleLogs + consoleErrors', async () => {
+        const payload = {
+            ...basePayload,
+            consoleLogs: ['info a', 'info b'],
+            consoleErrors: ['boom 1', 'boom 2'],
+        };
+        await processIssueReport(payload as IssueReportPayload);
+        const arg = mockCreateGitHubIssue.mock.calls[0][0];
+        expect(arg.body).toContain('#### Console logs/erros');
+        expect(arg.body).toContain('[log] info a');
+        expect(arg.body).toContain('[error] boom 1');
+        // Garante que as seções legadas individuais foram removidas (#1563).
+        expect(arg.body).not.toContain('#### Erros de console');
+        expect(arg.body).not.toContain('#### Logs de console');
+    });
+
+    it('#1563 usa o cap de 5KB e marcador "...truncado" no HTML snapshot inline', async () => {
+        // 12KB de HTML — sanitizado precisa ser truncado em ~5KB para o body.
+        const big = '<div>' + 'x'.repeat(12 * 1024) + '</div>';
+        const payload = { ...basePayload, htmlSnapshot: big };
+        await processIssueReport(payload as IssueReportPayload);
+        const arg = mockCreateGitHubIssue.mock.calls[0][0];
+        expect(arg.body).toContain('<details><summary>HTML snapshot (sanitizado)</summary>');
+        expect(arg.body).toContain('...truncado');
+        // Marcador antigo removido.
+        expect(arg.body).not.toContain('<!-- truncado de ');
     });
 
     it('usa título customizado quando fornecido', async () => {
