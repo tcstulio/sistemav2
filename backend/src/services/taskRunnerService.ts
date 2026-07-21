@@ -613,7 +613,7 @@ class TaskRunnerService {
             // runOpencode, executeTask sempre completa e libera o lock, então a serialização é
             // preservada. Resetar o lock poderia deixar 2 executeTask concorrentes (corrupção git).
             this.pendingExecs = 0;
-            this.execChain = Promise.resolve();
+            this.execChains.clear(); // #slot-chain: reseta as cadeias de TODOS os slots (com 1 slot = a única)
             // #accelerate-sweep: workers fantasmas abandonados não podem excluir issues do sweep p/ sempre.
             // Um finally tardio decrementa um mapa já limpo sem efeito negativo (clamp em >0).
             this.execInFlight.clear();
@@ -1173,7 +1173,7 @@ class TaskRunnerService {
         task.error = undefined;
         if (opts?.mode) task.executionMode = opts.mode;
         // Serializa: roda agora se livre, senão entra na FILA.
-        this.scheduleExec(task, branch, 'running');
+        this.scheduleExec(task, branch, 'running', slotManager.slot1); // #slot-chain: eleição de slot vem na PR-4a-iii
         this.save();
         return task;
     }
@@ -1202,7 +1202,7 @@ class TaskRunnerService {
         const branch = task.branch || `fix-${issueNumber}`;
         task.branch = branch;
         this.recordEvent(task, 'synthesis_started', `⬆️ Escalada MANUAL para Claude ${m} (pedida por um admin) — próxima rodada assume o worktree.`, { manualEscalation: true, model: m });
-        this.scheduleExec(task, branch, 'running');
+        this.scheduleExec(task, branch, 'running', slotManager.slot1); // #slot-chain: eleição de slot vem na PR-4a-iii
         this.save();
         return task;
     }
@@ -1226,7 +1226,12 @@ class TaskRunnerService {
     // Fila serial de execução (1 task por vez). O worktree (sistemav2-taskrunner-wt) é COMPARTILHADO,
     // então rodar duas execuções ao mesmo tempo corromperia o git. Tasks extras ficam 'pending' até a vez.
     private pendingExecs = 0;
-    private execChain: Promise<void> = Promise.resolve();
+    // #slot-chain (PR-4a-ii): cadeia de execução POR-SLOT (era uma Promise global). `chainFor` inicializa
+    // lazy. Com 1 slot há 1 cadeia → BYTE-IDÊNTICO ao serial. CRÍTICO (Fable, provado por oráculo): o
+    // scheduleExec guarda o PIPELINE COMPLETO (pós-.finally) em execChains, não o estágio-.then — senão
+    // `await chainFor(id)` veria pendingExecs=1 e quebraria os testes-sentinela (p2/stuckEpics).
+    private execChains = new Map<number, Promise<void>>();
+    private chainFor(slotId: number): Promise<void> { return this.execChains.get(slotId) ?? Promise.resolve(); }
     // #slot-ctx (PR-4a-i): o global currentExecTask morreu — a task de contexto do ensureWorktree agora
     // vem por PARÂMETRO (só o exec passa; proof/preview passam undefined). Ver ensureWorktree.
 
@@ -1367,7 +1372,7 @@ class TaskRunnerService {
         return { done: false, hint: '' };
     }
 
-    private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus = 'running'): void {
+    private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus, slot: Slot): void {
         task.mergeHoldReason = undefined; // #1154 P1 item 10: novo exec (fix/redo/feedback) tira a task do hold de merge
         task.mergeHoldKind = undefined;   // #1168: limpa também a classificação do hold
         const willQueue = this.pendingExecs > 0;
@@ -1382,7 +1387,7 @@ class TaskRunnerService {
             this.save();
             this.emitStatus(task);
         }
-        this.execChain = this.execChain.catch(() => { /* isola falha anterior da cadeia */ }).then(async () => {
+        const chain = this.chainFor(slot.id).catch(() => { /* isola falha anterior da cadeia */ }).then(async () => {
             try {
                 // #1154 P2 item 11: a task pode ter sido DELETADA ou CANCELADA enquanto esperava a vez na
                 // fila serial. Sem re-checar aqui, ela RESSUSCITA — roda o planner, o opencode, e pode até
@@ -1501,8 +1506,8 @@ class TaskRunnerService {
                 this.emitLog(task.issueNumber, 'warn', `Watchdog: task excedeu ${min}min, abortando.`);
             }, MAX_TASK_WALL_MS);
             try {
-                // Lock do worktree: serializa com tryAutoMerge/startPreview de outras tasks.
-                const slot = slotManager.slot1;
+                // Lock do worktree: serializa com tryAutoMerge/startPreview de outras tasks. #slot-chain: o
+                // `slot` vem por parâmetro do scheduleExec (a cadeia é chainFor(slot.id)).
                 await this.withWorktreeLock(`exec #${task.issueNumber}`, slot, () => this.executeTask(task, branch, slot));
                 // #1154 P2 item 13: se o watchdog disparou (killRequested) e o executeTask RETORNOU (não lançou)
                 // deixando a task ainda 'running'/'fixing', ela ficaria ZUMBI para sempre (o .catch abaixo só
@@ -1562,6 +1567,9 @@ class TaskRunnerService {
             // Após um cancel (kill bem-sucedido OU falho) o cascade retoma aqui (#644).
             this.autoPlayNext();
         });
+        // #slot-chain: guarda o PIPELINE COMPLETO (pós-.finally) na cadeia DO SLOT — `await chainFor(id)`
+        // espera o finally (pendingExecs já decrementado), preservando os testes-sentinela.
+        this.execChains.set(slot.id, chain);
     }
 
     private getAutomationConfig() {
@@ -3428,7 +3436,7 @@ Return ONLY a JSON:
                         this.recordEvent(task, 'judge_score', `⬆️ Coder barato empacou (score ${result.score} após ${task.judgeAttempts} rodadas) — escalando o coder p/ Opus.`, { opusEscalation: true, willEscalate: true, score: result.score });
                         this.emitLog(task.issueNumber, 'warn', `Judge: ${result.score}/10 após ${task.judgeAttempts} rodadas — escalando o coder p/ Opus.`);
                         this.save();
-                        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing');
+                        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', slotManager.slot1);
                         return;
                     }
                     task.phase = 'done';
@@ -3460,7 +3468,7 @@ Return ONLY a JSON:
                     // as tentativas 2/3 re-entravam DENTRO do mesmo lock+watchdog desta execução (startedAt
                     // único) → o watchdog podia matar no meio e a task virava failed com PR válido. Agora cada
                     // tentativa é um exec FRESCO na fila (lock+watchdog próprios), igual ao selfHealFromGate.
-                    this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing');
+                    this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', slotManager.slot1);
                     return;
                 }
             } else {
@@ -4031,7 +4039,7 @@ Return ONLY a JSON:
         this.emitLog(task.issueNumber, 'warn', `Gate bloqueou (${kind}). Auto-consertando (${task.gateFixAttempts}/${GATE_MAX}) com a crítica do judge antes de pedir revisão humana...`);
         this.save();
         this.emitStatus(task);
-        this.scheduleExec(task, task.branch, 'fixing');
+        this.scheduleExec(task, task.branch, 'fixing', slotManager.slot1);
         return true;
     }
 
@@ -4396,7 +4404,7 @@ Return ONLY a JSON:
         this.recordEvent(task, 'feedback_received', `Feedback recebido: ${feedback.substring(0, 200)}`, { length: feedback.length });
         this.save();
 
-        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing');
+        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', slotManager.slot1);
 
         return task;
     }
@@ -4443,7 +4451,7 @@ Return ONLY a JSON:
         this.recordEvent(task, 'task_started', `Task refeita${instruction ? `: ${instruction.substring(0, 200)}` : ''}${opts?.resetBudget ? ' (orçamento de rodadas zerado)' : ''}`, { redo: true, instruction, resetBudget: !!opts?.resetBudget });
         this.save();
 
-        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'running');
+        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'running', slotManager.slot1);
 
         return task;
     }

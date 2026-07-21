@@ -57,7 +57,7 @@ describe('#1154 P1 item 6 — self-heal de typecheck pós-rebase (kind novo)', (
         expect(task.gateFixInstruction).toMatch(/rebase/i);
         expect(task.status).toBe('fixing');
         expect(task.gateFixAttempts).toBe(1);
-        expect(svc.scheduleExec).toHaveBeenCalledWith(task, 'fix-1', 'fixing'); // exec fresco (não recursão direta)
+        expect(svc.scheduleExec).toHaveBeenCalledWith(task, 'fix-1', 'fixing', expect.objectContaining({ id: 1 })); // exec fresco + #slot-chain 4º arg
     });
 
     it('respeita o teto (maxGateFixRounds) — esgotado, retorna false p/ o chamador estacionar', () => {

@@ -30,7 +30,7 @@ beforeEach(() => { svc.stopPolling?.(); vi.clearAllMocks(); });
 describe('#1154 P2 item 11 — task deletada/cancelada na fila NÃO ressuscita', () => {
     beforeEach(() => {
         svc.pendingExecs = 0;
-        svc.execChain = Promise.resolve();
+        svc.execChains = new Map(); // #slot-chain: cadeia por-slot
         svc.recordEvent = vi.fn();
         svc.save = vi.fn();
         svc.emitStatus = vi.fn();
@@ -41,8 +41,8 @@ describe('#1154 P2 item 11 — task deletada/cancelada na fila NÃO ressuscita',
         svc.store = { tasks: {} };                       // #77 já removida do store
         svc.deletedIssueNumbers = new Map([[77, 1]]);
         const task: any = { issueNumber: 77, branch: 'fix-77', status: 'pending', events: [] };
-        svc.scheduleExec(task, 'fix-77', 'running');
-        await svc.execChain;
+        svc.scheduleExec(task, 'fix-77', 'running', { id: 1, root: '/tmp/wt', dataDir: null });
+        await svc.chainFor(1);
         expect(taskPlannerService.analyzeTask).not.toHaveBeenCalled(); // não ressuscitou
     });
 
@@ -51,8 +51,8 @@ describe('#1154 P2 item 11 — task deletada/cancelada na fila NÃO ressuscita',
         svc.deletedIssueNumbers = new Map();
         const task: any = { issueNumber: 78, branch: 'fix-78', status: 'cancelling', killRequested: true, events: [] };
         svc.store.tasks[78] = task;
-        svc.scheduleExec(task, 'fix-78', 'running');
-        await svc.execChain;
+        svc.scheduleExec(task, 'fix-78', 'running', { id: 1, root: '/tmp/wt', dataDir: null });
+        await svc.chainFor(1);
         expect(taskPlannerService.analyzeTask).not.toHaveBeenCalled();
     });
 });

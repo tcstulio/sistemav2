@@ -264,7 +264,7 @@ describe('escalada MANUAL (botão do admin) — forceEscalation + escalateTask',
         const t = await svc.escalateTask(7, 'opus');
         expect(t.forceEscalation).toBe(true);
         expect(t.coderEscalationModelOverride).toBe('opus');
-        expect(svc.scheduleExec).toHaveBeenCalledWith(t, 'fix-7', 'running');
+        expect(svc.scheduleExec).toHaveBeenCalledWith(t, 'fix-7', 'running', expect.objectContaining({ id: 1 })); // #slot-chain: 4º arg = slot
     });
 
     it('escalateTask(FABLE): aceita e normaliza (case-insensitive)', async () => {

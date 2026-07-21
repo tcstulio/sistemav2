@@ -280,15 +280,15 @@ describe('#accelerate-sweep (red-team Fable O2) — scheduleExec marca/limpa exe
     it('seta execInFlight SÍNCRONO no dispatch e limpa após o settle da cadeia', async () => {
         svc.execInFlight = new Map();
         svc.pendingExecs = 0;
-        svc.execChain = Promise.resolve();
+        svc.execChains = new Map(); // #slot-chain: cadeia por-slot
         svc.autoPlayNext = vi.fn();
         // killRequested → a cadeia retorna cedo (cancel-signal) sem tocar planner/opencode → settle rápido.
         const task = { ...epic(10), kind: 'task', killRequested: true };
         svc.store.tasks[10] = task;
-        svc.scheduleExec(task, 'branch-x', 'running');
+        svc.scheduleExec(task, 'branch-x', 'running', { id: 1, root: '/tmp/wt', dataDir: null });
         expect(svc.execInFlight.has(10)).toBe(true);   // marcado ANTES de qualquer await
         expect(svc.pendingExecs).toBe(1);
-        await svc.execChain;                            // deixa o finally rodar
+        await svc.chainFor(1);                          // deixa o finally rodar (pipeline completo → pendingExecs=0)
         expect(svc.execInFlight.has(10)).toBe(false);   // limpo no finally
         expect(svc.pendingExecs).toBe(0);
     });
