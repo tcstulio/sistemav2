@@ -259,6 +259,65 @@ describe('schedulerRoutes', () => {
             expect(res.body.error.details[0]).toHaveProperty('field');
             expect(res.body.error.details[0]).toHaveProperty('message');
         });
+
+        // #1567 — backward compatibility com clientes que ainda enviam `chatIds`
+        // (legado). O schema aceita ambos os campos; o handler sempre trabalha com
+        // `recipients` normalizado via `.transform()`.
+        it('aceita `chatIds` legado como alias de `recipients` (backward compat #1567)', async () => {
+            const res = await request(app)
+                .post('/api/scheduler/broadcast')
+                .send({ sessionId: 'default', chatIds: ['1@c.us', '2@c.us'], message: 'Hello' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockSchedulerService.scheduleBroadcast).toHaveBeenCalledTimes(1);
+            // O handler SEMPRE envia `chatIds` ao service — coerente com a assinatura atual
+            expect(mockSchedulerService.scheduleBroadcast).toHaveBeenCalledWith(
+                expect.objectContaining({ chatIds: ['1@c.us', '2@c.us'] }),
+            );
+        });
+
+        // Quando AMBOS são enviados, `recipients` (canônico) tem precedência sobre `chatIds` (legado).
+        it('recipients canônico tem precedência sobre chatIds legado quando ambos enviados', async () => {
+            const res = await request(app)
+                .post('/api/scheduler/broadcast')
+                .send({
+                    sessionId: 'default',
+                    recipients: ['canonical@c.us'],
+                    chatIds: ['legacy@c.us'],
+                    message: 'Hello',
+                });
+
+            expect(res.status).toBe(200);
+            expect(mockSchedulerService.scheduleBroadcast).toHaveBeenCalledWith(
+                expect.objectContaining({ chatIds: ['canonical@c.us'] }),
+            );
+        });
+
+        // `chatIds` legado também respeita o cap de 100.
+        it('chatIds legado com 150 entradas → 400 com mensagem EXATA do cap', async () => {
+            const chatIds = Array.from({ length: 150 }, (_, i) => `${i}@c.us`);
+            const res = await request(app)
+                .post('/api/scheduler/broadcast')
+                .send({ sessionId: 'default', chatIds, message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(res.body.error.details[0].message).toBe('Máximo de 100 destinatários por chamada');
+        });
+
+        // Quando NENHUM dos dois for enviado, retorna 400 apontando o campo `recipients`.
+        it('sem recipients nem chatIds → 400 apontando recipients', async () => {
+            const res = await request(app)
+                .post('/api/scheduler/broadcast')
+                .send({ sessionId: 'default', message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(res.body.error.details[0].field).toBe('recipients');
+        });
     });
 
     describe('GET /api/scheduler/pending', () => {
@@ -531,6 +590,60 @@ describe('schedulerRoutes', () => {
             expect(res.status).toBe(200);
         });
     });
+
+    // =====================================================
+    // #1567 — cronSchema: contrato da issue para futuros
+    // endpoints de cron. Validação unitária (sem rota HTTP) —
+    // confirma que o regex POSIX 5-campos aceita variações e
+    // recusa formatos inválidos.
+    // =====================================================
+
+    describe('CronSchema (#1567)', () => {
+        // Import lazy para evitar ciclos e deixar o escopo local
+        let CronSchema: any;
+
+        beforeAll(async () => {
+            const mod = await import('../../routes/schedulerRoutes');
+            CronSchema = (mod as any).CronSchema;
+        });
+
+        const cases: Array<{ cron: string; ok: boolean; reason: string }> = [
+            { cron: '* * * * *', ok: true, reason: 'wildcards em todos os campos' },
+            { cron: '*/15 * * * *', ok: true, reason: 'intervalo no minuto' },
+            { cron: '0 9 * * 1-5', ok: true, reason: 'range no dia-da-semana' },
+            { cron: '30 14 1,15 * *', ok: true, reason: 'lista no dia-do-mês' },
+            { cron: '0 0 1 1 *', ok: true, reason: 'disparo único anual' },
+            { cron: '* * * *', ok: false, reason: 'apenas 4 campos' },
+            { cron: '* * * * * *', ok: false, reason: '6 campos (acima do POSIX)' },
+            { cron: '60 * * * *', ok: true, reason: '60 não é validado pelo regex (semântico fica p/ node-cron)' },
+            { cron: '', ok: false, reason: 'vazio' },
+            { cron: 'not-a-cron', ok: false, reason: 'string sem campos' },
+        ];
+
+        for (const c of cases) {
+            it(`${c.ok ? 'aceita' : 'rejeita'} ${JSON.stringify(c.cron)} — ${c.reason}`, () => {
+                const result = CronSchema.safeParse({ name: 'n', action: 'a', cron: c.cron });
+                expect(result.success).toBe(c.ok);
+            });
+        }
+
+        it('rejeita name vazio', () => {
+            const result = CronSchema.safeParse({ name: '', cron: '* * * * *', action: 'a' });
+            expect(result.success).toBe(false);
+        });
+
+        it('rejeita action ausente', () => {
+            const result = CronSchema.safeParse({ name: 'n', cron: '* * * * *' });
+            expect(result.success).toBe(false);
+        });
+
+        it('aceita payload opcional', () => {
+            const result = CronSchema.safeParse({
+                name: 'n', cron: '* * * * *', action: 'a', payload: { foo: 'bar' },
+            });
+            expect(result.success).toBe(true);
+        });
+    });
 });
 
 
@@ -614,5 +727,26 @@ describe('#1567: schedulerLimiter — 11ª chamada POST em 1min → 429', () => 
         // 11ª escrita (PUT) → 429
         const blocked = await request(app).put('/api/scheduler/templates/tpl-1').send({ name: 'X' });
         expect(blocked.status).toBe(429);
+    });
+
+    // #1567 — sanity check de produção: server.ts NÃO deve montar
+    // um `schedulerLimiter` inline antes do router, senão os GETs seriam
+    // contados DUAS vezes (uma pelo limiter do server, outra pelo do
+    // router). Esse teste falha se alguém reintroduzir a duplicação.
+    it('server.ts NÃO aplica schedulerLimiter inline (#1567 — single source of truth)', () => {
+        // Lazy import do server.ts para evitar efeitos colaterais de
+        // import (o módulo cria servidor Express, sockets, etc.).
+        // Lemos o source direto via fs para verificar a montagem.
+        const fs = require('fs') as typeof import('fs');
+        const path = require('path') as typeof import('path');
+        const src = fs.readFileSync(
+            path.resolve(__dirname, '../../../src/server.ts'),
+            'utf-8',
+        );
+        // Não pode haver `app.use('/api/scheduler', schedulerLimiter, ...)`
+        // — a montagem correta é só `app.use('/api/scheduler', schedulerRoutes)`
+        expect(src).not.toMatch(/app\.use\(['"]\/api\/scheduler['"],\s*schedulerLimiter/);
+        // Confirma que a forma "limpa" está presente
+        expect(src).toMatch(/app\.use\(['"]\/api\/scheduler['"],\s*schedulerRoutes\)/);
     });
 });

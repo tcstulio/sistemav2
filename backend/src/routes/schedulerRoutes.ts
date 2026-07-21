@@ -70,22 +70,39 @@ const IdParamSchema = z.object({
 const SessionIdSchema = z.string().min(1, 'sessionId é obrigatório').max(200);
 
 /**
- * Broadcast (#1567): `recipients` substitui o legado `chatIds` e o cap cai
- * para 100 com mensagem específica exigida pelo AC. `templateId` é validado
- * pelo store (anti-injection) antes de qualquer renderização.
+ * Broadcast (#1567): `recipients` é o nome canônico na API; `chatIds` é aceito
+ * como alias legado para preservar compatibilidade com clientes existentes
+ * (sem versionamento de rota — apenas o campo). O cap é 100 com mensagem
+ * EXATA exigida pelo AC. `templateId` é validado pelo store (anti-injection)
+ * antes de qualquer renderização — vide `resolveTemplateOrThrow` abaixo.
+ *
+ * Ordem de precedência: se AMBOS forem enviados, `recipients` vence
+ * (`chatIds` é apenas fallback). O campo é normalizado no `.transform()`
+ * final — o handler sempre vê `recipients` populado.
  */
+const BroadcastRecipientsField = z.array(z.string().min(1))
+    .min(1, 'recipients não pode ser vazio')
+    .max(100, 'Máximo de 100 destinatários por chamada');
+
 const BroadcastSchema = z.object({
     sessionId: SessionIdSchema,
-    recipients: z.array(z.string().min(1))
-        .min(1, 'recipients não pode ser vazio')
-        .max(100, 'Máximo de 100 destinatários por chamada'),
+    recipients: BroadcastRecipientsField.optional(),
+    chatIds: BroadcastRecipientsField.optional(),
     message: z.string().min(1).max(4096),
     templateId: z.string().min(1).max(200).optional(),
     scheduledAt: ScheduledAtSchema.optional(),
     delayBetween: z.number().int().min(0).max(60_000).optional(),
     channel: z.enum(['whatsapp', 'email']).optional(),
     subject: z.string().max(500).optional(),
-});
+})
+    .refine(
+        (data) => data.recipients !== undefined || data.chatIds !== undefined,
+        { message: 'recipients (ou chatIds legado) é obrigatório', path: ['recipients'] },
+    )
+    .transform((data) => ({
+        ...data,
+        recipients: data.recipients ?? data.chatIds!,
+    }));
 
 const ScheduleSchema = z.object({
     chatId: z.string().min(1).max(200),
@@ -152,6 +169,28 @@ const HistoryQuerySchema = z.object({
     sessionId: z.string().min(1).max(200).optional(),
     status: z.enum(['pending', 'sent', 'cancelled', 'failed']).optional(),
     limit: z.string().regex(/^\d+$/).transform(Number).optional(),
+});
+
+/**
+ * Cron job schema (#1567): cron expression POSIX de 5 campos
+ * (min hour day month dow). Cada campo aceita estrela ou
+ * lista/intervalo. O regex é estrito (sem espaços extras, sem
+ * ranges inválidos — node-cron/crontab faz o parse semântico).
+ *
+ * Exportado como constante para que rotas de cron que venham a ser
+ * adicionadas possam usar validateBody(CronSchema) direto. Sem
+ * rota correspondente no router hoje (não há feature de cron-jobs
+ * persistente ainda); a definição fica aqui para casar com a
+ * especificação da issue #1567 e servir de contrato.
+ */
+export const CronSchema = z.object({
+    name: z.string().min(1).max(120),
+    cron: z.string().regex(
+        /^(\*|[0-9,\-\/\*]+)\s+(\*|[0-9,\-\/\*]+)\s+(\*|[0-9,\-\/\*]+)\s+(\*|[0-9,\-\/\*]+)\s+(\*|[0-9,\-\/\*]+)$/,
+        { message: 'cron deve ser uma expressão POSIX de 5 campos (min hour day month dow)' },
+    ),
+    action: z.string().min(1).max(120),
+    payload: z.record(z.string(), z.any()).optional(),
 });
 
 // ===========================================
@@ -292,7 +331,7 @@ router.post('/broadcast', validateBody(BroadcastSchema), async (req: Request, re
 
         const messages = await schedulerService.scheduleBroadcast({
             sessionId,
-            chatIds: recipients, // service ainda chama `chatIds` — `recipients` é o nome canônico na API (#1567)
+            chatIds: recipients, // service ainda chama `chatIds` internamente — `recipients` é o nome canônico na API (#1567)
             channel,
             subject,
             message: finalMessage,
