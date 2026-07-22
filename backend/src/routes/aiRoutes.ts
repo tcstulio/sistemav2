@@ -13,6 +13,7 @@ import { aiJobService } from '../services/aiJobService';
 import { financialAnalysisStore } from '../services/financialAnalysisStore';
 import { voiceConfigStore } from '../services/voiceConfigStore';
 import { minimaxService } from '../services/minimaxService';
+import { isQuotaError, quotaStatus } from '../services/llmQuotaState';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
 import { asyncHandler } from '../utils/asyncHandler';
@@ -274,6 +275,13 @@ function toAppError(error: unknown): AppError {
     const fullMessage = `${baseMsg} ${upstream}`.trim();
     if (/API key expired|API_KEY_INVALID/i.test(fullMessage)) {
         return new AppError(401, 'AI_KEY_EXPIRED', 'A chave da API do Google Gemini expirou. Por favor, atualize o arquivo .env com uma nova chave.');
+    }
+    // Degradação graciosa: cota/capacidade de IA esgotada (GLM 1310, MiniMax "usage limit",
+    // 429/1211 sob esgotamento) → mensagem CLARA em vez de "Falha desconhecida" (500 genérico).
+    // Combina a assinatura no texto (isQuotaError) com o sinal GLOBAL (quotaStatus), que o LLM
+    // marca no 1310 mesmo quando o erro que propaga é um sintoma (ex.: 1211 "Unknown Model").
+    if (isQuotaError(fullMessage) || quotaStatus().exhausted) {
+        return new AppError(503, 'AI_CAPACITY', 'O assistente está temporariamente sem capacidade de IA (limite do provedor atingido). Tente novamente mais tarde.');
     }
     return new AppError(500, 'AI_INTERNAL', fullMessage);
 }
