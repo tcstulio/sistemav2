@@ -566,6 +566,26 @@ export const AiService = {
     // #1013: onProgress repassa o lastHeartbeat do polling p/ a UI.
     resumeChatJob: (jobId: string, onProgress?: (p: ChatJobProgress) => void) => pollChatJob(jobId, onProgress),
 
+    cancelChatJob: async (jobId: string): Promise<boolean> => {
+        try {
+            await axios.post(`/api/chat/jobs/${encodeURIComponent(jobId)}/cancel`, {}, getAuthHeaders());
+            return true;
+        } catch (error: any) {
+            log.error('Cancelar job do chat', error);
+            return false;
+        }
+    },
+
+    notifyChatJobVisibility: async (jobId: string, hidden: boolean): Promise<boolean> => {
+        try {
+            await axios.post(`/api/chat/jobs/${encodeURIComponent(jobId)}/visibility`, { hidden }, getAuthHeaders());
+            return true;
+        } catch (error: any) {
+            log.warn('Sinalizar visibilidade do job', error);
+            return false;
+        }
+    },
+
     createChatSession: async (firstMessage?: string): Promise<ChatSessionInfo | null> => {
         try {
             const response = await axios.post(`${API_URL}/sessions`, { firstMessage }, getAuthHeaders());

@@ -257,6 +257,26 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
         });
     });
 
+    describe('POST /chat/jobs/:id/visibility', () => {
+        it('registra e alterna a visibilidade do job', async () => {
+            const app = createApp(stream);
+            const hidden = await request(app).post('/api/chat/jobs/job-visible/visibility').send({ hidden: true });
+            expect(hidden.status).toBe(200);
+            expect(hidden.body.data).toEqual({ jobId: 'job-visible', hidden: true });
+            expect(stream.isHidden('job-visible')).toBe(true);
+
+            await request(app).post('/api/chat/jobs/job-visible/visibility').send({ hidden: false });
+            expect(stream.isHidden('job-visible')).toBe(false);
+        });
+
+        it('rejeita hidden que não seja booleano', async () => {
+            const app = createApp(stream);
+            const res = await request(app).post('/api/chat/jobs/job-visible/visibility').send({ hidden: 'true' });
+            expect(res.status).toBe(400);
+            expect(stream.isHidden('job-visible')).toBe(false);
+        });
+    });
+
     describe('integração com cancel: POST /cancel seta flag vista pelo subscribe live', () => {
         it('POST /cancel ANTES do subscribe: o subscribe recebe cancelled com summary', async () => {
             const app = createApp(stream);
