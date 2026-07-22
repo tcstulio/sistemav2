@@ -42,6 +42,43 @@ export function getWhatsAppBotToolsPrompt(): string {
     return _whatsappBotToolsPrompt;
 }
 
+/**
+ * Converte links da resposta do agente para o formato que FUNCIONA no WhatsApp.
+ *
+ * No chat do webapp, o agente fala em links RELATIVOS de markdown — `[Ver evento](/agenda/65944)` —
+ * que a SPA renderiza e navega internamente. No WhatsApp isso NÃO funciona por dois motivos:
+ *   1) `/agenda/65944` é relativo — o celular não sabe o host (precisa ser absoluto);
+ *   2) o WhatsApp NÃO renderiza a sintaxe markdown `[texto](url)` — mostra os colchetes crus
+ *      e só torna clicável URLs "peladas" (`https://...`).
+ *
+ * Por isso a resposta do WhatsApp precisa de um tratamento DIFERENTE do chat do sistema:
+ *   - link markdown `[label](/path | https://...)` → `label: https://base/path` (URL pelada, clicável);
+ *     se o label for redundante (é o próprio id no fim da URL ou a própria URL), devolve só a URL.
+ *   - caminho relativo solto (`/x/y` fora de markdown) → `https://base/x/y`.
+ * Idempotente para URLs que já são absolutas.
+ */
+export function absolutizeLinksForWhatsApp(text: string, baseUrlRaw?: string): string {
+    if (!text) return text;
+    const baseUrl = (baseUrlRaw || process.env.FRONTEND_URL || 'https://app.coolgroove.com.br').replace(/\/+$/, '');
+    const toAbs = (target: string): string =>
+        /^https?:\/\//i.test(target) ? target : baseUrl + (target.startsWith('/') ? target : '/' + target);
+
+    // 1) Links markdown: [label](/path) ou [label](https://...) → "label: URL_absoluta"
+    let out = text.replace(/\[([^\]]+)\]\((\/[^)\s]+|https?:\/\/[^)\s]+)\)/g, (_m, label: string, target: string) => {
+        const url = toAbs(target);
+        const lbl = String(label).trim();
+        // evita "65944: .../agenda/65944" (label é o id no fim da URL) ou "url: url"
+        if (lbl === url || url.endsWith('/' + lbl)) return url;
+        return `${lbl}: ${url}`;
+    });
+
+    // 2) Caminhos relativos SOLTOS (fora de markdown), precedidos por início/espaço.
+    //    URLs já absolutizadas no passo 1 começam com "https://" (não casam este passo).
+    out = out.replace(/(?<=^|\s)(\/[a-zA-Z0-9_\-\/\?=\.\&\%]+)/g, m => baseUrl + m);
+
+    return out;
+}
+
 // #1501 — fail-fast self-check de produção (defesa em profundidade contra regressão de
 // #1498). Chamada no início de processMessage, ANTES de qualquer trabalho caro
 // (identifySender, dolibarrService.getCustomerContext, aiService.generateReply). Custo
@@ -490,11 +527,10 @@ class BotService {
             );
             let replyText = typeof replyResult === 'string' ? replyResult : replyResult.text;
 
-            // Converter links internos relativos para absolutos APENAS para o WhatsApp
-            // A interface web continuará usando caminhos relativos (para manter o SPA layout)
+            // Links: APENAS para o WhatsApp, absolutiza e converte markdown → URL pelada clicável.
+            // A interface web continua usando os links relativos de markdown (SPA navega internamente).
             if (replyText) {
-                const baseUrl = process.env.FRONTEND_URL || 'https://app.coolgroove.com.br';
-                replyText = replyText.replace(/(?<=^|\s)(\/[a-zA-Z0-9_\-\/\?=\.\&\%]+)/g, match => baseUrl + match);
+                replyText = absolutizeLinksForWhatsApp(replyText);
             }
 
             // Cleanup: Strip any hallucinated signatures in the response
