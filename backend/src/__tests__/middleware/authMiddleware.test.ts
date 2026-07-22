@@ -1,7 +1,10 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import Module from 'module';
 
 vi.useFakeTimers();
+
+const originalAdminKey = process.env.ADMIN_KEY;
+process.env.ADMIN_KEY = 'test-admin-key-123';
 
 const { mockDolibarrService } = vi.hoisted(() => ({
     mockDolibarrService: {
@@ -45,13 +48,21 @@ beforeAll(() => {
 
 afterAll(() => {
     Module._load = originalLoad;
+    if (originalAdminKey === undefined) {
+        delete process.env.ADMIN_KEY;
+    } else {
+        process.env.ADMIN_KEY = originalAdminKey;
+    }
     vi.useRealTimers();
 });
 
 const {
     authMiddleware,
+    requireAuth,
     requireDolibarrLogin,
     requireDolibarrAdmin,
+    requireRole,
+    getAuthCacheMetrics,
 } = await import('../../middleware/authMiddleware');
 
 function mockRes() {
@@ -99,8 +110,11 @@ describe('authMiddleware', () => {
 
         expect(res.status).toHaveBeenCalledWith(403);
         expect(res.json).toHaveBeenCalledWith({
-            status: 'error',
-            message: 'Forbidden: Invalid or missing Admin Key.',
+            success: false,
+            error: {
+                code: 'INVALID_ADMIN_KEY',
+                message: 'Forbidden: Invalid or missing Admin Key.',
+            },
         });
         expect(next).not.toHaveBeenCalled();
     });
@@ -114,8 +128,11 @@ describe('authMiddleware', () => {
 
         expect(res.status).toHaveBeenCalledWith(403);
         expect(res.json).toHaveBeenCalledWith({
-            status: 'error',
-            message: 'Forbidden: Invalid or missing Admin Key.',
+            success: false,
+            error: {
+                code: 'INVALID_ADMIN_KEY',
+                message: 'Forbidden: Invalid or missing Admin Key.',
+            },
         });
         expect(next).not.toHaveBeenCalled();
     });
@@ -128,6 +145,23 @@ describe('authMiddleware', () => {
         authMiddleware(req, res, next);
 
         expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('keeps requireAuth compatible with requireDolibarrLogin', () => {
+        expect(requireAuth).toBe(requireDolibarrLogin);
+    });
+
+    it('throws during module loading when ADMIN_KEY is missing', async () => {
+        delete process.env.ADMIN_KEY;
+        vi.resetModules();
+
+        try {
+            await expect(import('../../middleware/authMiddleware')).rejects.toThrow(
+                'ADMIN_KEY não configurada — defina a variável de ambiente antes de iniciar o servidor'
+            );
+        } finally {
+            process.env.ADMIN_KEY = 'test-admin-key-123';
+        }
     });
 });
 
@@ -145,8 +179,11 @@ describe('requireDolibarrLogin', () => {
 
         expect(res.status).toHaveBeenCalledWith(401);
         expect(res.json).toHaveBeenCalledWith({
-            status: 'error',
-            message: 'Authentication Required: You must be logged in to Dolibarr.',
+            success: false,
+            error: {
+                code: 'AUTHENTICATION_REQUIRED',
+                message: 'Authentication Required: You must be logged in to Dolibarr.',
+            },
         });
     });
 
@@ -268,8 +305,11 @@ describe('requireDolibarrLogin', () => {
 
         expect(res.status).toHaveBeenCalledWith(401);
         expect(res.json).toHaveBeenCalledWith({
-            status: 'error',
-            message: 'Authentication Failed: Invalid Dolibarr API Key or User not found.',
+            success: false,
+            error: {
+                code: 'INVALID_DOLIBARR_KEY',
+                message: 'Authentication Failed: Invalid Dolibarr API Key or User not found.',
+            },
         });
     });
 
@@ -284,8 +324,11 @@ describe('requireDolibarrLogin', () => {
 
         expect(res.status).toHaveBeenCalledWith(401);
         expect(res.json).toHaveBeenCalledWith({
-            status: 'error',
-            message: 'Authentication Service Error',
+            success: false,
+            error: {
+                code: 'AUTHENTICATION_SERVICE_ERROR',
+                message: 'Authentication Service Error',
+            },
         });
     });
 
@@ -309,6 +352,70 @@ describe('requireDolibarrLogin', () => {
         expect(mockDolibarrService.getUserByKey).toHaveBeenCalledTimes(1);
         expect(next2).toHaveBeenCalled();
         expect((req2 as any).user).toEqual(user);
+    });
+
+    it('exposes cache hit, miss, and size metrics', async () => {
+        const before = getAuthCacheMetrics();
+        mockDolibarrService.getUserByKey.mockResolvedValue({ id: 30 });
+
+        await requireDolibarrLogin(
+            mockReq({ headers: { dolapikey: 'metrics-cache-key' } }),
+            mockRes(),
+            mockNext()
+        );
+        await requireDolibarrLogin(
+            mockReq({ headers: { dolapikey: 'metrics-cache-key' } }),
+            mockRes(),
+            mockNext()
+        );
+
+        const after = getAuthCacheMetrics();
+        expect(after.auth_cache_misses).toBe(before.auth_cache_misses + 1);
+        expect(after.auth_cache_hits).toBe(before.auth_cache_hits + 1);
+        expect(after.auth_cache_size).toBeGreaterThan(0);
+        expect(after.auth_cache_size).toBeLessThanOrEqual(500);
+    });
+
+    it('expires cached entries after exactly ten minutes', async () => {
+        mockDolibarrService.getUserByKey.mockResolvedValue({ id: 31 });
+        const makeRequest = () => requireDolibarrLogin(
+            mockReq({ headers: { dolapikey: 'ten-minute-cache-key' } }),
+            mockRes(),
+            mockNext()
+        );
+
+        await makeRequest();
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        await makeRequest();
+
+        expect(mockDolibarrService.getUserByKey).toHaveBeenCalledTimes(2);
+    });
+
+    it('evicts the least recently used entry and never exceeds 500 entries', async () => {
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        vi.clearAllMocks();
+        mockDolibarrService.getUserByKey.mockImplementation(async (key: string) => ({ key }));
+        const authenticate = (key: string) => requireDolibarrLogin(
+            mockReq({ headers: { dolapikey: key } }),
+            mockRes(),
+            mockNext()
+        );
+
+        for (let index = 0; index < 500; index += 1) {
+            await authenticate(`lru-cache-key-${index}`);
+        }
+
+        await authenticate('lru-cache-key-0');
+        await authenticate('lru-cache-key-500');
+        await authenticate('lru-cache-key-0');
+
+        expect(mockDolibarrService.getUserByKey).toHaveBeenCalledTimes(501);
+        expect(getAuthCacheMetrics().auth_cache_size).toBe(500);
+
+        await authenticate('lru-cache-key-1');
+
+        expect(mockDolibarrService.getUserByKey).toHaveBeenCalledTimes(502);
+        expect(getAuthCacheMetrics().auth_cache_size).toBe(500);
     });
 
     it('falls through to fetch when old cache format (number) is expired', async () => {
@@ -336,7 +443,7 @@ describe('requireDolibarrLogin', () => {
 
         const originalDateNow = Date.now;
         const cachedTime = Date.now();
-        Date.now = vi.fn(() => cachedTime + 6 * 60 * 1000) as any;
+        Date.now = vi.fn(() => cachedTime + 11 * 60 * 1000) as any;
 
         const req2 = mockReq({ headers: { dolapikey: 'expiring-key' } });
         const res2 = mockRes();
@@ -382,7 +489,7 @@ describe('requireDolibarrLogin', () => {
         expect(next1).toHaveBeenCalled();
         expect(mockDolibarrService.getUserByKey).toHaveBeenCalledTimes(1);
 
-        vi.advanceTimersByTime(6 * 60 * 1000);
+        vi.advanceTimersByTime(11 * 60 * 1000);
 
         mockDolibarrService.getUserByKey.mockResolvedValue({ id: 20 });
         const req2 = mockReq({ headers: { dolapikey: 'cleanup-key' } });
@@ -474,6 +581,57 @@ describe('requireDolibarrLogin', () => {
     });
 });
 
+describe('requireRole', () => {
+    it('returns 403 when the authenticated user lacks the required role', () => {
+        const req = mockReq({ user: { role: 'user' } });
+        const res = mockRes();
+        const next = mockNext();
+
+        requireRole('admin')(req, res, next);
+
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(res.json).toHaveBeenCalledWith({
+            success: false,
+            error: {
+                code: 'INSUFFICIENT_ROLE',
+                message: 'Access Denied: Insufficient role.',
+            },
+        });
+        expect(next).not.toHaveBeenCalled();
+    });
+
+    it.each(['admin', 'manager'])('accepts the %s role from an allowed role list', (role) => {
+        const req = mockReq({ user: { role } });
+        const res = mockRes();
+        const next = mockNext();
+
+        requireRole(['admin', 'manager'])(req, res, next);
+
+        expect(next).toHaveBeenCalledOnce();
+        expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it('recognizes Dolibarr admin flags as the admin role', () => {
+        const req = mockReq({ user: { admin: '1' } });
+        const res = mockRes();
+        const next = mockNext();
+
+        requireRole('admin')(req, res, next);
+
+        expect(next).toHaveBeenCalledOnce();
+    });
+
+    it('accepts a role from the authenticated user roles array', () => {
+        const req = mockReq({ user: { roles: ['user', 'manager'] } });
+        const res = mockRes();
+        const next = mockNext();
+
+        requireRole('manager')(req, res, next);
+
+        expect(next).toHaveBeenCalledOnce();
+    });
+});
+
 describe('requireDolibarrAdmin', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -488,8 +646,11 @@ describe('requireDolibarrAdmin', () => {
 
         expect(res.status).toHaveBeenCalledWith(401);
         expect(res.json).toHaveBeenCalledWith({
-            status: 'error',
-            message: 'Authentication Required: Admin Access Only.',
+            success: false,
+            error: {
+                code: 'ADMIN_AUTHENTICATION_REQUIRED',
+                message: 'Authentication Required: Admin Access Only.',
+            },
         });
     });
 
@@ -577,8 +738,11 @@ describe('requireDolibarrAdmin', () => {
 
         expect(res.status).toHaveBeenCalledWith(403);
         expect(res.json).toHaveBeenCalledWith({
-            status: 'error',
-            message: 'Access Denied: You must be an Administrator to perform this action.',
+            success: false,
+            error: {
+                code: 'ADMIN_ACCESS_DENIED',
+                message: 'Access Denied: You must be an Administrator to perform this action.',
+            },
         });
     });
 
@@ -593,8 +757,11 @@ describe('requireDolibarrAdmin', () => {
 
         expect(res.status).toHaveBeenCalledWith(500);
         expect(res.json).toHaveBeenCalledWith({
-            status: 'error',
-            message: 'Auth Verification Error',
+            success: false,
+            error: {
+                code: 'AUTH_VERIFICATION_ERROR',
+                message: 'Auth Verification Error',
+            },
         });
     });
 
