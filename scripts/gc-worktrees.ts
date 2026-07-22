@@ -40,6 +40,7 @@ import {
     type GcReport,
 } from '../backend/src/utils/gcWorktrees';
 import { killTree, listPidsByName } from '../backend/src/utils/processTree';
+import { SLOT2_ROOT } from '../backend/src/services/slotManager';
 
 const execFileAsync = promisify(execFile);
 
@@ -316,7 +317,9 @@ async function main(): Promise<void> {
         lowDiskAlert: null,
         errors: [],
     };
-    const protectedPaths = [REPO_ROOT, WT_ROOT];
+    // +SLOT2_ROOT (Degrau 2 PR-2): defesa — o GC NUNCA apaga o clone do slot-2 (é um repo válido
+    // fora de .claude/worktrees; esta linha o protege caso um scan futuro passe por perto).
+    const protectedPaths = [REPO_ROOT, WT_ROOT, SLOT2_ROOT];
 
     // 1) git worktree prune — limpa entradas administrativas de worktrees cujo dir sumiu.
     try {
