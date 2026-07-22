@@ -2176,32 +2176,53 @@ class TaskRunnerService {
         // exec passa a task; proof/preview passam undefined — o que conserta uma misatribuição real (o
         // preview lia a task do EXEC bloqueado no lock). Com 1 slot o valor comum é o mesmo → sem regressão.
         const abortIfKilled = () => !!ctxTask?.killRequested;
+        const isClone = slot.kind === 'clone';
         await this.ensureDiskSpace(slot, ctxTask);
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
         this.cleanStaleLocks(slot, gone);
-        // #slot-2: PROVISÃO em REPO_ROOT (cwd default do git()) — o fetch alimenta o clone/repo base,
-        // não o workspace do coder; fica assim até o slot-2 (fetch-no-clone). NÃO muda de cwd.
-        await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 60000 }, 3, abortIfKilled);
-        // Recria o worktree se NÃO existir OU se o diretório existir mas não for um worktree git
-        // VÁLIDO (ex.: .git apagado após reescrita de histórico/limpeza órfã). Sem isto, o `if
-        // existsSync` antigo pulava o `worktree add` e o `reset --hard` abaixo falhava com
-        // "fatal: not a git repository" — travando TODAS as tasks.
-        let needsCreate = !fs.existsSync(slot.root);
-        if (!needsCreate) {
-            try {
-                if (!fs.existsSync(path.join(slot.root, '.git'))) throw new Error('.git ausente');
-                await git(['rev-parse', '--is-inside-work-tree'], { timeout: 15000, cwd: slot.root });
-            } catch {
-                log.warn(`ensureWorktree: ${slot.root} existe mas não é worktree válido — recriando`);
-                try { fs.rmSync(slot.root, { recursive: true, force: true }); } catch (e: any) { log.warn(`rm slot.root falhou: ${e?.message}`); }
-                needsCreate = true;
+        // #slot-2: worktree-mode (slot-1) faz fetch no REPO_ROOT (o .git compartilhado, cwd default);
+        // clone-mode (slot-2) faz fetch no PRÓPRIO clone (cwd=slot.root), que tem o seu origin do
+        // GitHub. Worktree-mode mantém o opts `{ timeout }` EXATO de antes (byte-idêntico).
+        await gitFetchWithRetry(['fetch', 'origin', 'main'], isClone ? { timeout: 60000, cwd: slot.root } : { timeout: 60000 }, 3, abortIfKilled);
+        if (isClone) {
+            // clone-mode (slot-2): o clone É o repo (não um worktree do .git de prod). Valida a
+            // integridade; se inválido, NÃO recria inline (clone + npm install = MINUTOS dentro do
+            // worktreeLock, travando a fila) — desregistra o slot, dispara re-provisão em background e
+            // aborta ESTA task (re-tentável). NUNCA `worktree prune/add` num clone (corromperia o .git
+            // do clone). reset/checkout/deps abaixo são idênticos (já usam cwd=slot.root).
+            let valid = fs.existsSync(slot.root) && fs.existsSync(path.join(slot.root, '.git'));
+            if (valid) {
+                try { await git(['rev-parse', '--is-inside-work-tree'], { timeout: 15000, cwd: slot.root }); }
+                catch { valid = false; }
             }
-        }
-        if (needsCreate) {
-            // #slot-2: PROVISÃO em REPO_ROOT (cwd default) — o prune/add operam sobre o repo base p/
-            // registrar o worktree; o path-alvo (slot.root) é o workspace do coder. NÃO muda de cwd.
-            await git(['worktree', 'prune'], { timeout: 30000 });
-            await git(['worktree', 'add', '--force', slot.root, 'origin/main'], { timeout: 120000 });
+            if (!valid) {
+                log.warn(`ensureWorktree: clone do slot-2 inválido (${slot.root}) — desregistrando e re-provisionando em background`);
+                slotManager.unregisterSlot2();
+                void slotProvisioner.ensureSlot2().catch((e) => log.warn(`re-provisão slot-2: ${e?.message || e}`));
+                throw new Error('slot-2 inválido — re-provisionando em background; re-tente a task');
+            }
+        } else {
+            // worktree-mode (slot-1): BYTE-IDÊNTICO ao de sempre. Recria o worktree se NÃO existir OU se
+            // o diretório existir mas não for um worktree git VÁLIDO (ex.: .git apagado após reescrita de
+            // histórico/limpeza órfã). Sem isto, o `if existsSync` antigo pulava o `worktree add` e o
+            // `reset --hard` abaixo falhava com "fatal: not a git repository" — travando TODAS as tasks.
+            let needsCreate = !fs.existsSync(slot.root);
+            if (!needsCreate) {
+                try {
+                    if (!fs.existsSync(path.join(slot.root, '.git'))) throw new Error('.git ausente');
+                    await git(['rev-parse', '--is-inside-work-tree'], { timeout: 15000, cwd: slot.root });
+                } catch {
+                    log.warn(`ensureWorktree: ${slot.root} existe mas não é worktree válido — recriando`);
+                    try { fs.rmSync(slot.root, { recursive: true, force: true }); } catch (e: any) { log.warn(`rm slot.root falhou: ${e?.message}`); }
+                    needsCreate = true;
+                }
+            }
+            if (needsCreate) {
+                // PROVISÃO em REPO_ROOT (cwd default) — o prune/add operam sobre o repo base p/ registrar
+                // o worktree; o path-alvo (slot.root) é o workspace do coder. NÃO muda de cwd.
+                await git(['worktree', 'prune'], { timeout: 30000 });
+                await git(['worktree', 'add', '--force', slot.root, 'origin/main'], { timeout: 120000 });
+            }
         }
         // Limpa restos de execuções anteriores ANTES de trocar de branch. Sem isto, se uma task
         // anterior deixou o worktree sujo (mudanças não commitadas / arquivos novos), o checkout
@@ -2217,7 +2238,7 @@ class TaskRunnerService {
             try {
                 const { stdout } = await git(['ls-remote', '--heads', 'origin', branch], { timeout: 30000 });
                 if (stdout.trim()) {
-                    await gitFetchWithRetry(['fetch', 'origin', branch], { timeout: 60000 }, 3, abortIfKilled);
+                    await gitFetchWithRetry(['fetch', 'origin', branch], isClone ? { timeout: 60000, cwd: slot.root } : { timeout: 60000 }, 3, abortIfKilled);
                     base = `origin/${branch}`;
                     log.info(`ensureWorktree: preservando trabalho da branch ${branch} (correção incremental)`);
                 }
