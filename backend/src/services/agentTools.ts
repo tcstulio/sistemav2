@@ -14,6 +14,7 @@ import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
 import { isValidExternalUrl } from '../utils/urlValidation';
 import { resolveUserMobile } from '../utils/userMobile';
+import { resolveEventPeriod } from '../utils/eventPeriod';
 import { logger } from '../utils/logger';
 import { signDeeplink } from '../utils/deeplinkToken';
 import { minimaxService } from './minimaxService';
@@ -182,7 +183,7 @@ const TOOLS_PROMPT_FULL = `
         16. list_warehouses() - Lista estoques/armazéns.
         17. list_tasks(projectId: string) - Lista tarefas de um projeto.
         18. list_user_tasks(userId?: string) - Lista as tarefas atribuídas a um usuário. Omita userId para listar as tarefas do PRÓPRIO usuário logado ("minhas tarefas").
-        19. list_events(limit: number) - Lista eventos da agenda.
+        19. list_events(limit?, period?, date_start?, date_end?) - Lista eventos da agenda. Para "dessa semana/mês/hoje" PREFIRA period (calculado pelo servidor): 'today'|'tomorrow'|'this_week'|'next_week'|'this_month'|'next_month'. Ou date_start/date_end em YYYY-MM-DD para intervalo específico. Sem filtro = mais recentes.
         20. list_contacts(search: string) - Lista contatos (pessoas de contato).
         21. list_categories(type: string) - Lista categorias (customer, product, etc).
         22. list_suppliers(search: string) - Lista fornecedores.
@@ -1445,8 +1446,19 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 ).join('') + '</ul>';
         }
         case 'list_events': {
-            const events = await dolibarrService.listEvents(args?.limit);
-            if (events.length === 0) return 'Nenhum evento encontrado.';
+            // Aceita period (atalho resolvido pelo servidor) OU date_start/date_end explícitos.
+            let dateStart = args?.date_start;
+            let dateEnd = args?.date_end;
+            if (args?.period && !dateStart && !dateEnd) {
+                const range = resolveEventPeriod(String(args.period), new Date());
+                dateStart = range.dateStart;
+                dateEnd = range.dateEnd;
+            }
+            const events = await dolibarrService.listEvents(args?.limit, dateStart, dateEnd);
+            if (events.length === 0) {
+                const periodoTxt = (dateStart || dateEnd) ? ` no período informado (${dateStart || '…'} a ${dateEnd || '…'})` : '';
+                return `Nenhum evento encontrado${periodoTxt}.`;
+            }
             return '<h3>📅 Eventos</h3><ul>' +
                 events.map((e: any) =>
                     `<li><a href="/agenda/${e.id}" class="text-blue-600 underline font-semibold">${e.label}</a> — ${e.datep || ''}</li>`

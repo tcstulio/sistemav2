@@ -277,14 +277,22 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         return Array.isArray(response.data) ? response.data : [];
     }
 
-    async listEvents(limit?: number): Promise<any[]> {
+    async listEvents(limit?: number, dateStart?: string, dateEnd?: string): Promise<any[]> {
         // #1351: listEvents é chamada frequente pelo agente para montar contexto. Diferencia
         // "sem eventos" (404 ou 200 com []) de "não consegui consultar" (5xx/timeout/rede → propaga).
         const headers = this.getHeaders();
         const url = `${this.baseUrl}agendaevents`;
+        // Filtro opcional por intervalo de datas (YYYY-MM-DD) no início do evento (t.datep).
+        // sanitizeForSqlFilter preserva dígitos/traços/espaço/dois-pontos → o datetime fica intacto.
+        const clauses: string[] = [];
+        if (dateStart) clauses.push(buildSqlFilter('t.datep', '>=', `${dateStart} 00:00:00`));
+        if (dateEnd) clauses.push(buildSqlFilter('t.datep', '<=', `${dateEnd} 23:59:59`));
+        const sqlfilters = clauses.length ? `(${clauses.join(') and (')})` : undefined;
+        // Com janela de datas, ordena CRESCENTE (cronológico dentro do período); senão, mais recentes primeiro.
+        const sortorder = (dateStart || dateEnd) ? 'ASC' : 'DESC';
         const response = await axios.get(url, {
             headers,
-            params: { limit: limit || 10, sortfield: 't.datep', sortorder: 'DESC' },
+            params: { limit: limit || 10, sortfield: 't.datep', sortorder, sqlfilters },
             httpsAgent: this.httpsAgent,
             validateStatus: (s) => s === 200 || s === 404
         });
