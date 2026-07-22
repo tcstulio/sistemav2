@@ -13,6 +13,7 @@ import { FEATURES } from '../config/features';
 import { isFinancialCommandsEnabled, isCrmContextInjectionEnabled, isWhatsappEmployeeElevationEnabled } from '../config/featureSwitches';
 import { whatsappIdentityService, SenderIdentity } from './whatsappIdentityService';
 import { userPermissionsService } from './userPermissionsService';
+import { isQuotaError, quotaStatus } from './llmQuotaState';
 
 const log = logger.child('BotService');
 
@@ -560,6 +561,24 @@ class BotService {
 
         } catch (error: any) {
             log.error(`Process Error: ${error.message}`);
+            // Degradação graciosa: quando a falha é por CAPACIDADE de IA (cota do provedor
+            // esgotada — GLM 1310, MiniMax "usage limit", 429/1211 sob esgotamento), avisa o
+            // usuário em vez de ficar em SILÊNCIO. Sem isso, durante um esgotamento o bot não
+            // responde nada e a pessoa não sabe por quê. Só para 1:1 (não polui grupo) e só
+            // p/ erro de cota (outros erros seguem silenciosos, como antes, p/ não confundir).
+            try {
+                const detail = error?.response?.data?.error?.message || error?.message || '';
+                if (isQuotaError(detail) || quotaStatus().exhausted) {
+                    const chatId = message?.from;
+                    const sessionId = message?.sessionId;
+                    if (chatId && sessionId && !String(chatId).endsWith('@g.us')) {
+                        await messageService.sendText(sessionId, chatId,
+                            'No momento estou sem capacidade de IA para responder 🛰️ É temporário (limite do provedor). Pode tentar de novo mais tarde.');
+                    }
+                }
+            } catch (notifyErr: any) {
+                log.warn(`Falha ao enviar aviso de degradação graciosa: ${notifyErr?.message}`);
+            }
         }
     }
 
