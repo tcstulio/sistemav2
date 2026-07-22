@@ -784,7 +784,10 @@ class TaskRunnerService {
 
     private notifyStalledDecomposedEpics(): void {
         for (const epic of Object.values(this.store.tasks)) {
-            if (epic.kind !== 'epic' || epic.status !== 'pending' || epic.epicStalledNotified) continue;
+            // #resiliencia FIX3.b: NAO pula epicas ja-notificadas — as legadas foram notificadas ANTES do
+            // FIX3 existir e ficariam presas p/ sempre. Re-processa TODAS: o re-enfileiramento de transitorio
+            // roda p/ qualquer epica travada; so o AVISO (notificacao) fica gated no flag.
+            if (epic.kind !== 'epic' || epic.status !== 'pending') continue;
             const subs = (epic.subTasks ?? []).map(n => this.store.tasks[n]).filter(Boolean) as Task[];
             if (subs.length === 0) continue; // sem subs = caso do sweep decomposeStuckEpics, não deste
             const allTerminal = subs.every(s => this.isTerminalStatus(s.status));
@@ -812,12 +815,15 @@ class TaskRunnerService {
                 requeued = true;
             }
             if (requeued) {
-                // Ao menos uma sub-task voltou p/ a fila: NÃO trava a épica. Ela re-avalia num próximo poll
-                // quando as sub-tasks re-rodarem (não seta epicStalledNotified — a épica segue viva).
+                // Ao menos uma sub-task voltou p/ a fila: NAO trava a epica. LIMPA epicStalledNotified — uma
+                // epica LEGADA (notificada antes do FIX3) volta a VIVER agora que as transitorias re-rodam.
+                epic.epicStalledNotified = false;
                 this.save();
                 continue;
             }
 
+            // Sem re-enfileiramento possivel (todas reais/teto): trava, mas NAO re-notifica (anti-spam).
+            if (epic.epicStalledNotified) continue;
             epic.epicStalledNotified = true;
             this.recordEvent(epic, 'task_failed', `Épica travada: ${subs.length} sub-tasks terminais, ${failedCount} sem sucesso. Requer decisão humana (não re-executa sozinha).`, { stalledEpic: true });
             this.save();

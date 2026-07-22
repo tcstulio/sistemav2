@@ -207,7 +207,7 @@ describe('FIX3 — épica re-enfileira sub-task TRANSITÓRIA; trava só em falha
         expect(s.slotId).toBeUndefined();
         expect(s.error).toBeUndefined();
         expect(lastEvent(s).meta?.epicRetry).toBe(true);
-        expect(svc.store.tasks[100].epicStalledNotified).toBeUndefined(); // NÃO travou
+        expect(svc.store.tasks[100].epicStalledNotified).toBeFalsy() // FIX3.b: re-enfileirar limpa o flag p/ false, nao undefined; // NÃO travou
     });
 
     it('sub failed com error REAL "typecheck TS2322" → épica TRAVA (epicStalledNotified), sub segue failed', () => {
@@ -236,7 +236,7 @@ describe('FIX3 — épica re-enfileira sub-task TRANSITÓRIA; trava só em falha
         svc.notifyStalledDecomposedEpics();
         expect(svc.store.tasks[102].status).toBe('pending'); // transitório detectado via evento
         expect(svc.store.tasks[102].subtaskRetries).toBe(1);
-        expect(svc.store.tasks[100].epicStalledNotified).toBeUndefined();
+        expect(svc.store.tasks[100].epicStalledNotified).toBeFalsy() // FIX3.b: re-enfileirar limpa o flag p/ false, nao undefined;
     });
 
     it('mistura: 1 transitória + 1 real → re-enfileira a transitória e NÃO trava (re-avalia no próximo poll)', () => {
@@ -246,7 +246,7 @@ describe('FIX3 — épica re-enfileira sub-task TRANSITÓRIA; trava só em falha
         svc.notifyStalledDecomposedEpics();
         expect(svc.store.tasks[101].status).toBe('pending');  // transitória re-enfileirada
         expect(svc.store.tasks[102].status).toBe('failed');   // real permanece
-        expect(svc.store.tasks[100].epicStalledNotified).toBeUndefined(); // não trava enquanto há re-tentativa viva
+        expect(svc.store.tasks[100].epicStalledNotified).toBeFalsy() // FIX3.b: re-enfileirar limpa o flag p/ false, nao undefined; // não trava enquanto há re-tentativa viva
     });
 
     it('regressão: subs merged+failed(sem error nem evento) → falha REAL (msg vazia) → trava (comportamento antigo)', () => {
