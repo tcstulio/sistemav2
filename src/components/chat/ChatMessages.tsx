@@ -16,9 +16,26 @@ export function ChatMessages({ activeJobId, onCancelled }: ChatMessagesProps) {
   const isVisible = usePageVisibility();
   const previousVisibility = useRef(isVisible);
   const [isCancelling, setIsCancelling] = useState(false);
+  const cancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(() =>
     safeStorage.getItem(CHAT_JOB_NOTIFICATIONS_KEY) !== 'false'
   );
+
+  useEffect(() => {
+    return () => {
+      if (cancelTimeoutRef.current) clearTimeout(cancelTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeJobId) {
+      setIsCancelling(false);
+      if (cancelTimeoutRef.current) {
+        clearTimeout(cancelTimeoutRef.current);
+        cancelTimeoutRef.current = null;
+      }
+    }
+  }, [activeJobId]);
 
   useEffect(() => {
     if (!activeJobId || previousVisibility.current === isVisible) {
@@ -37,6 +54,11 @@ export function ChatMessages({ activeJobId, onCancelled }: ChatMessagesProps) {
       const payload = JSON.parse((event as MessageEvent<string>).data.split(String.fromCharCode(0)).join('\n')) as { summary?: string };
       const summary = payload.summary || 'Cancelado por você.';
       onCancelled(activeJobId, summary);
+      setIsCancelling(false);
+      if (cancelTimeoutRef.current) {
+        clearTimeout(cancelTimeoutRef.current);
+        cancelTimeoutRef.current = null;
+      }
       if (notificationsEnabled) toast.info(summary);
       source.close();
     };
@@ -62,7 +84,13 @@ export function ChatMessages({ activeJobId, onCancelled }: ChatMessagesProps) {
     if (!accepted) {
       setIsCancelling(false);
       toast.error('Não foi possível cancelar o processamento.');
+      return;
     }
+    cancelTimeoutRef.current = setTimeout(() => {
+      setIsCancelling(false);
+      cancelTimeoutRef.current = null;
+      toast.info('O processamento já foi concluído ou não respondeu ao cancelamento.');
+    }, 5000);
   };
 
   if (!activeJobId) return null;

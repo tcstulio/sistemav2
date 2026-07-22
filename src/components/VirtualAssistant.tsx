@@ -735,17 +735,17 @@ const VirtualAssistant: React.FC = () => {
                       <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-75"></div>
                       <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-150"></div>
                     </div>
-                    {lastHeartbeat && (
-                      <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1" aria-live="polite">
-                        Processando… ({Math.max(0, Math.round((nowTick - lastHeartbeat) / 1000))}s desde último update)
-                      </div>
-                    )}
-                    <ChatMessages activeJobId={activeJobId} onCancelled={handleJobCancelled} />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+                     {lastHeartbeat && (
+                       <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1" aria-live="polite">
+                         Processando… ({Math.max(0, Math.round((nowTick - lastHeartbeat) / 1000))}s desde último update)
+                       </div>
+                     )}
+                   </div>
+                 </div>
+               </div>
+             )}
+            {activeJobId && <ChatMessages activeJobId={activeJobId} onCancelled={handleJobCancelled} />}
+           </div>
 
           {/* Image Preview(s) — #947: miniaturas de todas as imagens anexadas */}
           {(attachedImages.length > 0 || imageProcessing) && (

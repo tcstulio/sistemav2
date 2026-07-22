@@ -185,6 +185,7 @@ export async function runAgentLoop(
     let toolCallsUsed = 0;
     let iterations = 0;
     let lastText = '';
+    let lastHidden = stream.isHidden(opts.jobId);
     // Sinaliza que o turno foi cancelado (abort durante uma tool) — encerra os dois loops.
     let aborted = false;
 
@@ -196,6 +197,12 @@ export async function runAgentLoop(
     try {
         while (iterations < maxIterations) {
             if (signal?.aborted) break;
+
+            const hidden = stream.isHidden(opts.jobId);
+            if (hidden !== lastHidden) {
+                lastHidden = hidden;
+                stream.emit(opts.jobId, 'thinking', { phase: hidden ? 'page-hidden' : 'page-visible' });
+            }
 
             // #1575: checa a flag de cancelamento ANTES de gastar mais uma iteração do LLM.
             // Se setada (via POST /chat/jobs/:id/cancel), emite 'cancelled' com summary
