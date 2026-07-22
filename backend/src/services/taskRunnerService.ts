@@ -784,9 +784,13 @@ class TaskRunnerService {
         if (!isQuotaExhausted() && !this.isPeakHold()) {
             try {
                 const cfg = this.getAutomationConfig();
-                const active = Object.values(this.store.tasks).some((t) => t.status === 'running' || t.status === 'fixing');
-                if (cfg.autoPlay && !active && this.pendingExecs === 0 && this.getQueuedTasks().length > 0) {
-                    log.info('Off-peak + fila pendente + cascade parado — retomando dispatch.');
+                // #flip PR-E (E1): a guarda passa de `pendingExecs === 0` (serial: só religa com a fila TOTALMENTE
+                // parada) p/ `pendingExecs < maxParallelExec()` (tem slot livre → religa mesmo com 1 task ativa).
+                // Removido o `!active` global: com N=2, "tem 1 task rodando" ≠ "não há slot livre". A segurança
+                // (teto de paralelismo/peak-hold/teto diário) vive TODA no autoPlayNext. Com clamp=1 →
+                // `pendingExecs < 1` === `pendingExecs === 0`, byte-idêntico ao serial.
+                if (cfg.autoPlay && this.pendingExecs < slotManager.maxParallelExec() && this.getQueuedTasks().length > 0) {
+                    log.info('Off-peak + fila pendente + slot livre — retomando dispatch.');
                     this.autoPlayNext();
                 }
             } catch { /* best-effort */ }
@@ -1286,6 +1290,11 @@ class TaskRunnerService {
     // #slot-lock (Degrau 2 PR-4a-i): lock POR-WORKSPACE (keyed por slot.root), não mais um global.
     // Com 1 slot há 1 chave → 1 lock → BYTE-IDÊNTICO ao serial de hoje. Com N slots, cada workspace
     // (worktree/clone) serializa suas próprias operações de git independentemente do outro.
+    // #flip PR-D (INVARIANTE): a chave é slot.root. Como slotManager.slot1.root === REPO_ROOT (o worktree
+    // de prod, onde vivem o .git compartilhado e o projectID/XDG default do opencode), o lock do slot-1
+    // É o lock de REPO_ROOT. Qualquer caminho que rode opencode em REPO_ROOT (Judge Visual) ou toque o
+    // .git de prod DEVE segurar o lock do slot-1 (use withRepoRootLock) — NUNCA o lock do slot da task,
+    // senão com N=2 dois opencode compartilham o mesmo projectID/opencode.db = deadlock #335.
     private worktreeLocks = new Map<string, Promise<void>>();
     private async withWorktreeLock<T>(label: string, slot: Slot, fn: () => Promise<T>): Promise<T> {
         const key = slot.root;
@@ -1342,6 +1351,13 @@ class TaskRunnerService {
         } finally {
             release();
         }
+    }
+
+    // #flip PR-D: TODA operação que toca REPO_ROOT, o .git compartilhado de prod, ou o projectID/XDG
+    // default do opencode (ex.: Judge Visual rodando em REPO_ROOT) DEVE segurar o lock do slot-1 — que
+    // É, de facto, o lock de REPO_ROOT. NÃO mover p/ o lock do slot da task (2 opencode no mesmo db = #335).
+    private withRepoRootLock<T>(label: string, fn: () => Promise<T>): Promise<T> {
+        return this.withWorktreeLock(label, slotManager.slot1, fn);
     }
 
     /**
@@ -1771,27 +1787,38 @@ class TaskRunnerService {
             log.warn(`Auto-play em hold: teto DIÁRIO de ${dailyBudget} rodadas de opencode atingido (${this.dailyRoundsToday()}) — retoma na virada do dia.`);
             return;
         }
-        const queued = this.getQueuedTasks();
-        if (queued.length === 0) return;
-        // #slot-claim (Degrau 2 PR-3): CLAIM ATÔMICO — nunca elege uma issue que JÁ está em voo
-        // (em execInFlight). Com N slots, sem este filtro, duas chamadas de autoPlayNext (ou o próprio
-        // avanço via .finally + pollSync) elegeriam a MESMA 'pending' (ela só sai de getQueuedTasks
-        // quando o async muda o status) e a despachariam 2× — o double-claim que o Fable provou ([100,100]).
-        // O claim em si é síncrono (startTask→scheduleExec incrementa pendingExecs/execInFlight sem await),
-        // então a eleição + dispatch não intercalam. Em serial (1 slot) execInFlight está vazio aqui
-        // (pendingExecs=0 → a guarda passou) → find === queued[0] → BYTE-IDÊNTICO.
-        const next = queued.find(t => !this.execInFlight.has(t.issueNumber));
-        if (!next) return;
-        // #slot-elect (PR-4a-iii): escolhe um SLOT livre p/ despachar. Com clamp=1 há 1 slot → freeSlot()
-        // devolve o slot-1 enquanto ele não tem exec (pendingExecs=0 aqui, então livre) → BYTE-IDÊNTICO.
-        // Com N slots, cada autoPlayNext (via .finally/pollSync) preenche o próximo slot livre. NENHUM
-        // await entre freeSlot() e o claim síncrono do scheduleExec (startTask não awaita antes dele).
-        const slot = this.freeSlot();
-        if (!slot) return;
-        log.info(`Auto-play: iniciando #${next.issueNumber} automaticamente (slot ${slot.id})`);
-        this.startTask(next.issueNumber, { slot }).catch((e: any) => {
-            log.warn(`Auto-play falhou para #${next.issueNumber}: ${e?.message || e}`);
-        });
+        // #flip PR-E (E2): FILL-LOOP SÍNCRONO — enche TODOS os slots livres numa só chamada (antes
+        // despachava 1). REGRA DURA (I5): NENHUM `await` entre freeSlot() e o claim síncrono do
+        // scheduleExec — startTask(...) é fire-and-forget (SEM await), e o prólogo do scheduleExec
+        // (pendingExecs++/slotQueueDepth/execInFlight/task.slotId) roda 100% síncrono ANTES do 1º
+        // await do startTask. Por isso a próxima iteração já vê o estado atualizado: freeSlot() não
+        // re-elege o mesmo slot e find() não re-elege a mesma issue. Com clamp=1 o loop roda 1
+        // iteração e para (pendingExecs vira 1 >= 1 → break) → BYTE-IDÊNTICO ao serial de hoje.
+        for (let i = 0; i < slotManager.maxParallelExec(); i++) {
+            // Re-checagem do teto de paralelismo a cada iteração (a iteração anterior incrementou
+            // pendingExecs de forma síncrona). É a MESMA guarda do topo, revalidada dentro do loop.
+            if (this.pendingExecs >= slotManager.maxParallelExec()) break;
+            // #slot-claim (Degrau 2 PR-3): CLAIM ATÔMICO — nunca elege uma issue que JÁ está em voo
+            // (em execInFlight). Com N slots, sem este filtro, duas chamadas de autoPlayNext (ou o próprio
+            // avanço via .finally + pollSync) elegeriam a MESMA 'pending' (ela só sai de getQueuedTasks
+            // quando o async muda o status) e a despachariam 2× — o double-claim que o Fable provou ([100,100]).
+            // Re-filtra a fila a CADA iteração (a issue despachada na iteração anterior já entrou em execInFlight).
+            const queued = this.getQueuedTasks();
+            const next = queued.find(t => !this.execInFlight.has(t.issueNumber));
+            if (!next) break;
+            // #slot-elect (PR-4a-iii): escolhe um SLOT livre p/ despachar. Com clamp=1 há 1 slot → freeSlot()
+            // devolve o slot-1 enquanto ele não tem exec (slotQueueDepth<=0) → BYTE-IDÊNTICO. Com N slots,
+            // cada iteração preenche o próximo slot livre (o claim síncrono da anterior já subiu a profundidade).
+            const slot = this.freeSlot();
+            if (!slot) break;
+            log.info(`Auto-play: iniciando #${next.issueNumber} automaticamente (slot ${slot.id})`);
+            // SEM await aqui (I5): o claim síncrono do scheduleExec (dentro do startTask) já incrementou
+            // pendingExecs/slotQueueDepth/execInFlight ANTES de qualquer await, então a próxima iteração
+            // vê o estado atualizado. .catch p/ não vazar a rejection (fire-and-forget).
+            this.startTask(next.issueNumber, { slot }).catch((e: any) => {
+                log.warn(`Auto-play falhou para #${next.issueNumber}: ${e?.message || e}`);
+            });
+        }
     }
 
     /**
@@ -3810,10 +3837,12 @@ Return ONLY a JSON:
 
             // O Judge Visual roda opencode em REPO_ROOT, que compartilha o MESMO projectID do
             // worktree isolado. Para não coexistir com o opencode da próxima task (colisão de
-            // index.lock / deadlock no init — a causa do #335), serializa sob o worktreeLock e
-            // varre/limpa órfãos antes. cleanSnapshotLockFor(REPO_ROOT) só toca o snapshot
-            // deste checkout (nunca o .git real do dev nem outros projetos).
-            const stdout = await this.withWorktreeLock(`visual-judge #${issueNumber}`, slotManager.slot1, async () => {
+            // index.lock / deadlock no init — a causa do #335), serializa sob o LOCK DE REPO_ROOT
+            // (= lock do slot-1) e varre/limpa órfãos antes. cleanSnapshotLockFor(REPO_ROOT) só
+            // toca o snapshot deste checkout (nunca o .git real do dev nem outros projetos).
+            // #flip PR-D: withRepoRootLock (não o lock do slot da task) — à prova de refactor: com
+            // N=2, mover isto p/ o slot da task poria 2 opencode no mesmo projectID/db (#335).
+            const stdout = await this.withRepoRootLock(`visual-judge #${issueNumber}`, async () => {
                 this.liveRunNeedles.set(issueNumber, judgeNeedle);
                 try {
                     // excludeIssue=self: mata órfão do PRÓPRIO judge, poupa coders vizinhos (Fase 2).
