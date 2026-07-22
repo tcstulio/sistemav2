@@ -21,6 +21,7 @@ vi.mock('../../services/taskRunnerService', () => ({
         getTask: vi.fn(),
         getAllTasks: vi.fn(() => []),
         redoTask: vi.fn(async () => ({})), // #1455: o planner re-despacha bloqueador parado
+        isExecInFlight: vi.fn(() => false), // #flip PR-B: default "não em voo" → o deadlock-kick segue firando
     },
 }));
 
@@ -284,6 +285,9 @@ describe('taskPlannerService — throttle de concorrência (#1117 / Epic #1113)'
 describe('taskPlannerService — auto-deadlock: bloqueador PARADO (#1455)', () => {
     beforeEach(async () => {
         vi.clearAllMocks();
+        // #flip PR-B: clearAllMocks NÃO reseta o mockReturnValue — restaura o default "não em voo" p/ isolar
+        // os testes (senão o mockReturnValue(true) de um teste vaza p/ os seguintes e suprime o deadlock-kick).
+        vi.mocked((taskRunnerService as any).isExecInFlight).mockReturnValue(false);
         invalidatePlannerCache();
         resetPlannerThrottle();
         const { execFile } = await import('child_process');
@@ -345,11 +349,23 @@ describe('taskPlannerService — auto-deadlock: bloqueador PARADO (#1455)', () =
 
         expect((taskRunnerService as any).redoTask).not.toHaveBeenCalled();
     });
+
+    it('#flip PR-B: bloqueador parado mas COM exec em voo → NÃO re-despacha (skip, evita 2º redo da mesma issue)', async () => {
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'pending' }));
+        vi.mocked((taskRunnerService as any).isExecInFlight).mockReturnValue(true); // dispatch já em voo
+
+        await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        // ORÁCULO G6: com o bloqueador já em voo, o quebra-deadlock NÃO dispara um 2º redo da mesma issue.
+        // (Sem kick, cai no ramo "nenhum bloqueador re-despachável" → LLM decide; o que importa é o não-kick.)
+        expect((taskRunnerService as any).redoTask).not.toHaveBeenCalled(); // NUNCA 2 execs da mesma issue
+    });
 });
 
 describe('taskPlannerService — não esperar no PRÓPRIO PR (#1460 rescue-gap)', () => {
     beforeEach(async () => {
         vi.clearAllMocks();
+        vi.mocked((taskRunnerService as any).isExecInFlight).mockReturnValue(false); // #flip PR-B: default "não em voo"
         invalidatePlannerCache();
         resetPlannerThrottle();
     });
