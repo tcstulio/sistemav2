@@ -1,12 +1,13 @@
 import { randomUUID } from 'crypto';
 import { createLogger } from '../utils/logger';
 import { saveJob, deleteJob, loadAll } from './aiJobStorage';
+import { getAiJobLivenessExpiresAt, MAX_CHAINED_CALLS } from './aiJobBudget';
 
 const log = createLogger('AiJob');
 
 // Job assíncrono do assistente: o POST do chat enfileira e responde na hora com um jobId
 // (não segura a conexão → mata o 524 do Cloudflare em jobs longos). O agente roda em background
-// até concluir, SEM limite de tempo; o cliente faz polling de GET /jobs/:id.
+// até concluir ou atingir o deadline global; o cliente faz polling de GET /jobs/:id.
 //
 // Concorrência PARALELA (MAX=3): cada job roda dentro de AsyncLocalStorage (runWithToolContext),
 // isolando o listener de tool-calls e o contexto de permissões por job. Isso permite N usuários
@@ -26,6 +27,7 @@ export interface AiJob {
     result?: any;
     error?: string;
     createdAt: number;
+    livenessExpiresAt: string;
     finishedAt?: number;
     label?: string;
     /** Expiração (epoch ms). Definido ao concluir (finishedAt + TTL). */
@@ -59,6 +61,7 @@ export interface AiJobStatusInfo {
     alive: boolean;
     startedAt: string;
     lastHeartbeat: string;
+    livenessExpiresAt: string;
     currentProvider: string | null;
     progressPct: number;
     queuePosition: number | null;
@@ -75,6 +78,7 @@ const MAX_CONCURRENT = 3;
 
 let running = 0;
 const queue: Array<() => void> = [];
+const deadlineTimers = new Map<string, NodeJS.Timeout>();
 
 // #1011: timestamp do último write-through por job (setJob). Base para o cálculo
 // lastHeartbeat = max(lastWrite, now) no reportProgress — nunca retrocede o heartbeat.
@@ -82,6 +86,10 @@ const lastWriteAt = new Map<string, number>();
 
 function isExpired(j: AiJob, now: number = Date.now()): boolean {
     return j.expiresAt !== undefined && now >= j.expiresAt;
+}
+
+function isPastLiveness(j: AiJob, now: number = Date.now()): boolean {
+    return (j.status === 'queued' || j.status === 'running') && now >= Date.parse(j.livenessExpiresAt);
 }
 
 /** #1011: mapeia o status interno p/ o vocabulário externo do endpoint de heartbeat. */
@@ -110,6 +118,7 @@ function toStatusInfo(job: AiJob): AiJobStatusInfo {
         alive: true,
         startedAt: new Date(started).toISOString(),
         lastHeartbeat: new Date(heartbeat).toISOString(),
+        livenessExpiresAt: job.livenessExpiresAt,
         currentProvider: job.currentProvider ?? null,
         progressPct: typeof job.progressPct === 'number' ? clampPct(job.progressPct) : 0,
         queuePosition: job.status === 'queued' ? queue.length : null,
@@ -129,10 +138,43 @@ function patchJob(id: string, changes: Partial<AiJob>): void {
     setJob({ ...cur, ...changes });
 }
 
+function markDeadlineExceeded(id: string): void {
+    const job = jobs.get(id);
+    if (!job || job.status === 'done' || job.status === 'error') return;
+    clearDeadline(id);
+    const finishedAt = Date.now();
+    patchJob(id, {
+        status: 'error',
+        error: 'deadline_exceeded',
+        finishedAt,
+        expiresAt: finishedAt + TTL_MS,
+    });
+    log.warn('Job excedeu o deadline global', { jobId: id, livenessExpiresAt: job.livenessExpiresAt, maxChainedCalls: MAX_CHAINED_CALLS });
+}
+
+function scheduleDeadline(job: AiJob): void {
+    const delay = Math.max(1, Date.parse(job.livenessExpiresAt) - Date.now());
+    const timer = setTimeout(() => {
+        deadlineTimers.delete(job.id);
+        markDeadlineExceeded(job.id);
+    }, delay);
+    timer.unref?.();
+    deadlineTimers.set(job.id, timer);
+}
+
+function clearDeadline(id: string): void {
+    const timer = deadlineTimers.get(id);
+    if (timer) {
+        clearTimeout(timer);
+        deadlineTimers.delete(id);
+    }
+}
+
 function cleanup() {
     const now = Date.now();
     for (const [id, j] of jobs) {
         if (isExpired(j, now)) {
+            clearDeadline(id);
             jobs.delete(id);
             lastWriteAt.delete(id);
             deleteJob(id);
@@ -163,6 +205,7 @@ function restore(): void {
                 result: raw.result,
                 error: raw.error,
                 createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : now,
+                livenessExpiresAt: raw.livenessExpiresAt || getAiJobLivenessExpiresAt(typeof raw.createdAt === 'number' ? raw.createdAt : now),
                 finishedAt: raw.finishedAt,
                 label: raw.label,
                 expiresAt: raw.expiresAt,
@@ -195,29 +238,55 @@ export const aiJobService = {
     enqueue(fn: () => Promise<any>, label?: string): string {
         cleanup();
         const id = randomUUID();
-        setJob({ id, status: 'queued', createdAt: Date.now(), label });
+        const createdAt = Date.now();
+        const livenessExpiresAt = getAiJobLivenessExpiresAt(createdAt);
+        const job: AiJob = { id, status: 'queued', createdAt, livenessExpiresAt, label };
+        setJob(job);
+        scheduleDeadline(job);
+        log.info('Job de IA criado', {
+            jobId: id,
+            startedAt: new Date(createdAt).toISOString(),
+            livenessExpiresAt,
+            maxChainedCalls: MAX_CHAINED_CALLS,
+            totalBudgetMs: Date.parse(livenessExpiresAt) - createdAt,
+        });
 
         const run = () => {
+            const current = jobs.get(id);
+            if (!current || current.status === 'error' || current.status === 'done') {
+                pump();
+                return;
+            }
             running++;
             const startedAt = Date.now();
-            // #1011: startedAt + heartbeat inicial ao sair da fila. lastHeartbeat nasce
-            // aqui (job passou a estar vivo); reportProgress() o atualiza a cada tool-call.
             patchJob(id, { status: 'running', startedAt, lastHeartbeat: startedAt });
             Promise.resolve()
                 .then(fn)
                 .then((result) => {
+                    const currentJob = jobs.get(id);
+                    if (!currentJob || currentJob.status === 'error' || Date.now() >= Date.parse(currentJob.livenessExpiresAt)) {
+                        if (currentJob?.status !== 'error') markDeadlineExceeded(id);
+                        return;
+                    }
                     const finishedAt = Date.now();
+                    clearDeadline(id);
                     patchJob(id, { status: 'done', result, finishedAt, expiresAt: finishedAt + TTL_MS });
                 })
                 .catch((e: any) => {
+                    const currentJob = jobs.get(id);
+                    if (!currentJob || currentJob.status === 'error') return;
                     const finishedAt = Date.now();
+                    clearDeadline(id);
+                    const error = e?.code === 'deadline_exceeded' || e?.message === 'deadline_exceeded'
+                        ? 'deadline_exceeded'
+                        : (e?.message || String(e));
                     patchJob(id, {
                         status: 'error',
-                        error: e?.message || String(e),
+                        error,
                         finishedAt,
                         expiresAt: finishedAt + TTL_MS,
                     });
-                    log.warn(`Job ${id} falhou: ${e?.message || e}`);
+                    log.warn(`Job ${id} falhou: ${error}`);
                 })
                 .finally(() => { running--; cleanup(); pump(); });
         };
@@ -249,6 +318,8 @@ export const aiJobService = {
 
     /** Estado atual do job (inclui posição aproximada na fila) ou motivo da ausência. */
     get(id: string): AiJobLookup {
+        const existing = jobs.get(id);
+        if (existing && isPastLiveness(existing)) markDeadlineExceeded(id);
         const job = jobs.get(id);
         if (!job) return { ok: false, reason: 'missing' };
         if (isExpired(job)) return { ok: false, reason: 'expired' };
@@ -261,10 +332,16 @@ export const aiJobService = {
      * cliente detectar que o job continua vivo durante tempestades de 429.
      */
     getJobStatus(id: string): AiJobStatusLookup {
+        const existing = jobs.get(id);
+        if (existing && isPastLiveness(existing)) markDeadlineExceeded(id);
         const job = jobs.get(id);
         if (!job) return { ok: false, reason: 'missing' };
         if (isExpired(job)) return { ok: false, reason: 'expired' };
         return { ok: true, status: toStatusInfo(job) };
+    },
+
+    getLivenessExpiresAt(id: string): string | undefined {
+        return jobs.get(id)?.livenessExpiresAt;
     },
 
     /**

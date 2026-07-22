@@ -432,6 +432,18 @@ describe('aiRoutes', () => {
             expect(res.status).toBe(202);
             expect(res.body.data.jobId).toBeDefined();
             expect(res.body.data.status).toBe('queued');
+            expect(res.body.data.livenessExpiresAt).toMatch(/Z$/);
+        });
+
+        it('consulta job e mantém livenessExpiresAt no resultado', async () => {
+            const created = await request(app)
+                .post('/api/analyze/sales-forecast-async')
+                .send({ invoices: [] });
+
+            const res = await request(app).get(`/api/jobs/${created.body.data.jobId}`);
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.livenessExpiresAt).toMatch(/Z$/);
         });
 
         it('retorna 400 quando invoices está ausente', async () => {
@@ -1288,6 +1300,7 @@ describe('#1566: handlers sem try/catch — erros via AppError/ZodError no error
             expect(res.body.success).toBe(true);
             expect(res.body.data.jobId).toBeDefined();
             expect(res.body.data.status).toBe('queued');
+            expect(res.body.data.livenessExpiresAt).toMatch(/Z$/);
         });
     });
 

@@ -123,7 +123,7 @@ function persistUserTurnIfChat(body: any): { sessionId?: string; userMessage?: s
 // `jobId` (#1011): quando chamado via job assíncrono, cada tool-call emitida pelo agente vira
 // um sinal de progresso (aiJobService.reportProgress) — atualiza o heartbeat p/ o cliente
 // detectar liveness via GET /api/ai-jobs/:id/status sem baixar o resultado parcial.
-async function runChatReply(body: any, user: any, jobId?: string): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
+async function runChatReply(body: any, user: any, jobId?: string, livenessExpiresAt?: string): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
         const { history, context, image, images, module, sessionId } = GenerateReplySchema.parse(body);
         // #947: normaliza p/ array (aceita `images` novo OU `image` antigo).
         const allImages = (images && images.length) ? images : (image ? [image] : []);
@@ -227,7 +227,7 @@ async function runChatReply(body: any, user: any, jobId?: string): Promise<{ rep
                 // (além de já propagar via runWithToolContext acima). Garante que o
                 // filtro de DEV_TOOLS (#1498) usa o papel real do chamador, mesmo se
                 // futuramente algum caller esquecer o runWithToolContext.
-                return aiService.generateReply(llmHistory, enrichedContext, allImages.length ? allImages : undefined, module, isAdmin, jobId);
+                return aiService.generateReply(llmHistory, enrichedContext, allImages.length ? allImages : undefined, module, isAdmin, jobId, livenessExpiresAt);
             });
         } catch (agentErr: any) {
             // issue #1151: erro no job → persiste uma msg de erro na sessão para não
@@ -291,7 +291,7 @@ router.post('/generate-reply', asyncHandler(async (req, res) => {
 }));
 
 // ASSÍNCRONO: enfileira o job e responde NA HORA com jobId (mata o 524). O agente roda em
-// background até concluir, sem limite de tempo; o cliente faz polling de GET /jobs/:id.
+// background até concluir ou atingir o deadline global; o cliente faz polling de GET /jobs/:id.
 router.post('/generate-reply-async', asyncHandler(async (req, res) => {
     // valida cedo → ZodError vira 400 pelo errorHandler; o resultado tipado alimenta o job.
     const body = GenerateReplySchema.parse(req.body);
@@ -302,9 +302,10 @@ router.post('/generate-reply-async', asyncHandler(async (req, res) => {
     // #1011: repassa o jobId ao runChatReply para que cada tool-call atualize o
     // heartbeat. O closure lê `jobId` no microtask (após o assign abaixo retornar).
     let jobId = '';
-    jobId = aiJobService.enqueue(() => runChatReply(body, user, jobId), body.module);
+    jobId = aiJobService.enqueue(() => runChatReply(body, user, jobId, aiJobService.getLivenessExpiresAt(jobId)), body.module);
+    const livenessExpiresAt = aiJobService.getLivenessExpiresAt(jobId);
     // 202 Accepted: job enfileirado (não há helper p/ 202 em apiResponse; envelope manual).
-    return res.status(202).json({ success: true, data: { jobId, status: 'queued' } });
+    return res.status(202).json({ success: true, data: { jobId, status: 'queued', livenessExpiresAt } });
 }));
 
 // Polling do status/resultado de um job do assistente.
@@ -317,9 +318,9 @@ router.get('/jobs/:id', asyncHandler(async (req, res, next) => {
         return next(new AppError(404, 'JOB_NOT_FOUND', 'Job não encontrado.'));
     }
     const job = lookup.job;
-    if (job.status === 'done') return ok(res, { status: 'done', alive: true, ...(job.result || {}) });
-    if (job.status === 'error') return ok(res, { status: 'error', alive: true, error: job.error });
-    return ok(res, { status: job.status, alive: true, queueAhead: lookup.queueAhead });
+    if (job.status === 'done') return ok(res, { status: 'done', alive: true, ...(job.result || {}), livenessExpiresAt: job.livenessExpiresAt });
+    if (job.status === 'error') return ok(res, { status: 'error', alive: true, error: job.error, livenessExpiresAt: job.livenessExpiresAt });
+    return ok(res, { status: job.status, alive: true, queueAhead: lookup.queueAhead, livenessExpiresAt: job.livenessExpiresAt });
 }));
 
 // Resolve um deeplink de prefill (HITL #57 Peça 2/3): o frontend manda o token, o backend
@@ -489,12 +490,14 @@ router.post('/analyze/sales-forecast', asyncHandler(async (req, res) => {
 // polling de GET /jobs/:id. O resultado vem em job.result (a string JSON do forecast).
 router.post('/analyze/sales-forecast-async', asyncHandler(async (req, res) => {
     const { invoices, context } = SalesForecastSchema.parse(req.body);
-    const jobId = aiJobService.enqueue(
-        async () => ({ result: await aiService.generateSalesForecast(invoices, context, 'banking') }),
+    let jobId = '';
+    jobId = aiJobService.enqueue(
+        async () => ({ result: await aiService.generateSalesForecast(invoices, context, 'banking', aiJobService.getLivenessExpiresAt(jobId)) }),
         'forecast'
     );
+    const livenessExpiresAt = aiJobService.getLivenessExpiresAt(jobId);
     // 202 Accepted (envelope manual — não há helper p/ 202 em apiResponse).
-    return res.status(202).json({ success: true, data: { jobId, status: 'queued' } });
+    return res.status(202).json({ success: true, data: { jobId, status: 'queued', livenessExpiresAt } });
 }));
 
 // Financial Analysis (issue #490) — persisted snapshot + automation config

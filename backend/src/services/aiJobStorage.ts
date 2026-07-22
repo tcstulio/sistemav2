@@ -18,9 +18,10 @@ export interface PersistedJob {
     result?: unknown;
     error?: string;
     createdAt?: number;
+    livenessExpiresAt?: string;
     finishedAt?: number;
     label?: string;
-    /** Expiração (epoch ms). Undefined enquanto o job não termina (sem limite de tempo). */
+    /** Expiração do resultado terminal (epoch ms). Undefined enquanto o job não termina. */
     expiresAt?: number;
     /** #1011: epoch ms em que o job saiu de queued -> running. */
     startedAt?: number;
