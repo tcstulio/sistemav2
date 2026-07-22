@@ -252,6 +252,220 @@ export const TxIdParamSchema = z.object({
 });
 
 // =============================================
+// Banking Schemas (Import / Analyze / Insights / Reconciliation)
+// =============================================
+
+/**
+ * Per-field schema for a single transaction line used by analyze / insights / balance.
+ * Permissive — campos opcionais suficientes p/ casar com o que o backend já aceitava.
+ */
+const TransactionSchema = z.object({
+    id: z.string().optional(),
+    date: z.union([z.string(), z.date()]).optional(),
+    amount: z.number().optional(),
+    description: z.string().optional(),
+    memo: z.string().optional(),
+    type: z.string().optional(),
+    checkNum: z.string().optional(),
+    refNum: z.string().optional(),
+}).passthrough();
+
+/**
+ * POST /api/banking/import/ofx — multipart (file) + metadados opcionais.
+ * Não valida `req.file` no schema (multer-populated); o handler verifica.
+ */
+export const BankOfxImportSchema = z.object({
+    encoding: z.string().optional(),
+}).passthrough();
+
+/**
+ * CSV parser format (legacy): usado tanto como JSON estruturado (parse de `req.body.format`)
+ * quanto como campos soltos (dateColumn/amountColumn/etc.).
+ */
+export const CSVFormatSchema = z.object({
+    dateColumn: z.string().min(1),
+    amountColumn: z.string().min(1),
+    descriptionColumn: z.string().min(1),
+    dateFormat: z.string().optional(),
+    delimiter: z.string().max(1).optional(),
+    hasHeader: z.boolean().optional(),
+}).strict();
+
+/**
+ * POST /api/banking/import/csv — multipart. `format` pode chegar como STRING JSON
+ * (multer populará `req.body.format` como string); o handler faz o JSON.parse seguro.
+ * O schema abaixo só valida chaves escalares simples; o formato estruturado é parseado
+ * na rota com try/catch — falhas viram `fail(res, 'INVALID_JSON', ...)`.
+ */
+export const BankCsvImportSchema = z.object({
+    format: z.string().optional(),
+    dateColumn: z.string().optional(),
+    amountColumn: z.string().optional(),
+    descriptionColumn: z.string().optional(),
+    delimiter: z.string().max(1).optional(),
+    hasHeader: z.union([z.string(), z.boolean()]).optional(),
+}).passthrough();
+
+/**
+ * POST /api/banking/import/auto — multipart (file). Aceita qualquer metadado extra.
+ */
+export const BankAutoImportSchema = z.object({
+    forceFormat: z.enum(['ofx', 'csv']).optional(),
+}).passthrough();
+
+/**
+ * POST /api/banking/analyze/categorize
+ */
+export const BankCategorizeSchema = z.object({
+    transactions: z.array(TransactionSchema).min(1),
+});
+
+/**
+ * POST /api/banking/analyze/anomalies
+ */
+export const BankAnomaliesSchema = z.object({
+    transactions: z.array(TransactionSchema).min(1),
+});
+
+/**
+ * POST /api/banking/insights/cash-flow
+ */
+export const BankCashFlowSchema = z.object({
+    accounts: z.array(z.any()),
+    transactions: z.array(TransactionSchema),
+    period: z.enum(['week', 'month', 'quarter']).optional(),
+});
+
+/**
+ * POST /api/banking/insights/chart-data
+ */
+export const BankChartDataSchema = z.object({
+    transactions: z.array(TransactionSchema).min(1),
+    groupBy: z.enum(['day', 'week', 'month']).optional(),
+});
+
+/**
+ * POST /api/banking/reconcile/suggest
+ */
+export const BankReconcileSuggestSchema = z.object({
+    bankLines: z.array(z.any()),
+    invoices: z.array(z.any()),
+});
+
+/**
+ * POST /api/banking/reconcile/save — exige userApiKey (validação adicional na rota).
+ */
+export const BankReconcileSaveSchema = z.object({
+    lineId: z.string().min(1),
+    invoiceId: z.string().min(1),
+});
+
+/**
+ * POST /api/banking/reconcile/toggle — Dolibarr persistence. Exige userApiKey (header).
+ */
+export const BankReconcileToggleSchema = z.object({
+    accountId: z.string().min(1),
+    lineId: z.string().min(1),
+    reconciled: z.boolean(),
+});
+
+/**
+ * POST /api/banking/balance/calculate
+ */
+export const BankBalanceCalculateSchema = z.object({
+    initialBalance: z.number(),
+    transactions: z.array(TransactionSchema),
+});
+
+/**
+ * POST /api/inter/pix/cobranca — schema explícito do payload Inter (reutilizado pelo
+ * validateBody pra evitar drift). Aceita o `txid` opcional que o caller pode mandar.
+ */
+export const InterPixCobrancaSchema = z.object({
+    txid: z.string().optional(),
+    valor: z.object({
+        original: z.string().regex(/^\d+\.\d{2}$/, 'Valor deve estar no formato 0.00'),
+    }),
+    chave: z.string().min(1),
+    infoAdicionais: z.array(z.object({
+        nome: z.string().max(50),
+        valor: z.string().max(200),
+    })).optional(),
+    devedor: z.object({
+        cpf: z.string().length(11).regex(/^\d+$/).optional(),
+        cnpj: z.string().length(14).regex(/^\d+$/).optional(),
+        nome: z.string().min(1).max(200),
+    }).optional(),
+    solicitacaoPagador: z.string().max(140).optional(),
+}).passthrough();
+
+/**
+ * POST /api/inter/pix/cobranca-vencimento
+ */
+export const InterPixCobrancaVencimentoSchema = z.object({
+    txid: z.string().min(26).max(35),
+    devedor: z.object({
+        cpf: z.string().length(11).regex(/^\d+$/).optional(),
+        cnpj: z.string().length(14).regex(/^\d+$/).optional(),
+        nome: z.string().min(1).max(200),
+    }).optional(),
+    valor: z.object({
+        original: z.string().regex(/^\d+\.\d{2}$/),
+    }),
+    chave: z.string().min(1),
+    infoAdicionais: z.array(z.object({
+        nome: z.string().max(50),
+        valor: z.string().max(200),
+    })).optional(),
+}).passthrough();
+
+/**
+ * POST /api/inter/pix/enviar
+ */
+export const InterPixEnviarSchema = PixPagamentoSchema;
+
+/**
+ * POST /api/inter/boleto
+ */
+export const InterBoletoEmissaoSchema = BoletoEmissaoSchema;
+
+/**
+ * POST /api/inter/boleto/:nossoNumero/cancelar
+ */
+export const InterBoletoCancelSchema = z.object({
+    motivo: z.string().max(500).optional(),
+});
+
+/**
+ * PUT /api/inter/webhook/pix/config
+ */
+export const WebhookConfigSchema = z.object({
+    chave: z.string().min(1).max(200),
+    webhookUrl: z.string().url(),
+});
+
+/**
+ * Header `userApiKey` / `DOLAPIKEY` seguro: alfanumérico, 32–128.
+ * Fail-closed: rejeita chaves fora do charset/tamanho esperado antes de qualquer
+ * chamada downstream — protege contra injeção de SQL via header.
+ */
+export const SafeApiKeyHeaderSchema = z.string()
+    .min(32, 'userApiKey inválido: tamanho mínimo 32')
+    .max(128, 'userApiKey inválido: tamanho máximo 128')
+    .regex(/^[a-zA-Z0-9]+$/, 'userApiKey inválido: apenas caracteres alfanuméricos');
+
+/**
+ * POST /api/inter/certificates — multipart (filename handled by multer).
+ * Sem campos adicionais obrigatórios.
+ */
+export const InterCertificateSchema = z.object({}).passthrough();
+
+/**
+ * POST /api/inter/test — body opcional. Aceita qualquer payload (ou nenhum).
+ */
+export const InterTestSchema = z.object({}).passthrough();
+
+// =============================================
 // Webhook Schemas
 // =============================================
 
@@ -293,5 +507,26 @@ export default {
     IdParamSchema,
     TxIdParamSchema,
     PixWebhookSchema,
-    BoletoWebhookSchema
+    BoletoWebhookSchema,
+    BankOfxImportSchema,
+    BankCsvImportSchema,
+    BankAutoImportSchema,
+    BankCategorizeSchema,
+    BankAnomaliesSchema,
+    BankCashFlowSchema,
+    BankChartDataSchema,
+    BankReconcileSuggestSchema,
+    BankReconcileSaveSchema,
+    BankReconcileToggleSchema,
+    BankBalanceCalculateSchema,
+    InterPixCobrancaSchema,
+    InterPixCobrancaVencimentoSchema,
+    InterPixEnviarSchema,
+    InterBoletoEmissaoSchema,
+    InterBoletoCancelSchema,
+    WebhookConfigSchema,
+    SafeApiKeyHeaderSchema,
+    InterCertificateSchema,
+    InterTestSchema,
+    CSVFormatSchema,
 };

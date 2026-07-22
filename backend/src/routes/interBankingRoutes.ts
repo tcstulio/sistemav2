@@ -14,6 +14,8 @@ import { interApiService } from '../services/interApiService';
 import { bankingService } from '../services/bankingService';
 import { dolibarrService } from '../services/dolibarr';
 import { createLogger } from '../utils/logger';
+import { ok, fail } from '../utils/apiResponse';
+import { AppError, asyncHandler } from '../middleware/errorHandler';
 
 const log = createLogger('InterBanking');
 
@@ -29,8 +31,16 @@ import { config } from '../config/env';
 import {
     validateBody,
     PagamentoBoletoSchema,
-    PixCobrancaSchema,
-    BoletoEmissaoSchema,
+    InterPixCobrancaSchema,
+    InterPixCobrancaVencimentoSchema,
+    InterPixEnviarSchema,
+    InterBoletoEmissaoSchema,
+    InterBoletoCancelSchema,
+    WebhookConfigSchema,
+    InterCertificateSchema,
+    InterTestSchema,
+    PixWebhookSchema,
+    BoletoWebhookSchema,
 } from '../middleware/validation';
 
 const router = Router();
@@ -45,7 +55,6 @@ const certStorage = multer.diskStorage({
         cb(null, certDir);
     },
     filename: (req, file, cb) => {
-        // Save as inter.crt or inter.key based on extension
         const ext = path.extname(file.originalname).toLowerCase();
         if (ext === '.crt' || ext === '.pem') {
             cb(null, 'inter.crt');
@@ -73,7 +82,7 @@ const certUpload = multer({
 // ===== PUBLIC Webhook Receiver Endpoints (no auth - bank callbacks) =====
 
 /**
- * Verify webhook signature using HMAC-SHA256
+ * Verify webhook signature using HMAC-SHA256 (constant-time comparison).
  */
 function verifyWebhookSignature(payload: string, signature: string | undefined, secret: string): boolean {
     if (!signature) return false;
@@ -94,23 +103,51 @@ function verifyWebhookSignature(payload: string, signature: string | undefined, 
 }
 
 /**
+ * Verificação do webhook — quando o cliente envia `x-signature` ou `x-webhook-signature`,
+ * a verificação roda INCONDICIONALMENTE (independente de NODE_ENV). Sem secret configurado
+ * e SEM header → modo permissivo em dev, fail-closed (503) em produção. (#1542)
+ */
+function ensureWebhookAuthentic(req: Request, res: Response, label: string): boolean {
+    const signature = (req.headers['x-signature'] || req.headers['x-webhook-signature']) as string | undefined;
+    const payload = JSON.stringify(req.body);
+
+    if (signature) {
+        if (!config.interWebhookSecret) {
+            log.warn(`${label} webhook: assinatura recebida mas INTER_WEBHOOK_SECRET não configurado — rejeitando`);
+            fail(res, 'UNAUTHORIZED', 'Assinatura recebida mas INTER_WEBHOOK_SECRET não está configurado', 401);
+            return false;
+        }
+        if (!verifyWebhookSignature(payload, signature, config.interWebhookSecret)) {
+            log.warn(`Invalid signature for ${label} webhook`);
+            fail(res, 'UNAUTHORIZED', 'Invalid webhook signature', 401);
+            return false;
+        }
+        return true;
+    }
+
+    if (!config.interWebhookSecret) {
+        if (process.env.NODE_ENV === 'production') {
+            log.error(`${label} webhook rejeitado: INTER_WEBHOOK_SECRET não configurado em produção`);
+            fail(res, 'SERVICE_UNAVAILABLE', 'Webhook signature verification not configured', 503);
+            return false;
+        }
+        return true;
+    }
+
+    log.warn(`${label} webhook rejeitado: INTER_WEBHOOK_SECRET configurado mas nenhuma assinatura recebida`);
+    fail(res, 'UNAUTHORIZED', 'Webhook signature required', 401);
+    return false;
+}
+
+/**
  * POST /api/inter/webhook/pix
  * Receive Pix webhooks from Inter
  */
-router.post('/webhook/pix', async (req: Request, res: Response) => {
-    try {
-        if (config.interWebhookSecret) {
-            const signature = req.headers['x-webhook-signature'] as string;
-            const payload = JSON.stringify(req.body);
-
-            if (!verifyWebhookSignature(payload, signature, config.interWebhookSecret)) {
-                log.warn('Invalid signature for Pix webhook');
-                return res.status(401).json({ error: 'Invalid webhook signature' });
-            }
-        } else if (process.env.NODE_ENV === 'production') {
-            log.error('Pix webhook rejeitado: INTER_WEBHOOK_SECRET não configurado em produção');
-            return res.status(503).json({ error: 'Webhook signature verification not configured' });
-        }
+router.post(
+    '/webhook/pix',
+    validateBody(PixWebhookSchema),
+    asyncHandler(async (req: Request, res: Response) => {
+        if (!ensureWebhookAuthentic(req, res, 'Pix')) return;
 
         const webhookPayload: PixWebhookPayload = req.body;
 
@@ -124,31 +161,19 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
 
         await bankingService.processInterWebhook(webhookPayload, 'pix');
 
-        res.status(200).json({ success: true });
-    } catch (error: any) {
-        log.error('Pix webhook error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: 'Webhook processing failed' });
-    }
-});
+        ok(res, { received: true });
+    })
+);
 
 /**
  * POST /api/inter/webhook/boleto
  * Receive Boleto webhooks from Inter
  */
-router.post('/webhook/boleto', async (req: Request, res: Response) => {
-    try {
-        if (config.interWebhookSecret) {
-            const signature = req.headers['x-webhook-signature'] as string;
-            const payload = JSON.stringify(req.body);
-
-            if (!verifyWebhookSignature(payload, signature, config.interWebhookSecret)) {
-                log.warn('Invalid signature for Boleto webhook');
-                return res.status(401).json({ error: 'Invalid webhook signature' });
-            }
-        } else if (process.env.NODE_ENV === 'production') {
-            log.error('Boleto webhook rejeitado: INTER_WEBHOOK_SECRET não configurado em produção');
-            return res.status(503).json({ error: 'Webhook signature verification not configured' });
-        }
+router.post(
+    '/webhook/boleto',
+    validateBody(BoletoWebhookSchema),
+    asyncHandler(async (req: Request, res: Response) => {
+        if (!ensureWebhookAuthentic(req, res, 'Boleto')) return;
 
         const webhookPayload: BoletoWebhookPayload = req.body;
 
@@ -164,12 +189,9 @@ router.post('/webhook/boleto', async (req: Request, res: Response) => {
 
         await bankingService.processInterWebhook(webhookPayload, 'boleto');
 
-        res.status(200).json({ success: true });
-    } catch (error: any) {
-        log.error('Boleto webhook error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: 'Webhook processing failed' });
-    }
-});
+        ok(res, { received: true });
+    })
+);
 
 // ===== All routes below require authentication =====
 router.use(requireDolibarrLogin);
@@ -180,66 +202,52 @@ router.use(requireDolibarrLogin);
  * GET /api/inter/status
  * Get Inter API connection status
  */
-router.get('/status', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/status',
+    asyncHandler(async (req: Request, res: Response) => {
         const status = await interApiService.getStatus();
-        res.json(status);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, status);
+    })
+);
 
 /**
  * POST /api/inter/test
  * Test Inter API connection
  */
-router.post('/test', async (req: Request, res: Response) => {
-    try {
+router.post(
+    '/test',
+    validateBody(InterTestSchema),
+    asyncHandler(async (req: Request, res: Response) => {
         const initialized = await interApiService.initialize();
         if (!initialized) {
-            return res.status(400).json({
-                success: false,
-                error: 'Failed to initialize. Check certificates and credentials.',
-            });
+            throw new AppError(400, 'BAD_REQUEST', 'Failed to initialize. Check certificates and credentials.');
         }
 
-        // Try to get balance as a test
         const saldo = await interApiService.getSaldo();
-        res.json({
-            success: true,
-            message: 'Connection successful',
-            saldo,
-        });
-    } catch (error: any) {
-        res.status(400).json({
-            success: false,
-            error: error.message,
-        });
-    }
-});
+        ok(res, { message: 'Connection successful', saldo });
+    })
+);
 
 /**
  * POST /api/inter/certificates
  * Upload Inter certificates
  */
-router.post('/certificates', certUpload.array('files', 2), async (req: Request, res: Response) => {
-    try {
+const certUploadArray = certUpload.array('files', 2);
+router.post(
+    '/certificates',
+    certUploadArray,
+    validateBody(InterCertificateSchema),
+    asyncHandler(async (req: Request, res: Response) => {
         const files = req.files as Express.Multer.File[];
 
         if (!files || files.length === 0) {
-            return res.status(400).json({ error: 'No files uploaded' });
+            throw new AppError(400, 'BAD_REQUEST', 'No files uploaded');
         }
 
         const uploaded = files.map(f => f.filename);
-        res.json({
-            success: true,
-            uploaded,
-            message: `Uploaded ${uploaded.length} certificate file(s)`,
-        });
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, { uploaded, message: `Uploaded ${uploaded.length} certificate file(s)` });
+    })
+);
 
 // ===== Banking Endpoints =====
 
@@ -247,28 +255,26 @@ router.post('/certificates', certUpload.array('files', 2), async (req: Request, 
  * GET /api/inter/saldo
  * Get account balance
  */
-router.get('/saldo', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/saldo',
+    asyncHandler(async (req: Request, res: Response) => {
         const saldo = await interApiService.getSaldo();
-        res.json(saldo);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, saldo);
+    })
+);
 
 /**
  * GET /api/inter/extrato
  * Get account statement
  * Query: dataInicio, dataFim (YYYY-MM-DD)
  */
-router.get('/extrato', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/extrato',
+    asyncHandler(async (req: Request, res: Response) => {
         const { dataInicio, dataFim } = req.query;
 
         if (!dataInicio || !dataFim) {
-            return res.status(400).json({
-                error: 'Missing parameters: dataInicio and dataFim are required (YYYY-MM-DD)',
-            });
+            throw new AppError(400, 'BAD_REQUEST', 'Missing parameters: dataInicio and dataFim are required (YYYY-MM-DD)');
         }
 
         const transacoes = await interApiService.getExtratoCompleto(
@@ -276,7 +282,6 @@ router.get('/extrato', async (req: Request, res: Response) => {
             dataFim as string
         );
 
-        // Batch-fetch payables and enrich debits without N+1
         let payables: Awaited<ReturnType<typeof dolibarrService.getAccountsPayable>> = [];
         try {
             payables = await dolibarrService.getAccountsPayable(dataInicio as string, dataFim as string);
@@ -301,42 +306,39 @@ router.get('/extrato', async (req: Request, res: Response) => {
             };
         });
 
-        res.json({ transacoes: transacoesEnriquecidas });
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, { transacoes: transacoesEnriquecidas });
+    })
+);
 
 /**
  * POST /api/inter/pagamento/boleto
  * Pay a boleto
  */
-router.post('/pagamento/boleto', validateBody(PagamentoBoletoSchema), async (req: Request, res: Response) => {
-    try {
+router.post(
+    '/pagamento/boleto',
+    validateBody(PagamentoBoletoSchema),
+    asyncHandler(async (req: Request, res: Response) => {
         const dados: PagamentoBoletoRequest = req.body;
         const resultado = await interApiService.pagarBoleto(dados);
-        res.json(resultado);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, resultado);
+    })
+);
 
 /**
  * GET /api/inter/pagamento/:id/comprovante
- * Get payment receipt PDF
+ * Get payment receipt PDF (binary response preserved)
  */
-router.get('/pagamento/:id/comprovante', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/pagamento/:id/comprovante',
+    asyncHandler(async (req: Request, res: Response) => {
         const { id } = req.params;
         const pdf = await interApiService.getComprovantePagamento(id);
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="comprovante_${id}.pdf"`);
         res.send(pdf);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+    })
+);
 
 // ===== Pix Endpoints =====
 
@@ -344,19 +346,14 @@ router.get('/pagamento/:id/comprovante', async (req: Request, res: Response) => 
  * POST /api/inter/pix/cobranca
  * Create Pix charge
  */
-router.post('/pix/cobranca', async (req: Request, res: Response) => {
-    try {
+router.post(
+    '/pix/cobranca',
+    validateBody(InterPixCobrancaSchema),
+    asyncHandler(async (req: Request, res: Response) => {
         const { txid, ...dados } = req.body as PixCobrancaRequest & { txid?: string };
-
-        if (!dados.valor?.original || !dados.chave) {
-            return res.status(400).json({
-                error: 'Missing parameters: valor.original and chave are required',
-            });
-        }
 
         const cobranca = await interApiService.criarPixCobranca(dados, txid);
 
-        // Get QR Code if available
         let qrcode;
         if (cobranca.loc?.id) {
             try {
@@ -366,101 +363,83 @@ router.post('/pix/cobranca', async (req: Request, res: Response) => {
             }
         }
 
-        res.json({ ...cobranca, qrcode: qrcode?.qrcode });
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, { ...cobranca, qrcode: qrcode?.qrcode });
+    })
+);
 
 /**
  * POST /api/inter/pix/cobranca-vencimento
  * Create Pix charge with due date
  */
-router.post('/pix/cobranca-vencimento', async (req: Request, res: Response) => {
-    try {
-        const { txid, ...dados } = req.body;
+router.post(
+    '/pix/cobranca-vencimento',
+    validateBody(InterPixCobrancaVencimentoSchema),
+    asyncHandler(async (req: Request, res: Response) => {
+        const { txid, ...dados } = req.body as { txid: string } & PixCobrancaRequest;
 
-        if (!txid) {
-            return res.status(400).json({ error: 'txid is required for scheduled charges' });
-        }
-
-        const cobranca = await interApiService.criarPixCobrancaVencimento(txid, dados);
-        res.json(cobranca);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        const cobranca = await interApiService.criarPixCobrancaVencimento(txid, dados as PixCobrancaRequest);
+        ok(res, cobranca);
+    })
+);
 
 /**
  * GET /api/inter/pix/cobranca/:txid
  * Get Pix charge status
  */
-router.get('/pix/cobranca/:txid', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/pix/cobranca/:txid',
+    asyncHandler(async (req: Request, res: Response) => {
         const { txid } = req.params;
         const cobranca = await interApiService.consultarPixCobranca(txid);
-        res.json(cobranca);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, cobranca);
+    })
+);
 
 /**
  * POST /api/inter/pix/enviar
  * Send Pix payment
  */
-router.post('/pix/enviar', async (req: Request, res: Response) => {
-    try {
+router.post(
+    '/pix/enviar',
+    validateBody(InterPixEnviarSchema),
+    asyncHandler(async (req: Request, res: Response) => {
         const dados: PixPagamentoRequest = req.body;
-
-        if (!dados.valor || !dados.destinatario) {
-            return res.status(400).json({
-                error: 'Missing parameters: valor and destinatario are required',
-            });
-        }
-
         const resultado = await interApiService.enviarPix(dados);
-        res.json(resultado);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, resultado);
+    })
+);
 
 /**
  * GET /api/inter/pix/recebidos
  * List received Pix
  * Query: inicio, fim (ISO 8601 datetime)
  */
-router.get('/pix/recebidos', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/pix/recebidos',
+    asyncHandler(async (req: Request, res: Response) => {
         const { inicio, fim } = req.query;
 
         if (!inicio || !fim) {
-            return res.status(400).json({
-                error: 'Missing parameters: inicio and fim are required (ISO 8601 datetime)',
-            });
+            throw new AppError(400, 'BAD_REQUEST', 'Missing parameters: inicio and fim are required (ISO 8601 datetime)');
         }
 
         const pix = await interApiService.listarPixRecebidos(inicio as string, fim as string);
-        res.json({ pix });
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, { pix });
+    })
+);
 
 /**
  * GET /api/inter/pix/:e2eid
  * Get Pix by endToEndId
  */
-router.get('/pix/:e2eid', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/pix/:e2eid',
+    asyncHandler(async (req: Request, res: Response) => {
         const { e2eid } = req.params;
         const pix = await interApiService.consultarPix(e2eid);
-        res.json(pix);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, pix);
+    })
+);
 
 // ===== Boleto Endpoints =====
 
@@ -468,30 +447,24 @@ router.get('/pix/:e2eid', async (req: Request, res: Response) => {
  * POST /api/inter/boleto
  * Issue new boleto
  */
-router.post('/boleto', async (req: Request, res: Response) => {
-    try {
+router.post(
+    '/boleto',
+    validateBody(InterBoletoEmissaoSchema),
+    asyncHandler(async (req: Request, res: Response) => {
         const dados: BoletoEmissaoRequest = req.body;
-
-        if (!dados.seuNumero || !dados.valorNominal || !dados.dataVencimento || !dados.pagador) {
-            return res.status(400).json({
-                error: 'Missing required fields: seuNumero, valorNominal, dataVencimento, pagador',
-            });
-        }
-
         const boleto = await interApiService.emitirBoleto(dados);
-        res.json(boleto);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, boleto);
+    })
+);
 
 /**
  * GET /api/inter/boleto
  * List boletos
  * Query: dataInicial, dataFinal, situacao, pagina, tamanhoPagina
  */
-router.get('/boleto', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/boleto',
+    asyncHandler(async (req: Request, res: Response) => {
         const { dataInicial, dataFinal, situacao, pagina, tamanhoPagina } = req.query;
 
         const resultado = await interApiService.listarBoletos({
@@ -502,58 +475,54 @@ router.get('/boleto', async (req: Request, res: Response) => {
             tamanhoPagina: tamanhoPagina ? parseInt(tamanhoPagina as string) : undefined,
         });
 
-        res.json(resultado);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, resultado);
+    })
+);
 
 /**
  * GET /api/inter/boleto/:nossoNumero
  * Get boleto details
  */
-router.get('/boleto/:nossoNumero', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/boleto/:nossoNumero',
+    asyncHandler(async (req: Request, res: Response) => {
         const { nossoNumero } = req.params;
         const boleto = await interApiService.consultarBoleto(nossoNumero);
-        res.json(boleto);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, boleto);
+    })
+);
 
 /**
  * GET /api/inter/boleto/:nossoNumero/pdf
- * Download boleto PDF
+ * Download boleto PDF (binary response preserved)
  */
-router.get('/boleto/:nossoNumero/pdf', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/boleto/:nossoNumero/pdf',
+    asyncHandler(async (req: Request, res: Response) => {
         const { nossoNumero } = req.params;
         const pdf = await interApiService.downloadBoletoPDF(nossoNumero);
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="boleto_${nossoNumero}.pdf"`);
         res.send(pdf);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+    })
+);
 
 /**
  * POST /api/inter/boleto/:nossoNumero/cancelar
  * Cancel boleto
  */
-router.post('/boleto/:nossoNumero/cancelar', async (req: Request, res: Response) => {
-    try {
+router.post(
+    '/boleto/:nossoNumero/cancelar',
+    validateBody(InterBoletoCancelSchema),
+    asyncHandler(async (req: Request, res: Response) => {
         const { nossoNumero } = req.params;
         const { motivo } = req.body;
 
         await interApiService.cancelarBoleto(nossoNumero, motivo || 'Cancelado pelo usuário');
-        res.json({ success: true, message: 'Boleto cancelado com sucesso' });
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, { message: 'Boleto cancelado com sucesso' });
+    })
+);
 
 // ===== Webhook Config Endpoints =====
 
@@ -561,50 +530,42 @@ router.post('/boleto/:nossoNumero/cancelar', async (req: Request, res: Response)
  * PUT /api/inter/webhook/pix/config
  * Configure Pix webhook URL
  */
-router.put('/webhook/pix/config', async (req: Request, res: Response) => {
-    try {
+router.put(
+    '/webhook/pix/config',
+    validateBody(WebhookConfigSchema),
+    asyncHandler(async (req: Request, res: Response) => {
         const { chave, webhookUrl } = req.body;
 
-        if (!chave || !webhookUrl) {
-            return res.status(400).json({
-                error: 'Missing parameters: chave and webhookUrl are required',
-            });
-        }
-
         await interApiService.configurarWebhookPix(chave, webhookUrl);
-        res.json({ success: true, message: 'Webhook configured successfully' });
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, { message: 'Webhook configured successfully' });
+    })
+);
 
 /**
  * GET /api/inter/webhook/pix/config/:chave
  * Get Pix webhook configuration
  */
-router.get('/webhook/pix/config/:chave', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/webhook/pix/config/:chave',
+    asyncHandler(async (req: Request, res: Response) => {
         const { chave } = req.params;
-        const config = await interApiService.consultarWebhookPix(chave);
-        res.json(config);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        const webhookConfig = await interApiService.consultarWebhookPix(chave);
+        ok(res, webhookConfig);
+    })
+);
 
 /**
  * DELETE /api/inter/webhook/pix/config/:chave
  * Delete Pix webhook
  */
-router.delete('/webhook/pix/config/:chave', async (req: Request, res: Response) => {
-    try {
+router.delete(
+    '/webhook/pix/config/:chave',
+    asyncHandler(async (req: Request, res: Response) => {
         const { chave } = req.params;
         await interApiService.deletarWebhookPix(chave);
-        res.json({ success: true, message: 'Webhook deleted successfully' });
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
-});
+        ok(res, { message: 'Webhook deleted successfully' });
+    })
+);
 
 // ===== Utility Endpoints =====
 
@@ -614,7 +575,7 @@ router.delete('/webhook/pix/config/:chave', async (req: Request, res: Response) 
  */
 router.get('/txid/generate', (req: Request, res: Response) => {
     const txid = interApiService.generateTxId();
-    res.json({ txid });
+    ok(res, { txid });
 });
 
 export default router;
