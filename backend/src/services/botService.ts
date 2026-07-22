@@ -149,6 +149,27 @@ function alreadyProcessed(id: string): boolean {
 export function __resetMessageDedupForTests(): void { seenMessages.clear(); }
 
 /**
+ * Guarda de IDADE contra replay de reconexão.
+ *
+ * Na reconexão da sessão (cada restart do backend, cada oscilação de rede) o whatsapp-web.js
+ * RE-EMITE as mensagens NÃO-LIDAS antigas como `message_create`, com o timestamp ORIGINAL. O
+ * dedup por id só protege contra a MESMA msg 2× dentro de 5 min E é zerado a cada restart (Map
+ * de processo) — então, sem guarda de idade, toda reconexão faz o bot reprocessar mensagens
+ * velhas ("o bot recebe várias mensagens"). Aqui descartamos a mensagem cujo timestamp é mais
+ * velho que o teto (default 120s, env WHATSAPP_MAX_MESSAGE_AGE_SECONDS).
+ *
+ * Fail-OPEN: sem timestamp confiável (ausente/0/NaN) NÃO descarta — melhor responder de novo do
+ * que engolir uma mensagem real. Timestamp no futuro (bug conhecido do WhatsApp) → idade negativa
+ * → não descarta (tratado como ao-vivo). `timestampSec` é Unix em SEGUNDOS (formato wwebjs).
+ */
+export function isReplayedOldMessage(timestampSec: unknown, nowMs: number, maxAgeSec: number): boolean {
+    const ts = Number(timestampSec);
+    if (!Number.isFinite(ts) || ts <= 0) return false;
+    const ageSec = Math.floor(nowMs / 1000) - ts;
+    return ageSec > maxAgeSec;
+}
+
+/**
  * #1658 — discriminador de mensagens que NÃO devem entrar no histórico do LLM.
  *
  * Critérios (todos os três precisam ser satisfeitos para a remoção dar certo):
@@ -257,6 +278,15 @@ class BotService {
             const msgId = messageId(message);
             if (alreadyProcessed(msgId)) {
                 log.debug(`Mensagem ${msgId.slice(0, 16)}… já processada — ignorando re-emissão.`);
+                return;
+            }
+
+            // Guarda de idade: descarta replay de mensagens antigas re-emitidas na reconexão
+            // (ver isReplayedOldMessage). Complementa o dedup, que é zerado a cada restart.
+            const maxMsgAgeSec = Number(process.env.WHATSAPP_MAX_MESSAGE_AGE_SECONDS) || 120;
+            if (isReplayedOldMessage(message?.timestamp, Date.now(), maxMsgAgeSec)) {
+                const ageSec = Math.floor(Date.now() / 1000) - Number(message.timestamp);
+                log.info(`Mensagem ${msgId.slice(0, 16)}… tem ${ageSec}s (> ${maxMsgAgeSec}s) — replay de reconexão, ignorando.`);
                 return;
             }
 
