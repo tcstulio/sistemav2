@@ -159,15 +159,9 @@ export class SlotProvisioner {
         if (process.env.TASKRUNNER_SLOT2 !== '1') return;
 
         try {
-            // P1: gate de disco (null → prossegue; medido e < 10GB → não provisiona, sem lançar).
-            let freeBytes: number | null = null;
-            try { freeBytes = await d.freeDiskBytes(SLOT2_ROOT); } catch { freeBytes = null; }
-            if (diskGateBlocks(freeBytes)) {
-                log.error(`ensureSlot2: disco insuficiente em ${SLOT2_ROOT} — ${formatGB(freeBytes as number)} GB livres (exige ≥ 10 GB); NÃO provisiona`);
-                return;
-            }
-
-            // P2: se ROOT2 já existe → oBoot. Passou → idempotente (registra e retorna). Falhou → teardown → P3.
+            // P2 (ANTES do gate de disco — BUG CORRIGIDO 22/07): registrar um slot-2 EXISTENTE e valido NAO
+            // consome disco; so o CLONE (P4) consome. O gate vinha ANTES e, com <10GB, deixava de registrar
+            // um slot-2 ja provisionado e SAUDAVEL -> maxParallelExec caia p/ 1 (serial) sem motivo real.
             if (d.existsSync(SLOT2_ROOT)) {
                 if (await this.oBoot()) {
                     this.register();
@@ -177,6 +171,14 @@ export class SlotProvisioner {
                 log.warn(`ensureSlot2: slot-2 existe mas oBoot FALHOU — teardown junction-safe e re-provisiona`);
                 d.unregisterSlot2();
                 this.teardown();
+            }
+
+            // P1: gate de disco — SO p/ CLONAR (P4 e o que consome disco). null -> prossegue; <10GB -> nao clona.
+            let freeBytes: number | null = null;
+            try { freeBytes = await d.freeDiskBytes(SLOT2_ROOT); } catch { freeBytes = null; }
+            if (diskGateBlocks(freeBytes)) {
+                log.error(`ensureSlot2: disco insuficiente em ${SLOT2_ROOT} — ${formatGB(freeBytes as number)} GB livres (exige >= 10 GB p/ CLONAR); NAO provisiona`);
+                return;
             }
 
             // P3: origin resolvido POR CONSTRUÇÃO do PROD + ASSERT GitHub. Path local → ABORT (nunca clonar).
