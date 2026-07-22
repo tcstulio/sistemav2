@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { requireDolibarrLogin as requireAuth } from '../middleware/authMiddleware';
 import { schedulerService } from '../services/schedulerService';
 import { dolibarrService } from '../services/dolibarrService';
 import { emailService } from '../services/emailService';
@@ -8,6 +8,7 @@ import { messageService } from '../services/legacy/messageService';
 import { eventRouter } from '../services/eventRouter';
 import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
+import { fail, ok } from '../utils/apiResponse';
 
 const log = createLogger('Webhook');
 const router = Router();
@@ -31,26 +32,54 @@ function requireWebhookSecret(req: Request, res: Response, next: NextFunction) {
         // Em produção, falhar fechado: endpoint público sem secret aceitaria chamadas anônimas.
         if (process.env.NODE_ENV === 'production') {
             log.warn('Webhook bloqueado: WEBHOOK_SECRET não configurado em produção');
-            return res.status(503).json({ error: 'Webhook secret not configured' });
+            return fail(res, 'WEBHOOK_NOT_CONFIGURED', 'Webhook secret not configured', 503);
         }
         return next(); // dev/test: compat
     }
     const provided = (req.headers['x-webhook-secret'] as string) || '';
     if (!safeEqual(provided, config.webhookSecret)) {
         log.warn('Webhook bloqueado: x-webhook-secret ausente/inválido');
-        return res.status(401).json({ error: 'Unauthorized webhook' });
+        return fail(res, 'UNAUTHORIZED', 'Unauthorized webhook', 401);
     }
     next();
 }
 
+function validatePattern(pattern: unknown): string | undefined {
+    if (pattern === undefined) return undefined;
+    if (typeof pattern !== 'string' || pattern.length === 0 || pattern.length > 200) {
+        return 'Pattern must be a non-empty string of at most 200 characters';
+    }
+    if (!/^[a-zA-Z0-9_\-.:/\\*?+()[\]\\]+$/.test(pattern)) {
+        return 'Pattern contains unsupported characters';
+    }
+    if (/(\([^)]*[+*][^)]*\))[+*?]|\.\*\.\*/.test(pattern)) {
+        return 'Pattern contains unsafe constructs';
+    }
+    try {
+        new RegExp(pattern);
+    } catch {
+        return 'Pattern is not a valid regular expression';
+    }
+    return undefined;
+}
+
+router.post('/receive/:source', requireWebhookSecret, async (req: Request, res: Response) => {
+    try {
+        await eventRouter.processEvent(req.params.source, req.body);
+        return ok(res, { received: true, source: req.params.source });
+    } catch (error: any) {
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
+    }
+});
+
 // --- Webhook Receiver (Generic) ---
 
-router.post('/trigger', requireWebhookSecret, async (req: Request, res: Response) => {
+router.post('/trigger', requireAuth, requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { event, sessionId, chatId, message, templateId, variables, delay } = req.body;
 
         if (!sessionId || !chatId) {
-            return res.status(400).json({ error: 'Missing required fields: sessionId, chatId' });
+            return fail(res, 'BAD_REQUEST', 'Missing required fields: sessionId, chatId', 400);
         }
 
         let finalMessage = message;
@@ -59,12 +88,12 @@ router.post('/trigger', requireWebhookSecret, async (req: Request, res: Response
         if (templateId && !message) {
             finalMessage = schedulerService.renderTemplate(templateId, variables || {});
             if (!finalMessage) {
-                return res.status(404).json({ error: 'Template not found' });
+                return fail(res, 'NOT_FOUND', 'Template not found', 404);
             }
         }
 
         if (!finalMessage) {
-            return res.status(400).json({ error: 'Missing message or templateId' });
+            return fail(res, 'BAD_REQUEST', 'Missing message or templateId', 400);
         }
 
         // Schedule with optional delay
@@ -80,8 +109,7 @@ router.post('/trigger', requireWebhookSecret, async (req: Request, res: Response
 
         log.info(`Triggered: ${event || 'manual'} -> ${chatId}`);
 
-        res.json({
-            success: true,
+        return ok(res, {
             event: event || 'manual',
             messageId: msg.id,
             scheduledFor: new Date(scheduledAt).toISOString()
@@ -89,19 +117,19 @@ router.post('/trigger', requireWebhookSecret, async (req: Request, res: Response
 
     } catch (error: any) {
         log.error('Trigger error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
 // --- Dolibarr Specific Webhooks (delegated to eventRouter) ---
 
-router.post('/dolibarr/invoice', requireWebhookSecret, async (req: Request, res: Response) => {
+router.post('/dolibarr/invoice', requireAuth, requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { invoiceId, action } = req.body;
-        if (!invoiceId) return res.status(400).json({ error: 'Missing invoiceId' });
+        if (!invoiceId) return fail(res, 'BAD_REQUEST', 'Missing invoiceId', 400);
 
         const invoice = await dolibarrService.getInvoice(invoiceId);
-        if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+        if (!invoice) return fail(res, 'NOT_FOUND', 'Invoice not found', 404);
 
         const customer = invoice.socid ? await dolibarrService.getThirdParty(invoice.socid) : null;
 
@@ -116,20 +144,20 @@ router.post('/dolibarr/invoice', requireWebhookSecret, async (req: Request, res:
             date: invoice.date_limite ? new Date(invoice.date_limite * 1000).toLocaleDateString('pt-BR') : '',
         });
 
-        res.json({ success: true, action, ref: invoice.ref || invoiceId });
+        return ok(res, { action, ref: invoice.ref || invoiceId });
     } catch (error: any) {
         log.error('Dolibarr invoice webhook error', { error: error.message });
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
-router.post('/dolibarr/ticket', requireWebhookSecret, async (req: Request, res: Response) => {
+router.post('/dolibarr/ticket', requireAuth, requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { ticketId, action } = req.body;
-        if (!ticketId) return res.status(400).json({ error: 'Missing ticketId' });
+        if (!ticketId) return fail(res, 'BAD_REQUEST', 'Missing ticketId', 400);
 
         const ticket = await dolibarrService.getTicket(ticketId);
-        if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+        if (!ticket) return fail(res, 'NOT_FOUND', 'Ticket not found', 404);
 
         const customer = ticket.fk_soc ? await dolibarrService.getThirdParty(ticket.fk_soc) : null;
 
@@ -143,20 +171,20 @@ router.post('/dolibarr/ticket', requireWebhookSecret, async (req: Request, res: 
             subject: ticket.subject || '',
         });
 
-        res.json({ success: true, action, ref: ticket.ref || ticketId });
+        return ok(res, { action, ref: ticket.ref || ticketId });
     } catch (error: any) {
         log.error('Dolibarr ticket webhook error', { error: error.message });
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
-router.post('/dolibarr/order', requireWebhookSecret, async (req: Request, res: Response) => {
+router.post('/dolibarr/order', requireAuth, requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { orderId, action } = req.body;
-        if (!orderId) return res.status(400).json({ error: 'Missing orderId' });
+        if (!orderId) return fail(res, 'BAD_REQUEST', 'Missing orderId', 400);
 
         const order = await dolibarrService.getOrder(orderId);
-        if (!order) return res.status(404).json({ error: 'Order not found' });
+        if (!order) return fail(res, 'NOT_FOUND', 'Order not found', 404);
 
         const customer = order.socid ? await dolibarrService.getThirdParty(order.socid) : null;
 
@@ -170,64 +198,71 @@ router.post('/dolibarr/order', requireWebhookSecret, async (req: Request, res: R
             amount: order.total_ttc ? `R$ ${parseFloat(order.total_ttc).toFixed(2)}` : '',
         });
 
-        res.json({ success: true, action, ref: order.ref || orderId });
+        return ok(res, { action, ref: order.ref || orderId });
     } catch (error: any) {
         log.error('Dolibarr order webhook error', { error: error.message });
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
-
-// --- Protected routes (require authentication) ---
-router.use(requireDolibarrLogin);
 
 // --- Automation Rules (persisted) ---
 
-router.get('/rules', (req: Request, res: Response) => {
+router.get('/rules', requireAuth, (req: Request, res: Response) => {
     const rules = schedulerService.getRules();
-    res.json({ count: rules.length, data: rules });
+    return ok(res, rules, { count: rules.length });
 });
 
-router.post('/rules', (req: Request, res: Response) => {
+router.post('/rules', requireAuth, (req: Request, res: Response) => {
     try {
         const { name, event, sessionId, templateId, message, delay, conditions, channel, subject } = req.body;
         if (!name || !event || !sessionId) {
-            return res.status(400).json({ error: 'Missing required fields: name, event, sessionId' });
+            return fail(res, 'BAD_REQUEST', 'Missing required fields: name, event, sessionId', 400);
+        }
+        const pattern = conditions?.pattern;
+        const patternError = validatePattern(pattern);
+        if (patternError) {
+            return fail(res, 'INVALID_PATTERN', patternError, 400);
         }
         const rule = schedulerService.createRule({ name, event, sessionId, templateId, message, delay, conditions, channel, subject });
-        res.json({ success: true, data: rule });
+        return ok(res, rule);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
-router.delete('/rules/:id', (req: Request, res: Response) => {
+router.delete('/rules/:id', requireAuth, (req: Request, res: Response) => {
     const success = schedulerService.deleteRule(req.params.id);
-    if (success) res.json({ success: true });
-    else res.status(404).json({ error: 'Rule not found' });
+    if (success) return ok(res, { deleted: true });
+    return fail(res, 'NOT_FOUND', 'Rule not found', 404);
 });
 
-router.put('/rules/:id', (req: Request, res: Response) => {
+router.put('/rules/:id', requireAuth, (req: Request, res: Response) => {
     try {
         const { name, message, delay, templateId, sessionId, conditions, channel, subject } = req.body;
+        const patternError = validatePattern(conditions?.pattern);
+        if (patternError) {
+            return fail(res, 'INVALID_PATTERN', patternError, 400);
+        }
         const rule = schedulerService.updateRule(req.params.id, { name, message, delay, templateId, sessionId, conditions, channel, subject });
-        if (rule) res.json({ success: true, data: rule });
-        else res.status(404).json({ error: 'Rule not found' });
+        if (rule) return ok(res, rule);
+        return fail(res, 'NOT_FOUND', 'Rule not found', 404);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
-router.patch('/rules/:id/toggle', (req: Request, res: Response) => {
+router.patch('/rules/:id/toggle', requireAuth, (req: Request, res: Response) => {
     const success = schedulerService.toggleRule(req.params.id);
     if (success) {
         const rule = schedulerService.getRules().find(r => r.id === req.params.id);
-        res.json({ success: true, enabled: rule?.enabled });
-    } else res.status(404).json({ error: 'Rule not found' });
+        return ok(res, { enabled: rule?.enabled });
+    }
+    return fail(res, 'NOT_FOUND', 'Rule not found', 404);
 });
 
 // --- Logs ---
 
-router.get('/logs', (req: Request, res: Response) => {
+router.get('/logs', requireAuth, (req: Request, res: Response) => {
     const { sessionId, type, status, limit, since } = req.query;
     const logs = schedulerService.getLogs({
         sessionId: sessionId as string,
@@ -236,63 +271,64 @@ router.get('/logs', (req: Request, res: Response) => {
         limit: limit ? parseInt(limit as string) : 50,
         since: since ? parseInt(since as string) : undefined
     });
-    res.json({ count: logs.length, data: logs });
+    return ok(res, logs, { count: logs.length });
 });
 
 // --- Chatbot Flows ---
 
-router.get('/flows', (req: Request, res: Response) => {
+router.get('/flows', requireAuth, (req: Request, res: Response) => {
     const flows = schedulerService.getFlows();
-    res.json({ count: flows.length, data: flows });
+    return ok(res, flows, { count: flows.length });
 });
 
-router.post('/flows', (req: Request, res: Response) => {
+router.post('/flows', requireAuth, (req: Request, res: Response) => {
     try {
         const { name, triggerKeywords, sessionId, steps } = req.body;
         if (!name || !triggerKeywords || !sessionId || !steps) {
-            return res.status(400).json({ error: 'Missing required fields: name, triggerKeywords, sessionId, steps' });
+            return fail(res, 'BAD_REQUEST', 'Missing required fields: name, triggerKeywords, sessionId, steps', 400);
         }
         const flow = schedulerService.createFlow({ name, triggerKeywords, sessionId, steps });
-        res.json({ success: true, data: flow });
+        return ok(res, flow);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
-router.put('/flows/:id', (req: Request, res: Response) => {
+router.put('/flows/:id', requireAuth, (req: Request, res: Response) => {
     try {
         const { name, triggerKeywords, initialMessage } = req.body;
         const updated = schedulerService.updateFlow(req.params.id, { name, triggerKeywords, initialMessage });
-        if (updated) res.json({ success: true, data: updated });
-        else res.status(404).json({ error: 'Flow not found' });
+        if (updated) return ok(res, updated);
+        return fail(res, 'NOT_FOUND', 'Flow not found', 404);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
-router.delete('/flows/:id', (req: Request, res: Response) => {
+router.delete('/flows/:id', requireAuth, (req: Request, res: Response) => {
     const success = schedulerService.deleteFlow(req.params.id);
-    if (success) res.json({ success: true });
-    else res.status(404).json({ error: 'Flow not found' });
+    if (success) return ok(res, { deleted: true });
+    return fail(res, 'NOT_FOUND', 'Flow not found', 404);
 });
 
-router.patch('/flows/:id/toggle', (req: Request, res: Response) => {
+router.patch('/flows/:id/toggle', requireAuth, (req: Request, res: Response) => {
     const success = schedulerService.toggleFlow(req.params.id);
     if (success) {
         const flow = schedulerService.getFlow(req.params.id);
-        res.json({ success: true, enabled: flow?.enabled });
-    } else res.status(404).json({ error: 'Flow not found' });
+        return ok(res, { enabled: flow?.enabled });
+    }
+    return fail(res, 'NOT_FOUND', 'Flow not found', 404);
 });
 
 // --- Test/Dry-Run Endpoints ---
 
 // Test a rule with optional real execution
-router.post('/rules/:id/test', async (req: Request, res: Response) => {
+router.post('/rules/:id/test', requireAuth, async (req: Request, res: Response) => {
     try {
         const { target } = req.body; // Optional target for real sending
         const rule = schedulerService.getRules().find(r => r.id === req.params.id);
         if (!rule) {
-            return res.status(404).json({ error: 'Rule not found' });
+            return fail(res, 'NOT_FOUND', 'Rule not found', 404);
         }
 
         // Mock data based on event type
@@ -333,8 +369,7 @@ router.post('/rules/:id/test', async (req: Request, res: Response) => {
             }
         }
 
-        res.json({
-            success: true,
+        return ok(res, {
             dryRun: !target,
             rule: {
                 id: rule.id,
@@ -351,24 +386,28 @@ router.post('/rules/:id/test', async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         log.error('Test error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
 // Simulate an event (for testing automation flow)
-router.post('/simulate', async (req: Request, res: Response) => {
+router.post('/simulate', requireAuth, async (req: Request, res: Response) => {
+    if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
+        return fail(res, 'NOT_FOUND', 'Route not found', 404);
+    }
+
     try {
         const { event, mockPhone, sessionId } = req.body;
 
         if (!event) {
-            return res.status(400).json({ error: 'Missing event type' });
+            return fail(res, 'BAD_REQUEST', 'Missing event type', 400);
         }
 
         // Get rules for this event
         const activeRules = schedulerService.getRules().filter(r => r.event === event && r.enabled);
 
         if (activeRules.length === 0) {
-            return res.json({ success: false, message: `No active rules for event: ${event}` });
+            return ok(res, { matched: false, message: `No active rules for event: ${event}` });
         }
 
         // Mock data
@@ -432,21 +471,20 @@ router.post('/simulate', async (req: Request, res: Response) => {
             }
         }
 
-        res.json({
-            success: true,
+        return ok(res, {
             event,
             chatId,
             rulesMatched: activeRules.length,
             results
         });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
 // Get available variables for each event type
-router.get('/variables', (req: Request, res: Response) => {
-    res.json({
+router.get('/variables', requireAuth, (req: Request, res: Response) => {
+    return ok(res, {
         invoice_created: ['{{customerName}}', '{{ref}}', '{{total}}'],
         invoice_paid: ['{{customerName}}', '{{ref}}', '{{total}}'],
         invoice_overdue: ['{{customerName}}', '{{ref}}', '{{total}}'],
