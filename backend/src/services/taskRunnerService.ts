@@ -1176,6 +1176,11 @@ class TaskRunnerService {
     }
 
     async startTask(issueNumber: number, opts?: { mode?: 'synthesis' | 'cumulative'; slot?: Slot }): Promise<Task> {
+        // #flip PR-B (anti-double-run): guarda SÍNCRONA antes de qualquer mutação. O guard de status
+        // running|fixing abaixo NÃO pega a janela 'pending'-eleita (dispatch agendado, status ainda pending
+        // até o async da chain rodar). `execInFlight.has` é o único predicado que cobre essa janela: com 2
+        // slots, um re-claim da MESMA issue = 2 coders no mesmo branch fix-N. Fecha G6.
+        if (this.execInFlight.has(issueNumber)) throw new Error(`#${issueNumber} já tem execução em voo — ignorando start duplicado`);
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (task.status === 'running' || task.status === 'fixing') throw new Error(`Task #${issueNumber} is already ${task.status}`);
@@ -1198,6 +1203,9 @@ class TaskRunnerService {
      * só que disparado por gente e com o modelo dela. Re-enfileira via scheduleExec (fila serial).
      */
     async escalateTask(issueNumber: number, model: string): Promise<Task> {
+        // #flip PR-B (anti-double-run): guarda SÍNCRONA antes de mutar/agendar — pega a janela 'pending'-eleita
+        // que o guard de status running|fixing abaixo não cobre (escalada duplicada re-enfileiraria a mesma issue).
+        if (this.execInFlight.has(issueNumber)) throw new Error(`#${issueNumber} já tem execução em voo — ignorando escalada duplicada`);
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (task.status === 'running' || task.status === 'fixing') throw new Error(`Task #${issueNumber} já está ${task.status} — aguarde terminar para escalar.`);
@@ -1674,6 +1682,9 @@ class TaskRunnerService {
      *    ela na mão (FN-1b). `reviewing` é espera humana → NÃO conta. `mergeHoldReason` = espera humana → idem.
      *  - `waiting`: pending fora da fila por `planWaitUntil` (cooldown) — distingue "backlog preso" de "vazio".
      */
+    /** #flip PR-B: exec agendada/em-voo p/ esta issue? (read-only, p/ o planner não re-kickar em voo) */
+    public isExecInFlight(issueNumber: number): boolean { return this.execInFlight.has(issueNumber); }
+
     getRunnerHealth(): {
         autoPlay: boolean; queued: number; waiting: number;
         running: Array<{ issueNumber: number; status: string; runningForMin: number; sinceHeartbeatMin: number }>;
@@ -4473,6 +4484,18 @@ Return ONLY a JSON:
 
         // #1154 P1 item 3: feedback humano é PERSISTENTE (sobrevive ao wipe entre fases no executeTask).
         (task.durableFeedback ??= []).push(feedback);
+
+        // #flip PR-B (anti-double-run): se uma exec já está em voo p/ esta issue, NÃO agendamos uma 2ª
+        // (agendar = 2 coders no mesmo branch fix-N). MAS feedback humano é valioso demais p/ um erro
+        // descartar: já o persistimos em durableFeedback ACIMA, que a rodada em andamento (ou a próxima)
+        // consome via durableFeedbackBlock. Só registramos o evento + save e retornamos SEM scheduleExec.
+        if (this.execInFlight.has(issueNumber)) {
+            task.updatedAt = new Date().toISOString();
+            this.recordEvent(task, 'feedback_received', `Feedback recebido: ${feedback.substring(0, 200)} — registrado; será aplicado na rodada em andamento/próxima.`, { length: feedback.length, inFlight: true });
+            this.save();
+            return task;
+        }
+
         // #1154 P1 item 7: feedback humano REABRE o ciclo de auto-fix. Sem isto, após 3 julgamentos o
         // judgeAttempts vitalício fazia o próximo Judge resolver direto (reviewing/approved) sem corrigir.
         task.judgeAttempts = 0;
@@ -4487,6 +4510,10 @@ Return ONLY a JSON:
     }
 
     async redoTask(issueNumber: number, instruction?: string, opts?: { resetBudget?: boolean }): Promise<Task> {
+        // #flip PR-B (anti-double-run): guarda SÍNCRONA — DEVE vir ANTES do `gh pr close` abaixo. Se uma
+        // exec da mesma issue está em voo e deixássemos passar, fecharíamos o PR de uma execução VIVA (que a
+        // recriaria/duplicaria). O predicado execInFlight cobre a janela 'pending'-eleita + running/fixing.
+        if (this.execInFlight.has(issueNumber)) throw new Error(`#${issueNumber} já tem execução em voo — redo ignorado`);
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
 

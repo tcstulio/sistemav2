@@ -264,6 +264,13 @@ export const taskPlannerService = {
                 const kicked: number[] = [];
                 for (const o of owners) {
                     const bt = o.task;
+                    // #flip PR-B (anti-double-run): NUNCA re-despacha um bloqueador que já tem exec em voo
+                    // (execInFlight cobre a janela 'pending'-eleita que ACTIVE não pega) — senão o sweep
+                    // dispararia um 2º redo da MESMA issue em outro slot. Skip + log, NUNCA throw (sweep auto).
+                    if (bt && !ACTIVE.has(bt.status) && taskRunnerService.isExecInFlight(bt.issueNumber)) {
+                        log.warn(`#flip PR-B: bloqueador #${bt.issueNumber} já tem exec em voo — pulando re-despacho (evita 2º redo da mesma issue)`);
+                        continue;
+                    }
                     if (bt && !ACTIVE.has(bt.status) && (bt.deadlockKicks || 0) < KICK_CAP) {
                         bt.deadlockKicks = (bt.deadlockKicks || 0) + 1;
                         kicked.push(bt.issueNumber);
