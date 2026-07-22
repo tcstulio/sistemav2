@@ -156,7 +156,7 @@ function isTransientGitError(e: any): boolean {
 export async function gitFetchWithRetry(
     args: string[],
     opts?: { timeout?: number; cwd?: string },
-    tries = 3,
+    tries = 5,
     shouldAbort?: () => boolean,
 ): Promise<{ stdout: string; stderr: string }> {
     let lastErr: any;
@@ -171,7 +171,10 @@ export async function gitFetchWithRetry(
                 if (!isLast && !isTransientGitError(e)) log.warn(`git ${args.join(' ')}: erro permanente, sem retry: ${e?.message || e}`);
                 break;
             }
-            const backoffMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+            // #resiliencia FIX2: o endpoint Azure-BR do GitHub fica ruim por janelas de 30s+; tries=3 dava
+            // só ~7s de janela (1s/2s/4s). Com tries=5 e backoff LIMITADO a 8s → 1s/2s/4s/8s/8s ≈ 23s de
+            // janela total — cobre a rajada transitória pós-restart que matou ~46 tasks.
+            const backoffMs = Math.min(1000 * 2 ** (attempt - 1), 8000); // 1s, 2s, 4s, 8s, 8s
             log.warn(`git ${args.join(' ')} falhou (tentativa ${attempt}/${tries}) — retry em ${backoffMs}ms: ${e?.message || e}`);
             await new Promise((r) => setTimeout(r, backoffMs));
         }
@@ -456,6 +459,15 @@ export interface Task {
     baselineSha?: string;
     /** #flip: slot onde a task vive (afinidade). Gravado no prólogo do scheduleExec. undefined = virgem → slot-1. */
     slotId?: number;
+    // #resiliencia FIX1: quantas vezes esta task foi RE-ENFILEIRADA após um restart do backend (nodemon/
+    // zumbi) tê-la pego em estado intermediário. Teto 3 (anti-loop): além disso vira 'failed' de verdade.
+    // Restart do backend é AMBIENTE transitório, não falha do trabalho — re-rodar do zero é seguro (o
+    // ensureWorktree faz reset --hard, limpando o worktree sujo do run interrompido).
+    restartRequeues?: number;
+    // #resiliencia FIX3: quantas vezes a ÉPICA re-enfileirou esta sub-task por falha TRANSITÓRIA/ambiental
+    // (backend reiniciou, git fetch flaky, npm). Teto 2 (anti-loop): além disso a falha conta como REAL e
+    // a épica trava p/ decisão humana. Só falhas transitórias consomem esta cota — falha REAL não re-tenta.
+    subtaskRetries?: number;
 }
 
 interface TaskStore {
@@ -524,9 +536,13 @@ class TaskRunnerService {
     }
 
     /**
-     * Detecta e marca tasks que ficaram em estado intermediário (running/fixing/cancelling)
-     * durante um restart do backend (ex: nodemon). Sem isto, a task ficaria travada indefinidamente.
-     * Não é recovery automático — marca como 'failed' e registra evento, permitindo retry manual.
+     * Detecta tasks que ficaram em estado intermediário (running/fixing/cancelling) durante um restart
+     * do backend (ex: nodemon/zumbi). Restart do backend é AMBIENTE transitório, NÃO falha do trabalho —
+     * a análise de 197 tasks failed mostrou ~51 mortas assim. Por isso RE-ENFILEIRA (status='pending')
+     * com teto anti-loop (restartRequeues < 3) em vez de marcar 'failed' permanente. Só após 3 restarts
+     * sucessivos pegarem a MESMA task no meio é que vira 'failed' de verdade (aí é sinal de algo real:
+     * a task trava e derruba o backend). Limpar slotId faz o autoPlayNext re-eleger o slot (bom p/ N=2);
+     * o ensureWorktree faz reset --hard, limpando o worktree sujo do run interrompido — re-rodar é seguro.
      */
     private recoverStuckTasksOnBoot(): void {
         const activeStatuses: TaskStatus[] = ['running', 'fixing', 'cancelling'];
@@ -535,18 +551,32 @@ class TaskRunnerService {
             if (activeStatuses.includes(t.status)) stuck.push(t);
         }
         if (stuck.length === 0) return;
-        log.warn(`Boot: ${stuck.length} task(s) em estado intermediário detectada(s) — marcando como failed`);
+        log.warn(`Boot: ${stuck.length} task(s) em estado intermediário detectada(s) — re-enfileirando (transitório) ou marcando failed (teto)`);
         for (const t of stuck) {
             const prev = t.status;
-            t.status = 'failed';
-            t.error = `Backend reiniciou durante execução (status era: ${prev})`;
-            t.updatedAt = new Date().toISOString();
-            t.childPid = undefined;
-            t.killRequested = false;
-            this.recordEvent(t, 'task_failed', `⚠️ Backend reiniciou durante execução (status=${prev}). Task marcada como failed — use Retry para reiniciar.`, { recovery: true, previousStatus: prev });
-            // #1154 P2 item 17: emite status → dispara a notificação de 'failed' e atualiza a UI. Antes o
-            // recovery era SILENCIOSO (só recordEvent): o usuário não sabia que a task morreu no restart.
-            this.emitStatus(t);
+            const n = (t.restartRequeues ?? 0);
+            if (n < 3) {
+                // Re-enfileira: restart do backend é ambiente transitório, não falha real.
+                t.restartRequeues = n + 1;
+                t.status = 'pending';
+                t.slotId = undefined;   // libera a afinidade → autoPlayNext re-elege o slot (N=2)
+                t.childPid = undefined;
+                t.killRequested = false;
+                t.error = undefined;
+                t.updatedAt = new Date().toISOString();
+                this.recordEvent(t, 'task_started', `♻️ Re-enfileirada após restart do backend (era ${prev}; tentativa ${n + 1}/3) — ambiente transitório, não é falha real.`, { restartRequeue: true, previousStatus: prev });
+                this.emitStatus(t);
+            } else {
+                // Teto estourado: 3 restarts pegaram esta task no meio — trata como falha REAL.
+                t.status = 'failed';
+                t.error = `Backend reiniciou durante execução (status era: ${prev}) — falhou após 3 re-enfileiramentos por restart.`;
+                t.updatedAt = new Date().toISOString();
+                t.childPid = undefined;
+                t.killRequested = false;
+                this.recordEvent(t, 'task_failed', `⚠️ Backend reiniciou durante execução (status=${prev}) e a task já foi re-enfileirada 3× por restart — marcada como failed. Use Retry para reiniciar.`, { recovery: true, previousStatus: prev, restartRequeueExhausted: true });
+                // #1154 P2 item 17: emite status → dispara a notificação de 'failed' e atualiza a UI.
+                this.emitStatus(t);
+            }
         }
         this.pendingExecs = 0;
         this.save();
@@ -735,6 +765,23 @@ class TaskRunnerService {
      * só fecha a épica quando TODAS merged; estas ficam 'pending' para sempre. NÃO re-executa sozinha
      * (seria dezenas de rodadas de opencode sem opt-in do dono) — notifica 1× (flag durável) p/ decisão humana.
      */
+    /**
+     * #resiliencia FIX3: mensagem de falha de uma sub-task, para classificar transitório × real. Prioriza
+     * `s.error` (motivo canônico); se vazio, cai no último evento de falha terminal da timeline (task_failed/
+     * task_rejected/typecheck_failed/ci_failure). Retorna '' se não achar — string vazia NÃO casa transitório
+     * (secure-default: "sem evidência de transitório" trava a épica, não re-loopa).
+     */
+    private subtaskFailureMessage(s: Task): string {
+        if (s.error && s.error.trim()) return s.error;
+        const failTypes: TaskEventType[] = ['task_failed', 'task_rejected', 'typecheck_failed', 'ci_failure'];
+        const events = Array.isArray(s.events) ? s.events : [];
+        for (let i = events.length - 1; i >= 0; i--) {
+            const e = events[i];
+            if (failTypes.includes(e.type) && e.message) return e.message;
+        }
+        return '';
+    }
+
     private notifyStalledDecomposedEpics(): void {
         for (const epic of Object.values(this.store.tasks)) {
             if (epic.kind !== 'epic' || epic.status !== 'pending' || epic.epicStalledNotified) continue;
@@ -743,6 +790,34 @@ class TaskRunnerService {
             const allTerminal = subs.every(s => this.isTerminalStatus(s.status));
             const failedCount = subs.filter(s => s.status === 'failed' || s.status === 'rejected').length;
             if (!allTerminal || failedCount === 0) continue; // só o caso "acabou mal"
+
+            // #resiliencia FIX3: ANTES de travar a épica p/ decisão humana, re-enfileira as sub-tasks que
+            // falharam por TRANSITÓRIO/AMBIENTE (backend reiniciou, git fetch flaky, npm) — com teto anti-loop.
+            // A análise de 197 failed mostrou que ~97% eram ambiente, não falha de trabalho; travar a épica
+            // por um soluço de infra era o modo de falha central. Só trava se sobrar falha REAL.
+            let requeued = false;
+            for (const s of subs) {
+                if (s.status !== 'failed' && s.status !== 'rejected') continue;
+                const errMsg = this.subtaskFailureMessage(s);
+                if (!this.isTransientError(errMsg)) continue; // falha REAL → não re-tenta
+                if ((s.subtaskRetries ?? 0) >= 2) continue;   // teto estourado → conta como real
+                s.subtaskRetries = (s.subtaskRetries ?? 0) + 1;
+                s.status = 'pending';
+                s.slotId = undefined;
+                s.childPid = undefined;
+                s.error = undefined;
+                s.updatedAt = new Date().toISOString();
+                this.recordEvent(s, 'task_started', `♻️ Falha transitória (${errMsg.slice(0, 60)}) — re-enfileirada pela épica #${epic.issueNumber} (${s.subtaskRetries}/2).`, { epicRetry: true });
+                this.emitStatus(s);
+                requeued = true;
+            }
+            if (requeued) {
+                // Ao menos uma sub-task voltou p/ a fila: NÃO trava a épica. Ela re-avalia num próximo poll
+                // quando as sub-tasks re-rodarem (não seta epicStalledNotified — a épica segue viva).
+                this.save();
+                continue;
+            }
+
             epic.epicStalledNotified = true;
             this.recordEvent(epic, 'task_failed', `Épica travada: ${subs.length} sub-tasks terminais, ${failedCount} sem sucesso. Requer decisão humana (não re-executa sozinha).`, { stalledEpic: true });
             this.save();
@@ -4129,7 +4204,10 @@ Return ONLY a JSON:
      * re-tenta. Conflito real / typecheck / veto NÃO casam aqui (vão para os ramos específicos → revisão).
      */
     private isTransientError(msg: string): boolean {
-        return /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|timeout|network|getaddrinfo|could not resolve host|\b50[234]\b|rate limit|secondary rate|abuse detection|TLS|handshake/i.test(msg);
+        // #resiliencia FIX3: além dos erros de rede/gh do auto-merge, cobre os padrões REAIS das falhas de
+        // AMBIENTE que travavam épicas (análise de 197 failed): restart do backend, git fetch flaky, npm
+        // ci/install. São transitórios/ambientais — a sub-task deve re-rodar, não travar a épica p/ humano.
+        return /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|timeout|network|getaddrinfo|could not resolve host|\b50[234]\b|rate limit|secondary rate|abuse detection|TLS|handshake|Backend reiniciou|git fetch|npm ci|npm install|fetch origin|na fila|aguardando a task/i.test(msg);
     }
 
     private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto' | 'ciFailure' | 'typecheckAfterRebase', detail: string, evidence?: string): boolean {

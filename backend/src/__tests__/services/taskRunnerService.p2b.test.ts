@@ -40,12 +40,23 @@ describe('#1154 P2 item 20 — task.events tem cap (não cresce sem limite)', ()
 });
 
 describe('#1154 P2 item 17 — recovery de boot é AUDÍVEL (emitStatus dispara a notificação)', () => {
-    it('task running vira failed e emite status', () => {
+    // #resiliencia FIX1: o recovery de boot agora RE-ENFILEIRA (transitório) em vez de marcar 'failed'
+    // permanente — restart do backend é ambiente, não falha do trabalho. A AUDIBILIDADE (emitStatus) que
+    // este item garante segue valendo nos DOIS ramos (re-enfileira e teto).
+    it('task running SEM restartRequeues → re-enfileira (pending) e emite status', () => {
         svc.store = { tasks: { 7: { issueNumber: 7, status: 'running', events: [] } } };
         svc.emitStatus = vi.fn(); svc.recordEvent = vi.fn(); svc.save = vi.fn();
         svc.recoverStuckTasksOnBoot();
+        expect(svc.store.tasks[7].status).toBe('pending');
+        expect(svc.store.tasks[7].restartRequeues).toBe(1);
+        expect(svc.emitStatus).toHaveBeenCalledWith(svc.store.tasks[7]); // audível nos dois ramos
+    });
+    it('task running com restartRequeues=3 (teto) → vira failed e emite status', () => {
+        svc.store = { tasks: { 7: { issueNumber: 7, status: 'running', events: [], restartRequeues: 3 } } };
+        svc.emitStatus = vi.fn(); svc.recordEvent = vi.fn(); svc.save = vi.fn();
+        svc.recoverStuckTasksOnBoot();
         expect(svc.store.tasks[7].status).toBe('failed');
-        expect(svc.emitStatus).toHaveBeenCalledWith(svc.store.tasks[7]); // antes: recovery silencioso
+        expect(svc.emitStatus).toHaveBeenCalledWith(svc.store.tasks[7]);
     });
 });
 
