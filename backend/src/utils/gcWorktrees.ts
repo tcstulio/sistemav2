@@ -30,7 +30,13 @@ export const OPENCODE_ORPHAN_NEEDLES = [PROMPT_FILE, VISUAL_JUDGE_MARKER, RUN_MA
 /** Limiar padrão de alerta de disco livre: 5 GiB. */
 export const DEFAULT_DISK_THRESHOLD_BYTES = 5 * 1024 ** 3;
 
-/** Faixa de portas de preview derivadas do TaskRunner (previewPortsFor: 5174+(n%10), 3014+(n%10)). */
+/**
+ * Faixa de portas de preview do TaskRunner: frontend [5174, 5174+RANGE), backend [3014, 3014+RANGE).
+ * FONTE DA VERDADE compartilhada: o GC ceifa processos órfãos NESTA faixa (isTaskrunnerPreviewPort) e
+ * o pool/lease de portas (previewPorts.ts) aloca DENTRO dela (#1661 PR-C). A alocação virou lease
+ * por-issue (mata a colisão mod-10), mas a faixa numérica é a MESMA — por isso o GC segue alcançando
+ * qualquer órfão. Mude aqui e ambos (GC + pool) acompanham.
+ */
 export const PREVIEW_FRONTEND_PORT_BASE = 5174;
 export const PREVIEW_BACKEND_PORT_BASE = 3014;
 export const PREVIEW_PORT_RANGE = 10;
