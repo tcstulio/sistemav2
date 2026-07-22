@@ -1,39 +1,113 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config/env';
 import { getProtoSession, setProtoSessionUserData } from '../services/protoSession';
+import { fail } from '../utils/apiResponse';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Auth');
+const adminKey = process.env.ADMIN_KEY?.trim();
 
-// Basic API Key check
-// In production, use a more robust auth system (JWT, etc)
+if (!adminKey) {
+    throw new Error('ADMIN_KEY não configurada — defina a variável de ambiente antes de iniciar o servidor');
+}
+
 export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
     const apiKey = req.headers['x-admin-key'];
 
-    // Check against config
-    if (!apiKey || apiKey !== config.adminKey) {
-        return res.status(403).json({
-            status: 'error',
-            message: 'Forbidden: Invalid or missing Admin Key.'
-        });
+    if (!apiKey || apiKey !== adminKey) {
+        return fail(res, 'INVALID_ADMIN_KEY', 'Forbidden: Invalid or missing Admin Key.', 403);
     }
 
     next();
 };
 
-// Internal Cache for API Keys: Key -> Timestamp (expiry) OR Object
-const validKeysCache = new Map<string, number | { expiry: number, user: any }>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 Minutes
+type CacheEntry = {
+    expiresAt: number;
+    user: unknown;
+};
 
-setInterval(() => {
-    const now = Date.now();
-    for (const [key, value] of validKeysCache.entries()) {
-        const expiry = typeof value === 'number' ? value : value?.expiry;
-        if (!expiry || now >= expiry) {
+export interface AuthCacheMetrics {
+    auth_cache_size: number;
+    auth_cache_hits: number;
+    auth_cache_misses: number;
+}
+
+const validKeysCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const CACHE_MAX_SIZE = 500;
+const CACHE_CLEANUP_INTERVAL_MS = 60 * 1000;
+
+export let auth_cache_size = 0;
+export let auth_cache_hits = 0;
+export let auth_cache_misses = 0;
+
+function syncCacheSize(): void {
+    auth_cache_size = validKeysCache.size;
+}
+
+function pruneExpiredCacheEntries(now = Date.now()): void {
+    for (const [key, entry] of validKeysCache.entries()) {
+        if (!entry || typeof entry.expiresAt !== 'number' || now >= entry.expiresAt) {
             validKeysCache.delete(key);
         }
     }
-}, CACHE_TTL_MS);
+    syncCacheSize();
+}
+
+function getCachedUser(key: string, now = Date.now()): unknown | undefined {
+    const entry = validKeysCache.get(key);
+    if (!entry || typeof entry.expiresAt !== 'number' || now >= entry.expiresAt) {
+        if (entry) {
+            validKeysCache.delete(key);
+            syncCacheSize();
+        }
+        auth_cache_misses += 1;
+        return undefined;
+    }
+
+    validKeysCache.delete(key);
+    validKeysCache.set(key, entry);
+    auth_cache_hits += 1;
+    return entry.user;
+}
+
+function setCachedUser(key: string, user: unknown, now = Date.now()): void {
+    pruneExpiredCacheEntries(now);
+    validKeysCache.delete(key);
+
+    while (validKeysCache.size >= CACHE_MAX_SIZE) {
+        const leastRecentlyUsedKey = validKeysCache.keys().next().value as string | undefined;
+        if (leastRecentlyUsedKey === undefined) break;
+        validKeysCache.delete(leastRecentlyUsedKey);
+    }
+
+    validKeysCache.set(key, { expiresAt: now + CACHE_TTL_MS, user });
+    syncCacheSize();
+}
+
+export function getAuthCacheMetrics(): AuthCacheMetrics {
+    pruneExpiredCacheEntries();
+    return {
+        auth_cache_size,
+        auth_cache_hits,
+        auth_cache_misses,
+    };
+}
+
+export const authCacheMetrics = {
+    get auth_cache_size(): number {
+        return getAuthCacheMetrics().auth_cache_size;
+    },
+    get auth_cache_hits(): number {
+        return auth_cache_hits;
+    },
+    get auth_cache_misses(): number {
+        return auth_cache_misses;
+    },
+};
+
+const cacheCleanupTimer = setInterval(pruneExpiredCacheEntries, CACHE_CLEANUP_INTERVAL_MS);
+cacheCleanupTimer.unref?.();
 
 // Check for Dolibarr User Login (Presence AND Validity of API Key)
 export const requireDolibarrLogin = async (req: Request, res: Response, next: NextFunction) => {
@@ -49,10 +123,7 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
     }
 
     if (!userKey || userKey === 'undefined' || userKey === 'null') {
-        return res.status(401).json({
-            status: 'error',
-            message: 'Authentication Required: You must be logged in to Dolibarr.'
-        });
+        return fail(res, 'AUTHENTICATION_REQUIRED', 'Authentication Required: You must be logged in to Dolibarr.', 401);
     }
 
     // Se o userKey é um token de sessão do nosso /login, resolve a DOLAPIKEY real server-side
@@ -72,10 +143,12 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
             
             if (!isValidUserKey) {
                 log.warn(`Sessão ${protoSession.login} com dolapikey inválida/ausente. Bloqueando requisição (Fail-Closed).`);
-                return res.status(401).json({
-                    status: 'error',
-                    message: 'Authentication Failed: Sua sessão está corrompida (chave ausente). Faça login novamente.'
-                });
+                return fail(
+                    res,
+                    'INVALID_SESSION',
+                    'Authentication Failed: Sua sessão está corrompida (chave ausente). Faça login novamente.',
+                    401
+                );
             }
             fwdKey = protoSession.dolapikey;
         } else {
@@ -93,7 +166,7 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
             console.log(`[authMiddleware] Backfill needed for ${protoSession.login}`);
             try {
                 if (protoSession.dolapikey && protoSession.dolapikey !== 'undefined' && protoSession.dolapikey !== 'null') {
-                    const { dolibarrService } = require('../services/dolibarrService');
+                    const { dolibarrService } = await import('../services/dolibarrService');
                     const fresh = await dolibarrService.getUserByKey(protoSession.dolapikey);
                     if (fresh) {
                     // getUserByKey nem sempre traz 'admin' (users/info|myself). Resolve de forma
@@ -120,50 +193,31 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
         return next();
     }
 
-    // 1. Check Cache
-    const now = Date.now();
-    if (validKeysCache.has(userKey)) {
-        const cached = validKeysCache.get(userKey) as any;
-        // Handle old cache format (number) vs new format (object)
-        if (typeof cached === 'number') {
-            if (now < cached) {
-                // Old cache style: we don't have user object, so we must fetch it.
-                // Fallthrough to fetch.
-            }
-        } else if (cached && cached.expiry && now < cached.expiry) {
-            (req as any).user = cached.user;
-            return next(); // Valid and cached with user
-        }
+    const cachedUser = getCachedUser(userKey);
+    if (cachedUser !== undefined) {
+        (req as any).user = cachedUser;
+        return next();
     }
 
-    // 2. Validate against Dolibarr (if not cached or expired)
-    const { dolibarrService } = require('../services/dolibarrService');
+    const { dolibarrService } = await import('../services/dolibarrService');
 
     try {
-        // We use getUserByKey to get the full user object (needed for signature), not just validate status
         const user = await dolibarrService.getUserByKey(userKey);
 
         if (user) {
-            // Cache the user object
-            validKeysCache.set(userKey, { expiry: now + CACHE_TTL_MS, user: user } as any);
+            setCachedUser(userKey, user);
             (req as any).user = user;
             return next();
-        } else {
-            // Fallback: Check if valid but no user returned (e.g. sqlfilters broken)
-            // If we really need signature, this is a failure. But if we want to allow login without signature, we could check validateApiKey.
-            // Given the requirement is "Signature is missing", failing here helps debug.
-            // But to be safe for general auth, maybe we allow but user is null?
-            // Let's rely on getUserByKey returning null = unauth or not found.
-            return res.status(401).json({
-                status: 'error',
-                message: 'Authentication Failed: Invalid Dolibarr API Key or User not found.'
-            });
         }
-    } catch (e) {
-        return res.status(401).json({
-            status: 'error',
-            message: 'Authentication Service Error'
-        });
+
+        return fail(
+            res,
+            'INVALID_DOLIBARR_KEY',
+            'Authentication Failed: Invalid Dolibarr API Key or User not found.',
+            401
+        );
+    } catch {
+        return fail(res, 'AUTHENTICATION_SERVICE_ERROR', 'Authentication Service Error', 401);
     }
 };
 
@@ -186,7 +240,7 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
 
     // 2. Fallback to System Admin Key (break-glass). Atribui identidade de sistema (para o
     // audit trail não registrar 'unknown') e loga em warn — uso da master key é evento sensível.
-    if (userKey && userKey === config.adminKey) {
+    if (userKey && userKey === adminKey) {
         log.warn(`System admin key used for ${req.method} ${req.path}`);
         (req as any).user = { id: 'system', login: 'system-admin-key', admin: '1' };
         return next();
@@ -194,10 +248,7 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
 
     if (!userKey) {
         log.warn(`Admin access denied: no key provided for ${req.method} ${req.path}`);
-        return res.status(401).json({
-            status: 'error',
-            message: 'Authentication Required: Admin Access Only.'
-        });
+        return fail(res, 'ADMIN_AUTHENTICATION_REQUIRED', 'Authentication Required: Admin Access Only.', 401);
     }
 
     // PROTÓTIPO (Desenho B): se o userKey é um token de sessão do nosso /login,
@@ -206,18 +257,20 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
     const protoSession = getProtoSession(userKey);
     if (protoSession) {
         if (protoSession.userData?.admin) return next();
-        const { dolibarrService } = require('../services/dolibarrService');
+        const { dolibarrService } = await import('../services/dolibarrService');
         const isAdmin = await dolibarrService.verifyAdminStatus(protoSession.dolapikey);
         if (isAdmin) return next();
         log.warn(`Admin access denied (session: ${protoSession.login}) for ${req.method} ${req.path}`);
-        return res.status(403).json({
-            status: 'error',
-            message: 'Access Denied: You must be an Administrator to perform this action.'
-        });
+        return fail(
+            res,
+            'ADMIN_ACCESS_DENIED',
+            'Access Denied: You must be an Administrator to perform this action.',
+            403
+        );
     }
 
     // 3. Admin Validation via Dolibarr Service
-    const { dolibarrService } = require('../services/dolibarrService');
+    const { dolibarrService } = await import('../services/dolibarrService');
 
     try {
         const isAdmin = await dolibarrService.verifyAdminStatus(userKey);
@@ -226,14 +279,51 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
             return next();
         } else {
             log.warn(`Admin access denied for ${req.method} ${req.path}`);
-            return res.status(403).json({
-                status: 'error',
-                message: 'Access Denied: You must be an Administrator to perform this action.'
-            });
+            return fail(
+                res,
+                'ADMIN_ACCESS_DENIED',
+                'Access Denied: You must be an Administrator to perform this action.',
+                403
+            );
         }
 
     } catch (e: any) {
         log.error(`Admin auth error for ${req.method} ${req.path}: ${e.message}`);
-        return res.status(500).json({ status: 'error', message: 'Auth Verification Error' });
+        return fail(res, 'AUTH_VERIFICATION_ERROR', 'Auth Verification Error', 500);
     }
 };
+
+function getAuthenticatedRoles(req: Request): Set<string> {
+    const user = (req as Request & {
+        user?: { role?: unknown; roles?: unknown; admin?: unknown };
+    }).user;
+    if (!user || typeof user !== 'object') return new Set();
+
+    const roles = new Set<string>();
+    const addRole = (role: unknown): void => {
+        if (typeof role === 'string' && role.trim()) roles.add(role.trim().toLowerCase());
+    };
+
+    addRole(user.role);
+    if (Array.isArray(user.roles)) user.roles.forEach(addRole);
+    if (user.admin === true || user.admin === 1 || user.admin === '1') roles.add('admin');
+
+    return roles;
+}
+
+export function requireRole(role: string | string[]) {
+    const allowedRoles = (Array.isArray(role) ? role : [role])
+        .map((allowedRole) => allowedRole.trim().toLowerCase())
+        .filter(Boolean);
+
+    return (req: Request, res: Response, next: NextFunction) => {
+        const authenticatedRoles = getAuthenticatedRoles(req);
+        if (allowedRoles.some((allowedRole) => authenticatedRoles.has(allowedRole))) {
+            return next();
+        }
+
+        return fail(res, 'INSUFFICIENT_ROLE', 'Access Denied: Insufficient role.', 403);
+    };
+}
+
+export const requireAuth = requireDolibarrLogin;
