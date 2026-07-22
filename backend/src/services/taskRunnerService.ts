@@ -454,6 +454,8 @@ export interface Task {
     baselineErrors?: string[];
     baselineGlobals?: string[];
     baselineSha?: string;
+    /** #flip: slot onde a task vive (afinidade). Gravado no prólogo do scheduleExec. undefined = virgem → slot-1. */
+    slotId?: number;
 }
 
 interface TaskStore {
@@ -1182,8 +1184,8 @@ class TaskRunnerService {
         task.branch = branch;
         task.error = undefined;
         if (opts?.mode) task.executionMode = opts.mode;
-        // Serializa na cadeia do SLOT (eleito pelo autoPlayNext via opts.slot; default slot-1 p/ starts manuais).
-        this.scheduleExec(task, branch, 'running', opts?.slot ?? slotManager.slot1);
+        // Serializa na cadeia do SLOT (eleito pelo autoPlayNext via opts.slot; afinidade p/ starts manuais).
+        this.scheduleExec(task, branch, 'running', opts?.slot ?? this.slotForTask(task));
         this.save();
         return task;
     }
@@ -1212,7 +1214,7 @@ class TaskRunnerService {
         const branch = task.branch || `fix-${issueNumber}`;
         task.branch = branch;
         this.recordEvent(task, 'synthesis_started', `⬆️ Escalada MANUAL para Claude ${m} (pedida por um admin) — próxima rodada assume o worktree.`, { manualEscalation: true, model: m });
-        this.scheduleExec(task, branch, 'running', slotManager.slot1); // #slot-chain: eleição de slot vem na PR-4a-iii
+        this.scheduleExec(task, branch, 'running', this.slotForTask(task)); // #flip PR-A: afinidade de slot
         this.save();
         return task;
     }
@@ -1250,6 +1252,13 @@ class TaskRunnerService {
     // ser síncrono — autoPlayNext→startTask→scheduleExec não tem await antes do prólogo, verificado).
     private slotQueueDepth = new Map<number, number>();
     private freeSlot(): Slot | undefined { return slotManager.slots().find(s => (this.slotQueueDepth.get(s.id) ?? 0) <= 0); }
+    // #flip PR-A: resolve o slot da task por AFINIDADE (todo estágio do ciclo de vida usa o MESMO slot).
+    // Fallback slot-1 se o slotId não existe mais (slot-2 desregistrado por oBoot/clone inválido) — o
+    // scheduleExec re-carimba task.slotId com o slot efetivo, então o estado nunca mente. Task virgem
+    // (slotId undefined) → slot-1 → byte-idêntico. ELEIÇÃO (freeSlot) só no autoPlayNext; resto = afinidade.
+    private slotForTask(task: Task): Slot {
+        return slotManager.slots().find(s => s.id === task.slotId) ?? slotManager.slot1;
+    }
     // #slot-ctx (PR-4a-i): o global currentExecTask morreu — a task de contexto do ensureWorktree agora
     // vem por PARÂMETRO (só o exec passa; proof/preview passam undefined). Ver ensureWorktree.
 
@@ -1285,11 +1294,10 @@ class TaskRunnerService {
                     lockTimer = setTimeout(() => {
                         // #kill-per-slot: o holder travado é o ALVO do sweep (não liberou o lock) → excludeIssue
                         // o deixa FORA do protect (pode ser morto); as demais runs vivas (Fase 2) seguem protegidas.
-                        const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
+                        // #flip PR-A: o handler do lock do slot X só pode matar task DO slot X (senão mata o coder saudável do vizinho).
+                        const stuckTask = Object.values(this.store.tasks).find(t => (t.status === 'running' || t.status === 'fixing') && this.slotForTask(t).id === slot.id);
                         this.sweepOrphanedOpencode(`lock-timeout-in-${label}`, [], undefined, { excludeIssue: stuckTask?.issueNumber }).catch(() => {});
                         // #slot-lock: limpa o lock do PRÓPRIO slot (com 1 slot = slotManager.slot1 = byte-idêntico).
-                        // O `stuckTask` acima ainda é find-global (com N=2 poderia pegar a task do outro slot) —
-                        // marcado p/ atribuição por-slot na Fase 2.2 (#1661).
                         this.cleanStaleLocks(slot, true);
                         if (stuckTask) {
                             stuckTask.status = 'failed';
@@ -1395,6 +1403,7 @@ class TaskRunnerService {
         task.mergeHoldKind = undefined;   // #1168: limpa também a classificação do hold
         const willQueue = this.pendingExecs > 0;
         this.pendingExecs++;
+        task.slotId = slot.id; // #flip PR-A: afinidade — a task passa a viver neste slot
         // #slot-elect: claim SÍNCRONO da profundidade do slot (par do freeSlot). Aqui, sem await desde o freeSlot().
         this.slotQueueDepth.set(slot.id, (this.slotQueueDepth.get(slot.id) ?? 0) + 1);
         // #accelerate-sweep: marca esta issue como EM VOO (dispatch agendado) — o sweep de épicas usa
@@ -3503,7 +3512,7 @@ Return ONLY a JSON:
                         this.recordEvent(task, 'judge_score', `⬆️ Coder barato empacou (score ${result.score} após ${task.judgeAttempts} rodadas) — escalando o coder p/ Opus.`, { opusEscalation: true, willEscalate: true, score: result.score });
                         this.emitLog(task.issueNumber, 'warn', `Judge: ${result.score}/10 após ${task.judgeAttempts} rodadas — escalando o coder p/ Opus.`);
                         this.save();
-                        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', slotManager.slot1);
+                        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', this.slotForTask(task));
                         return;
                     }
                     task.phase = 'done';
@@ -3535,7 +3544,7 @@ Return ONLY a JSON:
                     // as tentativas 2/3 re-entravam DENTRO do mesmo lock+watchdog desta execução (startedAt
                     // único) → o watchdog podia matar no meio e a task virava failed com PR válido. Agora cada
                     // tentativa é um exec FRESCO na fila (lock+watchdog próprios), igual ao selfHealFromGate.
-                    this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', slotManager.slot1);
+                    this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', this.slotForTask(task));
                     return;
                 }
             } else {
@@ -3850,7 +3859,7 @@ Return ONLY a JSON:
         //    sob o lock (livre-de-corrida).
         let paths: { beforePath: string; afterPath: string; screenVerify?: Task['screenVerify'] };
         try {
-            const slot = slotManager.slot1;
+            const slot = this.slotForTask(task); // #flip PR-A: afinidade de slot
             paths = await this.captureVisualProofPngs(task, slot);
             if (paths.screenVerify) task.screenVerify = paths.screenVerify;
         } catch (e: any) {
@@ -4107,7 +4116,7 @@ Return ONLY a JSON:
         this.emitLog(task.issueNumber, 'warn', `Gate bloqueou (${kind}). Auto-consertando (${task.gateFixAttempts}/${GATE_MAX}) com a crítica do judge antes de pedir revisão humana...`);
         this.save();
         this.emitStatus(task);
-        this.scheduleExec(task, task.branch, 'fixing', slotManager.slot1);
+        this.scheduleExec(task, task.branch, 'fixing', this.slotForTask(task));
         return true;
     }
 
@@ -4256,7 +4265,7 @@ Return ONLY a JSON:
     }
 
     private async tryAutoMergeInner(task: Task): Promise<void> {
-        const slot = slotManager.slot1;
+        const slot = this.slotForTask(task); // #flip PR-A: afinidade de slot
         const config = this.getAutomationConfig();
         if (!config.autoMerge) {
             // #1154 P1 item 10: aprovado, mas auto-merge DESLIGADO → aguarda merge manual. Audível (antes: return mudo).
@@ -4309,7 +4318,7 @@ Return ONLY a JSON:
             // Todas as operações que tocam o worktree (rebase/push/verify) rodam sob o lock,
             // serializadas com a execução de outras tasks e com previews.
             let verify: { ok: boolean; output: string } = { ok: true, output: '' };
-            await this.withWorktreeLock(`auto-merge #${issueNumber}`, slotManager.slot1, async () => {
+            await this.withWorktreeLock(`auto-merge #${issueNumber}`, slot, async () => {
                 if (task.branch) {
                     this.recordEvent(task, 'task_started', 'Auto-merge: rebaseando com main...');
                     await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 30000 }, 3, () => !!task.killRequested);
@@ -4472,7 +4481,7 @@ Return ONLY a JSON:
         this.recordEvent(task, 'feedback_received', `Feedback recebido: ${feedback.substring(0, 200)}`, { length: feedback.length });
         this.save();
 
-        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', slotManager.slot1);
+        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing', this.slotForTask(task));
 
         return task;
     }
@@ -4519,7 +4528,7 @@ Return ONLY a JSON:
         this.recordEvent(task, 'task_started', `Task refeita${instruction ? `: ${instruction.substring(0, 200)}` : ''}${opts?.resetBudget ? ' (orçamento de rodadas zerado)' : ''}`, { redo: true, instruction, resetBudget: !!opts?.resetBudget });
         this.save();
 
-        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'running', slotManager.slot1);
+        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'running', this.slotForTask(task));
 
         return task;
     }
@@ -4834,7 +4843,7 @@ Return ONLY a JSON:
                 const { stdout } = await gh(['pr', 'diff', String(task.prNumber), '--repo', REPO], { timeout: 30000 });
                 return stdout;
             }
-            const slot = slotManager.slot1;
+            const slot = this.slotForTask(task); // #flip PR-A: afinidade de slot
             if (task.branch && fs.existsSync(slot.root)) {
                 const { stdout } = await git(['diff', `origin/main...${task.branch}`], { timeout: 15000, cwd: slot.root });
                 return stdout;
@@ -4896,7 +4905,7 @@ Return ONLY a JSON:
         // alvo e, de brinde, protege os coders VIZINHOS vivos (cancelar #7 não mata o coder de #5).
         try {
             const gone = await this.sweepOrphanedOpencode(`cancel #${issueNumber}`, [], task, { excludeIssue: issueNumber });
-            this.cleanStaleLocks(slotManager.slot1, gone);
+            this.cleanStaleLocks(this.slotForTask(task), gone); // #flip PR-A: afinidade de slot
         } catch (e: any) {
             log.warn(`killTask #${issueNumber}: sweep/limpeza de locks falhou (não-fatal): ${e?.message || e}`);
         }
@@ -5160,7 +5169,7 @@ The first element should be the task to execute first.`;
 
         // Setup do worktree sob o lock: serializa com execução de tasks e auto-merge, evitando
         // que um reset/checkout concorrente corrompa o git do worktree compartilhado.
-        const slot = slotManager.slot1;
+        const slot = this.slotForTask(task); // #flip PR-A: afinidade de slot
         await this.withWorktreeLock(`preview #${issueNumber}`, slot, async () => {
             await this.ensureWorktree(task.branch!, slot);
             await git(['checkout', task.branch!], { timeout: 15000, cwd: slot.root });
