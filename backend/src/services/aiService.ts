@@ -71,6 +71,61 @@ async function awaitWithinDeadline<T>(promise: Promise<T>, deadlineAt?: number):
     }
 }
 
+// Delimitador de token do MiniMax M3: entre CADA token o modelo às vezes intercala
+// `]<]minimax[>[` (e variantes soltas). Precisa ser removido ANTES de casar o XML, senão
+// os `<invoke>`/`</PARAM>` ficam picotados. Tolerante ao `[` final opcional e à variante `<|minimax|>`.
+const MINIMAX_TOKEN_DELIM_RE = /\]<\]minimax\[>\[?|<\|minimax\|>/g;
+
+// #minimax-invoke: o MiniMax M3 emite tool-calls no formato XML estilo Anthropic/Claude:
+//   <invoke name="list_users"><search>marcus</search></invoke>
+// às vezes embrulhado no delimitador de token `]<]minimax[>[` e num wrapper <tool_call>...</tool_call>.
+// Os args vêm dos filhos: <PARAM>VALOR</PARAM> (curto) OU <parameter name="PARAM">VALOR</parameter> (Claude-XML).
+// Antes deste parser, essas calls VAZAVAM como TEXTO CRU ao usuário no WhatsApp (o parser só via JSON/GLM).
+export function parseInvokeToolCalls(text: string, max = 16): { tool: string; args: any }[] {
+    const calls: { tool: string; args: any }[] = [];
+    if (!text) return calls;
+    // 1) Limpa os delimitadores de token do MiniMax para reconstruir o XML.
+    const clean = String(text).replace(MINIMAX_TOKEN_DELIM_RE, '');
+    if (!/<invoke\b/i.test(clean)) return calls;
+
+    const coerce = (raw: string): any => {
+        const v = raw.trim();
+        if (v === '') return '';
+        if (/^-?\d+$/.test(v)) return Number(v);
+        if (v === 'true') return true;
+        if (v === 'false') return false;
+        return v;
+    };
+
+    // 2) Casa cada bloco <invoke name="NOME">...</invoke> (dotall/multiline).
+    const invokeRe = /<invoke\b[^>]*\bname\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/invoke>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = invokeRe.exec(clean)) && calls.length < max) {
+        const tool = m[1].trim();
+        const inner = m[2] || '';
+        const args: Record<string, any> = {};
+
+        // 2a) Variante Claude-XML: <parameter name="X">VALOR</parameter>
+        const paramNamedRe = /<parameter\b[^>]*\bname\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/parameter>/gi;
+        let pm: RegExpExecArray | null;
+        while ((pm = paramNamedRe.exec(inner))) {
+            args[pm[1].trim()] = coerce(pm[2]);
+        }
+
+        // 2b) Variante curta: <PARAM>VALOR</PARAM> (ignora o <parameter ...> já tratado acima).
+        const paramShortRe = /<([a-zA-Z_][\w-]*)\s*>([\s\S]*?)<\/\1>/g;
+        let sm: RegExpExecArray | null;
+        while ((sm = paramShortRe.exec(inner))) {
+            const key = sm[1].trim();
+            if (key.toLowerCase() === 'parameter') continue; // já coberto por 2a
+            if (!(key in args)) args[key] = coerce(sm[2]);
+        }
+
+        if (tool) calls.push({ tool, args });
+    }
+    return calls;
+}
+
 export function extractToolCall(text: string): { tool: string; args: any } | null {
     // Format 1: {"tool": "name", "args": {...}}  (our standard)
     const startMatch = text.search(/\{\s*"tool"\s*:/);
@@ -117,6 +172,12 @@ export function extractToolCall(text: string): { tool: string; args: any } | nul
         }
     }
 
+    // Format 4: <invoke name="...">...</invoke>  (MiniMax M3 XML, estilo Claude/Anthropic)
+    if (/<invoke\b/i.test(text)) {
+        const invokeCalls = parseInvokeToolCalls(text);
+        if (invokeCalls.length) return invokeCalls[0];
+    }
+
     return null;
 }
 
@@ -144,6 +205,11 @@ export function extractToolCalls(text: string, max = 16): { tool: string; args: 
             }
         }
     }
+    // #minimax-invoke: se os formatos JSON não acharam nada mas há XML <invoke> do MiniMax M3,
+    // parseia por lá (evita vazamento de tool-call cru no WhatsApp).
+    if (!calls.length && /<invoke\b/i.test(text)) {
+        return parseInvokeToolCalls(text, max);
+    }
     return calls;
 }
 
@@ -152,7 +218,10 @@ export function extractToolCalls(text: string, max = 16): { tool: string; args: 
 // `{`) não casa, a call não é executada e o JSON iria como TEXTO ao usuário (visto no histórico do
 // dono). A assinatura do vazamento é o par tool:"nome", args: — raríssimo em prosa legítima. Deeplinks
 // de prepare_* (mensagem + URL) NÃO casam. Se detectado numa resposta final, troca por erro amigável.
-const LEAKED_TOOLCALL_RE = /"?tool"?\s*:\s*"[a-z_]{3,}"\s*,\s*"?args"?\s*:|<tool_call\s*:/i;
+// #minimax-invoke: também reconhece o XML <invoke name="..."> e o delimitador de token do
+// MiniMax (`]<]minimax[>[`) como assinatura de vazamento. Assim, se a call por algum motivo
+// NÃO for executada, o texto cru é SUPRIMIDO (não vaza pro usuário no WhatsApp).
+const LEAKED_TOOLCALL_RE = /"?tool"?\s*:\s*"[a-z_]{3,}"\s*,\s*"?args"?\s*:|<tool_call\s*[:>]|<invoke\b[^>]*\bname\s*=|\]<\]minimax\[>/i;
 export function looksLikeLeakedToolCall(text?: string): boolean {
     return LEAKED_TOOLCALL_RE.test(String(text || ''));
 }
