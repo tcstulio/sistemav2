@@ -18,7 +18,7 @@ import { runOpencode, resolveBash } from '../utils/runOpencode';
 import { getFreeDiskBytes, formatGB } from '../utils/diskSpace';
 import { claudeCliService } from './claudeCliService';
 import { parseTscErrors, parseGlobalTscErrors, serializeErrors, deserializeErrors, computeBlocking, splitTouchedByProject } from './gateDelta';
-import { previewPortsFor } from '../utils/previewPorts';
+import { acquirePreviewPorts } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
 import { screenVerifyService } from './screenVerifyService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
@@ -3749,7 +3749,15 @@ Return ONLY a JSON:
                 beforePath = opts.beforePath;
                 afterPath = opts.afterPath;
             } else {
-                const { frontendPort } = previewPortsFor(issueNumber);
+                // #1661 PR-C: NUNCA derive a URL de `%10` (era o falso-oráculo do G3 — podia fotografar
+                // a porta de OUTRA task com mesmo issue%10). LÊ a porta do PREVIEW VIVO desta issue.
+                // Sem preview/proof vivo p/ a issue → erro claro (a auto-captura pressupõe um preview
+                // persistente de pé; o fluxo de Prova Visual passa os paths via opts e nem chega aqui).
+                const livePreview = this.activePreviews.get(issueNumber);
+                if (!livePreview || !isAlive(livePreview.pid)) {
+                    throw new Error(`sem preview vivo p/ #${issueNumber} — suba o preview (startPreview) antes do Judge Visual auto-captura`);
+                }
+                const frontendPort = livePreview.port;
                 const afterUrl = `http://localhost:${frontendPort}`;
                 const beforeUrl = 'http://localhost:3003';
                 try {
@@ -3908,10 +3916,13 @@ Return ONLY a JSON:
      */
     private async captureVisualProofPngs(task: Task, slot: Slot): Promise<{ beforePath: string; afterPath: string; screenVerify?: Task['screenVerify'] }> {
         const issueNumber = task.issueNumber;
-        const { frontendPort } = previewPortsFor(issueNumber);
         return this.withWorktreeLock(`visual-proof #${issueNumber}`, slot, async () => {
-            // derruba um preview persistente na mesma porta (evita conflito de porta com o efêmero)
+            // derruba um preview persistente na mesma porta (evita conflito de porta com o efêmero) —
+            // stopPreview também DEVOLVE o lease dessa issue ao pool, então o acquire abaixo o reobtém.
             await this.stopPreview(issueNumber).catch(() => {});
+            // #1661 PR-C: LEASE de porta EXCLUSIVO por-issue p/ o proof efêmero. release() no finally
+            // garante a devolução mesmo em erro (senão o slot ficaria ocupado p/ sempre).
+            const { frontendPort, release: releasePorts } = acquirePreviewPorts(issueNumber);
             await this.ensureWorktree(task.branch!, slot);
             await git(['checkout', task.branch!], { timeout: 15000, cwd: slot.root });
 
@@ -3936,6 +3947,7 @@ Return ONLY a JSON:
                 return { ...pngs, screenVerify };
             } finally {
                 if (child.pid) await killTree(child.pid).catch(() => {});
+                try { releasePorts(); } catch { /* release idempotente/best-effort */ }
             }
         });
     }
@@ -5030,7 +5042,7 @@ The first element should be the task to execute first.`;
         return { order, reasons };
     }
 
-    private activePreviews: Map<number, { pid: number; port: number; startedAt: string }> = new Map();
+    private activePreviews: Map<number, { pid: number; port: number; startedAt: string; release: () => void }> = new Map();
 
     /**
      * Calcula e persiste as métricas (#305) de uma task.
@@ -5202,10 +5214,14 @@ The first element should be the task to execute first.`;
             await git(['checkout', task.branch!], { timeout: 15000, cwd: slot.root });
         });
 
-        const { frontendPort: previewPort, backendPort } = previewPortsFor(issueNumber);
+        // #1661 PR-C: LEASE de portas por-issue (mata a colisão mod-10). Idempotente por-issue: se um
+        // proof efêmero desta mesma task já tem lease, reusa o mesmo par. O `release` fica guardado no
+        // registro de activePreviews e é devolvido no stopPreview.
+        const { frontendPort: previewPort, backendPort, release: releasePorts } = acquirePreviewPorts(issueNumber);
 
         const previewRoot = slot.root;
 
+        try {
         const mainEnvPath = path.join(REPO_ROOT, 'backend', '.env');
         const previewEnvPath = path.join(previewRoot, 'backend', '.env');
         const fsExtra = await import('fs');
@@ -5248,7 +5264,9 @@ The first element should be the task to execute first.`;
             windowsHide: true,
         });
 
-        this.activePreviews.set(issueNumber, { pid: child.pid!, port: previewPort, startedAt: new Date().toISOString() });
+        // #1661 PR-C: guarda o `release` do lease junto do registro — stopPreview o chama p/ devolver
+        // as portas ao pool.
+        this.activePreviews.set(issueNumber, { pid: child.pid!, port: previewPort, startedAt: new Date().toISOString(), release: releasePorts });
 
         // #1154 P3 item 31: drena os pipes antes do unref — senão o buffer enche e o nodemon/vite do preview
         // trava/vira zumbi segurando as portas.
@@ -5258,6 +5276,12 @@ The first element should be the task to execute first.`;
         this.recordEvent(task, 'task_started', `Preview iniciado na porta ${previewPort} (branch ${task.branch})`, { port: previewPort, backendPort, branch: task.branch });
 
         return { port: previewPort, frontendUrl: `http://localhost:${previewPort}`, backendUrl: `http://localhost:${backendPort}` };
+        } catch (e) {
+            // #1661 PR-C: se subir o preview falhar ANTES de registrar em activePreviews, o lease
+            // vazaria (o slot ficaria eternamente ocupado). Devolve as portas ao pool e re-lança.
+            releasePorts();
+            throw e;
+        }
     }
 
     async stopPreview(issueNumber: number): Promise<void> {
@@ -5267,6 +5291,8 @@ The first element should be the task to execute first.`;
             await killTree(preview.pid);
         }
         this.activePreviews.delete(issueNumber);
+        // #1661 PR-C: devolve as portas leased ao pool (idempotente — release tardio é no-op).
+        try { preview.release(); } catch { /* release idempotente/best-effort */ }
     }
 }
 
