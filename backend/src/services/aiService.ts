@@ -19,9 +19,57 @@ import {
 } from '../agent/progressStream';
 // #1316: system prompt do Marciano centralizado em config/agentSystemPrompt.ts.
 import { MARCIANO_IDENTITY_PROMPT } from '../config/agentSystemPrompt';
+import {
+    FALLBACK_CALL_TIMEOUT_MS,
+    MAX_CHAINED_CALLS,
+    PRIMARY_CALL_TIMEOUT_MS,
+    RETRY_DEADLINE_MS,
+} from './aiJobBudget';
 export { MARCIANO_IDENTITY_PROMPT };
+export {
+    CLIENT_MAX_WAIT_MS,
+    DEADLINE_MARGIN_MS,
+    FALLBACK_CALL_TIMEOUT_MS,
+    MAX_CHAINED_CALL_DEADLINE_MS,
+    MAX_CHAINED_CALLS,
+    PRIMARY_CALL_TIMEOUT_MS,
+    RETRY_DEADLINE_MS,
+} from './aiJobBudget';
 
 const log = logger.child('AiService');
+
+// Orçamento máximo: 4 providers × (60s primário + 30s retries + 60s fallback) + 60s de margem = 11min,
+// sempre abaixo do teto de polling de 20min do cliente. Overrides de ambiente são limitados por estes tetos.
+export class DeadlineExceededError extends Error {
+    readonly code = 'deadline_exceeded';
+
+    constructor() {
+        super('deadline_exceeded');
+        this.name = 'DeadlineExceededError';
+    }
+}
+
+function assertWithinDeadline(deadlineAt?: number): void {
+    if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw new DeadlineExceededError();
+}
+
+async function awaitWithinDeadline<T>(promise: Promise<T>, deadlineAt?: number): Promise<T> {
+    if (deadlineAt === undefined) return promise;
+    assertWithinDeadline(deadlineAt);
+    const remainingMs = deadlineAt - Date.now();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<T>((_resolve, reject) => {
+                timer = setTimeout(() => reject(new DeadlineExceededError()), remainingMs);
+                timer.unref?.();
+            }),
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
 
 export function extractToolCall(text: string): { tool: string; args: any } | null {
     // Format 1: {"tool": "name", "args": {...}}  (our standard)
@@ -314,6 +362,7 @@ export interface GenerateReplyOptions {
     isAdmin?: boolean;
     chainState?: ChainState;
     jobId?: string;
+    deadlineAt?: number;
     progressLifecycleManaged?: boolean;
 }
 
@@ -1149,14 +1198,22 @@ export class LocalProvider implements AIProvider {
     // fallback, com esperas 2s→4s→8s... até o DEADLINE de re-tentativas. Não é um loop infinito:
     // quando o deadline estoura, desiste e passa para o fallback (se houver) ou lança.
     // Não toca o fallback em erro não-recuperável (4xx exceto 429, JSON inválido, etc.).
-    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
+    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string; deadlineAt?: number }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
         const buildBody = (model: string) => ({ model, messages, temperature });
         const primaryModel = options?.model || this.modelName;
         const origin = options?.origin;
-        const primaryTimeoutMs = config.llmPrimaryTimeoutMs ?? 180000;
-        const retryDeadlineMs = config.llmRetryDeadlineMs ?? 60000;
+        const configuredPrimaryTimeoutMs = config.llmPrimaryTimeoutMs ?? PRIMARY_CALL_TIMEOUT_MS;
+        const configuredRetryDeadlineMs = config.llmRetryDeadlineMs ?? RETRY_DEADLINE_MS;
+        const primaryTimeoutMs = Math.max(1, Math.min(configuredPrimaryTimeoutMs, PRIMARY_CALL_TIMEOUT_MS));
+        const retryDeadlineMs = Math.max(0, Math.min(configuredRetryDeadlineMs, RETRY_DEADLINE_MS));
         const retryDeadline = Date.now() + retryDeadlineMs;
         const t0 = Date.now();
+        const requestTimeout = (capMs: number) => {
+            assertWithinDeadline(options?.deadlineAt);
+            return options?.deadlineAt === undefined
+                ? capMs
+                : Math.max(1, Math.min(capMs, options.deadlineAt - Date.now()));
+        };
 
         let primaryErr: any;
         let retryDelay = 2000; // backoff inicial: 2s
@@ -1164,11 +1221,14 @@ export class LocalProvider implements AIProvider {
         // Tenta o primário com backoff exponencial dentro do deadline.
         while (true) {
             try {
-                const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: primaryTimeoutMs });
+                const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: requestTimeout(primaryTimeoutMs) });
                 clearQuotaExhausted(); // sucesso -> cota OK
                 llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: true, latencyMs: Date.now() - t0, origin, totalTokens: r.data?.usage?.total_tokens });
                 return { data: r.data, modelUsed: primaryModel, fellBack: false };
             } catch (err: any) {
+                if (err instanceof DeadlineExceededError || (options?.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
+                    throw new DeadlineExceededError();
+                }
                 primaryErr = err;
                 // Erro não-recuperável (400/401/403 etc.): não tenta fallback, lança imediatamente.
                 if (!this.isRetryableError(err)) {
@@ -1178,12 +1238,13 @@ export class LocalProvider implements AIProvider {
                 }
 
                 const reason = err?.response?.status || err?.code || err?.message || 'erro';
+                assertWithinDeadline(options?.deadlineAt);
                 const remaining = retryDeadline - Date.now();
 
                 if (remaining > retryDelay) {
                     // Ainda há tempo dentro do deadline — aguarda backoff e tenta de novo.
                     log.warn(`LLM primário (${this.modelName}) falhou [${reason}] — backoff ${retryDelay}ms (deadline restante: ${Math.round(remaining / 1000)}s)`);
-                    await new Promise((res) => setTimeout(res, retryDelay));
+                    await awaitWithinDeadline(new Promise<void>((res) => setTimeout(res, retryDelay)), options?.deadlineAt);
                     retryDelay = Math.min(retryDelay * 2, 32000); // cap em 32s
                 } else {
                     // Deadline esgotado: passa para fallback (se houver) ou lança.
@@ -1205,12 +1266,16 @@ export class LocalProvider implements AIProvider {
         if (this.fallbackConfig!.apiKey) fbHeaders['Authorization'] = `Bearer ${this.fallbackConfig!.apiKey}`;
         const tFb = Date.now();
         try {
-            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: primaryTimeoutMs });
+            assertWithinDeadline(options?.deadlineAt);
+            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: requestTimeout(FALLBACK_CALL_TIMEOUT_MS) });
             log.info(`LLM fallback OK: ${this.fallbackConfig!.model} respondeu no lugar de ${this.modelName}`);
             clearQuotaExhausted(); // fallback respondeu -> ainda há cota (no MiniMax)
             llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: true, latencyMs: Date.now() - tFb, origin, errorDetail: `primário ${primaryModel}: ${this.errDetail(primaryErr)}`.slice(0, 300), totalTokens: resp.data?.usage?.total_tokens });
             return { data: resp.data, modelUsed: this.fallbackConfig!.model, fellBack: true };
         } catch (fbErr: any) {
+            if (fbErr instanceof DeadlineExceededError || (options?.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
+                throw new DeadlineExceededError();
+            }
             // Ambos falharam: se qualquer um foi erro de cota, sinaliza esgotamento GLOBAL.
             if (isQuotaError(this.errDetail(fbErr)) || isQuotaError(this.errDetail(primaryErr))) {
                 markQuotaExhausted(`primário+fallback esgotados — ${this.errDetail(fbErr)}`);
@@ -2052,6 +2117,7 @@ export interface ChainState {
 /** Opções de runWithChain (#1010): semente de estado para retomar uma cadeia. */
 export interface RunWithChainOptions {
     initialState?: Partial<ChainState>;
+    deadlineAt?: number;
 }
 
 export class UnrecoverableChainError extends Error {
@@ -2107,7 +2173,8 @@ async function runWithChain<T>(
     exec: (provider: string, state: ChainState) => Promise<T>,
     opts?: RunWithChainOptions,
 ): Promise<T> {
-    const chain = _configService.getFallbackChain(moduleName);
+    const chain = _configService.getFallbackChain(moduleName).slice(0, MAX_CHAINED_CALLS);
+    const deadlineAt = opts?.deadlineAt;
     // #1010: estado acumulado, levado entre trocas de provider. Objeto mutável
     // compartilhado por referência — mutações antes de uma falha persistem.
     const state: ChainState = {
@@ -2120,6 +2187,7 @@ async function runWithChain<T>(
     let resumePending = false;
 
     for (let i = 0; i < chain.length; i++) {
+        assertWithinDeadline(deadlineAt);
         const provider = chain[i];
         if (!llmHealthService.isAvailable(provider)) {
             log.warn(`runWithChain[${moduleName}]: provider '${provider}' em cooldown — pulando.`);
@@ -2131,7 +2199,7 @@ async function runWithChain<T>(
         }
         log.debug(`runWithChain[${moduleName}]: tentando provider '${provider}' (messages.length=${state.messages.length}, seenToolCalls=${state.seenToolCalls.size}).`);
         try {
-            const result = await exec(provider, state);
+            const result = await awaitWithinDeadline(Promise.resolve(exec(provider, state)), deadlineAt);
             llmHealthService.recordSuccess(provider);
             activeIndex = i;
             // Registra encerramento da cadeia (aditivo ao log individual do provider)
@@ -2149,6 +2217,11 @@ async function runWithChain<T>(
             } catch { /* observabilidade não quebra chamada */ }
             return result;
         } catch (err: any) {
+            if (err instanceof DeadlineExceededError || (deadlineAt !== undefined && Date.now() >= deadlineAt)) {
+                lastErr = new DeadlineExceededError();
+                log.warn(`runWithChain[${moduleName}]: deadline global excedido — cadeia interrompida.`);
+                break;
+            }
             const detail = err?.response
                 ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data || '').slice(0, 200)}`
                 : (err?.code || err?.message || String(err));
@@ -2256,7 +2329,7 @@ export const aiService = {
     // runWithToolContext). A normalização final (`=== true`) é responsabilidade do
     // provider — UNIFORME nos dois caminhos (options explícito e ctx), fail-closed
     // contra qualquer valor não-boolean (`'1'`, `1`, `{}`, etc.).
-    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean, jobId?: string) => withTurnProgress(jobId, async () => {
+    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean, jobId?: string, livenessExpiresAt?: string) => withTurnProgress(jobId, async () => {
         // Injeta o endereço público (cloudflared) no contexto -> o agente sabe responder "qual o endereço de acesso?".
         try {
             const tunnelUrl = require('./tunnelService').tunnelService.getUrl();
@@ -2264,6 +2337,8 @@ export const aiService = {
         } catch { /* ignore */ }
 
         const configService = _configService;
+        const parsedDeadlineAt = livenessExpiresAt ? Date.parse(livenessExpiresAt) : NaN;
+        const deadlineAt = Number.isFinite(parsedDeadlineAt) ? parsedDeadlineAt : undefined;
 
         if (configService.isRunWithChainEnabled()) {
             return runWithChain(moduleName, (providerName, state) => {
@@ -2272,10 +2347,10 @@ export const aiService = {
                 let specificProvider = getProvider(providerName);
                 if (imageBase64 && !providerSupportsVision(specificProvider)) {
                     const mm = getMultimodalProvider();
-                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, chainState: state, jobId, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
+                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, chainState: state, jobId, deadlineAt, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
                 }
-                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, chainState: state, jobId, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
-            });
+                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, chainState: state, jobId, deadlineAt, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
+            }, { deadlineAt });
         }
 
         const moduleConfig = configService.getModuleConfig(moduleName);
@@ -2288,12 +2363,12 @@ export const aiService = {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
-                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, jobId, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, jobId, deadlineAt, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
             }
             log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
         }
 
-        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, jobId, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, jobId, deadlineAt, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
     }),
 
     analyzeSystem: async (query: string, rootPath: string = '../src', module: string = 'system_analysis') => {
@@ -2410,14 +2485,16 @@ export const aiService = {
         throw new Error('draftCollectionEmail não disponível neste provider');
     },
 
-    generateSalesForecast: async (invoices: any[], context?: any, module: string = 'banking') => {
+    generateSalesForecast: async (invoices: any[], context?: any, module: string = 'banking', livenessExpiresAt?: string) => {
         const configService = _configService;
+        const parsedDeadlineAt = livenessExpiresAt ? Date.parse(livenessExpiresAt) : NaN;
+        const deadlineAt = Number.isFinite(parsedDeadlineAt) ? parsedDeadlineAt : undefined;
         if (configService.isRunWithChainEnabled()) {
             return runWithChain(module, (p) => {
                 const pr = getProvider(p);
                 if (!('generateSalesForecast' in pr && pr.generateSalesForecast)) throw new Error('generateSalesForecast indisponível');
                 return pr.generateSalesForecast!(invoices, context, module);
-            });
+            }, { deadlineAt });
         }
         const provider = getProvider();
         if ('generateSalesForecast' in provider && provider.generateSalesForecast) {

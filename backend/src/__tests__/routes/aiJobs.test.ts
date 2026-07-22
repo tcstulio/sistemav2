@@ -43,6 +43,7 @@ const FULL_STATUS = {
     alive: true,
     startedAt: '2025-07-09T12:00:00.000Z',
     lastHeartbeat: '2025-07-09T12:00:05.000Z',
+    livenessExpiresAt: '2025-07-09T12:11:00.000Z',
     currentProvider: 'gemini',
     progressPct: 42,
     queuePosition: null,

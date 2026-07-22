@@ -217,6 +217,48 @@ describe('aiJobService (#1012) — persistência + TTL', () => {
     });
 });
 
+describe('aiJobService #1553 — orçamento global de liveness', () => {
+    it('calcula e expõe livenessExpiresAt em ISO ao criar o job', async () => {
+        const svc = await fresh();
+        const before = Date.now();
+        const id = svc.enqueue(() => new Promise(() => {}), 'chat');
+        const lookup = svc.get(id);
+
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) {
+            expect(lookup.job.livenessExpiresAt).toMatch(/Z$/);
+            expect(Date.parse(lookup.job.livenessExpiresAt)).toBeGreaterThan(before);
+        }
+        expect(svc.getJobStatus(id)).toMatchObject({
+            ok: true,
+            status: { livenessExpiresAt: expect.any(String) },
+        });
+    });
+
+    it('marca job pendurado como deadline_exceeded no vencimento global', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+            const { AI_JOB_LIVENESS_MS } = await import('../../services/aiJobBudget');
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}), 'chat');
+
+            await vi.advanceTimersByTimeAsync(AI_JOB_LIVENESS_MS);
+
+            const lookup = svc.get(id);
+            expect(lookup.ok).toBe(true);
+            if (lookup.ok) {
+                expect(lookup.job.status).toBe('error');
+                expect(lookup.job.error).toBe('deadline_exceeded');
+                expect(lookup.job.finishedAt).toBe(Date.parse(lookup.job.livenessExpiresAt));
+            }
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+
 // =====================================================
 // #1011: endpoint de heartbeat — getJobStatus + reportProgress
 // =====================================================
@@ -290,7 +332,7 @@ describe('aiJobService #1011 — getJobStatus (metadados leves p/ heartbeat)', (
             expect(q.status).not.toHaveProperty('result');
             expect(q.status).not.toHaveProperty('error');
             expect(Object.keys(q.status).sort()).toEqual(
-                ['alive', 'currentProvider', 'id', 'lastHeartbeat', 'progressPct', 'queuePosition', 'startedAt', 'status'].sort()
+                ['alive', 'currentProvider', 'id', 'lastHeartbeat', 'livenessExpiresAt', 'progressPct', 'queuePosition', 'startedAt', 'status'].sort()
             );
         }
     });

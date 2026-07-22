@@ -504,6 +504,50 @@ describe('aiService.runWithChain — retomada entre providers (#1551)', () => {
     });
 });
 
+describe('aiService.runWithChain — deadline global (#1553)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockIsAvailable.mockReturnValue(true);
+        mockIsQuotaError.mockReturnValue(true);
+    });
+
+    it('interrompe uma tempestade de 429 no deadline sem iniciar o restante da cadeia', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+            mockGetFallbackChain.mockReturnValue(['glm', 'minimax', 'google', 'local']);
+            const deadlineAt = Date.now() + 1000;
+            const exec = vi.fn(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 400));
+                throw makeQuotaError();
+            });
+
+            const promise = aiService.runWithChain('chat', exec, { deadlineAt });
+            const assertion = expect(promise).rejects.toMatchObject({
+                message: 'deadline_exceeded',
+                code: 'deadline_exceeded',
+            });
+            await vi.advanceTimersByTimeAsync(1000);
+            await assertion;
+
+            expect(Date.now()).toBe(deadlineAt);
+            expect(exec).toHaveBeenCalledTimes(3);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('deadline global excedido'));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('falha antes de chamar provider quando o deadline já expirou', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+        const exec = vi.fn();
+
+        await expect(aiService.runWithChain('chat', exec, { deadlineAt: Date.now() - 1 }))
+            .rejects.toMatchObject({ message: 'deadline_exceeded' });
+        expect(exec).not.toHaveBeenCalled();
+    });
+});
+
 describe('aiService — flag OFF mantém caminho legado (não usa runWithChain)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
