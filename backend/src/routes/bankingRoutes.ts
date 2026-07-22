@@ -1,13 +1,25 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
 import { bankingService, CSVFormat } from '../services/bankingService';
 import multer from 'multer';
 import { createLogger } from '../utils/logger';
 import { createFileFilter, validateFileUpload, containsExecutableCode, sanitizeFilename } from '../utils/fileValidation';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { dolibarrService } from '../services/dolibarr';
+import { createBankingLimiter } from '../middleware/rateLimit';
+import { validateBody } from '../middleware/validation';
+import { AppError } from '../middleware/errorHandler';
 
 const log = createLogger('Banking');
 const router = Router();
+
+// #1330: limiter POST dedicado, criado pela factory `createBankingLimiter`
+// (10 req/15min, bucket por IP, skip interno de métodos não-POST). Aplicado via
+// `router.use` ANTES do auth — abuso não-autenticado também é limitado — e cobre
+// TODAS as rotas POST deste arquivo. Exportado para os testes resetarem o bucket
+// entre casos (resetKey), como no schedulerLimiter (#1567).
+export const bankingLimiter = createBankingLimiter();
+router.use(bankingLimiter);
 
 // Protect all banking routes
 router.use(requireDolibarrLogin);
@@ -19,10 +31,86 @@ const upload = multer({
     fileFilter: createFileFilter('banking')
 });
 
+// =============================================
+// #1330 — Validação de input (Zod + userApiKey)
+// =============================================
+
+// Campos de formulário multipart chegam sempre como string: `format` carrega um
+// JSON serializado (parseado com try/catch no handler), `bankCode`/`accountId`
+// são metadados opcionais do upload. `.passthrough()` preserva campos extras que
+// os handlers leem direto de `req.body` (dateColumn, delimiter, ...).
+const ImportBodySchema = z.object({
+    format: z.string().optional(),
+    bankCode: z.string().optional(),
+    accountId: z.string().optional()
+}).passthrough();
+
+const CsvImportBodySchema = z.object({
+    format: z.string().optional(),
+    bankCode: z.string().optional(),
+    accountId: z.string().optional(),
+    dateColumn: z.string().optional(),
+    amountColumn: z.string().optional(),
+    descriptionColumn: z.string().optional(),
+    delimiter: z.string().optional(),
+    hasHeader: z.string().optional()
+}).passthrough();
+
+const TransactionsBodySchema = z.object({
+    transactions: z.array(z.any())
+}).passthrough();
+
+const CashFlowBodySchema = z.object({
+    accounts: z.array(z.any()),
+    transactions: z.array(z.any()),
+    period: z.string().optional()
+}).passthrough();
+
+const ChartDataBodySchema = z.object({
+    transactions: z.array(z.any()),
+    groupBy: z.string().optional()
+}).passthrough();
+
+const ReconcileSuggestBodySchema = z.object({
+    bankLines: z.array(z.any()),
+    invoices: z.array(z.any())
+}).passthrough();
+
+const ReconcileSaveBodySchema = z.object({
+    lineId: z.union([z.string().min(1), z.number()]),
+    invoiceId: z.union([z.string().min(1), z.number()])
+}).passthrough();
+
+const ReconcileToggleBodySchema = z.object({
+    accountId: z.union([z.string().min(1), z.number()]),
+    lineId: z.union([z.string().min(1), z.number()]),
+    reconciled: z.boolean()
+}).passthrough();
+
+const BalanceCalculateBodySchema = z.object({
+    initialBalance: z.number(),
+    transactions: z.array(z.any())
+}).passthrough();
+
+// #1330: a chave de API do usuário (header `dolapikey`, variável `userApiKey`) é
+// repassada ao Dolibarr nas rotas de escrita de conciliação. Aceita apenas os dois
+// formatos provisionados no ERP: CNPJ (14 dígitos) ou UUID v-qualquer. Ausente ou
+// fora do padrão → 401 via errorHandler (envelope padronizado).
+const CNPJ_REGEX = /^\d{14}$/;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function validateUserApiKey(req: Request, _res: Response, next: NextFunction) {
+    const userApiKey = req.headers['dolapikey'];
+    if (typeof userApiKey !== 'string' || !(CNPJ_REGEX.test(userApiKey) || UUID_REGEX.test(userApiKey))) {
+        return next(new AppError(401, 'UNAUTHORIZED', 'userApiKey ausente ou inválido (esperado CNPJ ou UUID)'));
+    }
+    return next();
+}
+
 // --- Import Endpoints ---
 
 // Import OFX file
-router.post('/import/ofx', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/import/ofx', upload.single('file'), validateBody(ImportBodySchema), async (req: Request, res: Response) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'Nenhum arquivo enviado' });
@@ -64,23 +152,24 @@ router.post('/import/ofx', upload.single('file'), async (req: Request, res: Resp
 });
 
 // Import CSV file
-router.post('/import/csv', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/import/csv', upload.single('file'), validateBody(CsvImportBodySchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'Nenhum arquivo enviado' });
-        }
-
-        const content = req.file.buffer.toString('utf-8');
-
-        // Get format from body or use auto-detection
+        // #1330: `format` é validado ANTES do arquivo — JSON mal formado nunca
+        // derruba o request (crash 500); o erro é delegado ao errorHandler global.
         let format: CSVFormat;
-        if (req.body.format) {
+        if (typeof req.body.format === 'string' && req.body.format.trim() !== '') {
+            let parsed: unknown;
             try {
-                format = JSON.parse(req.body.format);
+                parsed = JSON.parse(req.body.format);
             } catch {
-                return res.status(400).json({ error: 'Formato CSV inválido: JSON mal formatado' });
+                return next(new AppError(400, 'VALIDATION_ERROR', 'Formato inválido'));
             }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return next(new AppError(400, 'VALIDATION_ERROR', 'Formato inválido'));
+            }
+            format = parsed as CSVFormat;
         } else {
+            // Auto-detecção via campos avulsos do formulário
             format = {
                 dateColumn: req.body.dateColumn || 'date',
                 amountColumn: req.body.amountColumn || 'amount',
@@ -89,6 +178,12 @@ router.post('/import/csv', upload.single('file'), async (req: Request, res: Resp
                 hasHeader: req.body.hasHeader !== 'false'
             };
         }
+
+        if (!req.file) {
+            return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+        }
+
+        const content = req.file.buffer.toString('utf-8');
 
         const result = bankingService.parseCSV(content, format);
 
@@ -107,7 +202,7 @@ router.post('/import/csv', upload.single('file'), async (req: Request, res: Resp
 });
 
 // Auto-detect and import any supported file
-router.post('/import/auto', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/import/auto', upload.single('file'), validateBody(ImportBodySchema), async (req: Request, res: Response) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'Nenhum arquivo enviado' });
@@ -135,7 +230,7 @@ router.post('/import/auto', upload.single('file'), async (req: Request, res: Res
 // --- Analysis Endpoints ---
 
 // Categorize transactions using LLM
-router.post('/analyze/categorize', async (req: Request, res: Response) => {
+router.post('/analyze/categorize', validateBody(TransactionsBodySchema), async (req: Request, res: Response) => {
     try {
         const { transactions } = req.body;
 
@@ -162,7 +257,7 @@ router.post('/analyze/categorize', async (req: Request, res: Response) => {
 });
 
 // Detect spending anomalies
-router.post('/analyze/anomalies', async (req: Request, res: Response) => {
+router.post('/analyze/anomalies', validateBody(TransactionsBodySchema), async (req: Request, res: Response) => {
     try {
         const { transactions } = req.body;
 
@@ -191,7 +286,7 @@ router.post('/analyze/anomalies', async (req: Request, res: Response) => {
 // --- Insights Endpoints ---
 
 // Get cash flow insights
-router.post('/insights/cash-flow', async (req: Request, res: Response) => {
+router.post('/insights/cash-flow', validateBody(CashFlowBodySchema), async (req: Request, res: Response) => {
     try {
         const { accounts, transactions, period } = req.body;
 
@@ -221,7 +316,7 @@ router.post('/insights/cash-flow', async (req: Request, res: Response) => {
 });
 
 // Get chart data for cash flow visualization
-router.post('/insights/chart-data', async (req: Request, res: Response) => {
+router.post('/insights/chart-data', validateBody(ChartDataBodySchema), async (req: Request, res: Response) => {
     try {
         const { transactions, groupBy } = req.body;
 
@@ -249,7 +344,7 @@ router.post('/insights/chart-data', async (req: Request, res: Response) => {
 // --- Reconciliation Endpoints ---
 
 // Get reconciliation suggestions
-router.post('/reconcile/suggest', async (req: Request, res: Response) => {
+router.post('/reconcile/suggest', validateBody(ReconcileSuggestBodySchema), async (req: Request, res: Response) => {
     try {
         const { bankLines, invoices } = req.body;
 
@@ -271,7 +366,7 @@ router.post('/reconcile/suggest', async (req: Request, res: Response) => {
 });
 
 // Save reconciliation (legacy: requires invoiceId)
-router.post('/reconcile/save', async (req: Request, res: Response) => {
+router.post('/reconcile/save', validateUserApiKey, validateBody(ReconcileSaveBodySchema), async (req: Request, res: Response) => {
     try {
         const { lineId, invoiceId } = req.body;
         const userApiKey = req.headers['dolapikey'] as string;
@@ -293,7 +388,7 @@ router.post('/reconcile/save', async (req: Request, res: Response) => {
 });
 
 // Toggle reconciliation state of a bank line — persists directly to Dolibarr
-router.post('/reconcile/toggle', async (req: Request, res: Response) => {
+router.post('/reconcile/toggle', validateUserApiKey, validateBody(ReconcileToggleBodySchema), async (req: Request, res: Response) => {
     try {
         const { accountId, lineId, reconciled } = req.body;
         const userApiKey = req.headers['dolapikey'] as string;
@@ -315,7 +410,7 @@ router.post('/reconcile/toggle', async (req: Request, res: Response) => {
 });
 
 // Calculate dynamic balance
-router.post('/balance/calculate', async (req: Request, res: Response) => {
+router.post('/balance/calculate', validateBody(BalanceCalculateBodySchema), async (req: Request, res: Response) => {
     try {
         const { initialBalance, transactions } = req.body;
 

@@ -173,6 +173,29 @@ const sync: RequestHandler = rateLimit({
 });
 
 // =============================================
+// 8. createBankingLimiter — factory (#1330)
+// =============================================
+// Limiter POST dedicado das rotas de banking (bankingRoutes.ts). É uma FACTORY
+// (e não um preset compartilhado em `rateLimiters`) por dois motivos:
+//   1. o preset `banking` (30/1min) continua sendo o limiter de MONTAGEM em
+//      server.ts (cobre também credentials/inter/itau) — semântica diferente;
+//   2. cada router que precisar do limite estrito ganha o próprio bucket, sem
+//      compartilhar contador com outros mounts.
+// 10/15min: operações de escrita bancária são raras para um humano (import,
+// conciliação); a 11ª POST na janela retorna 429 via errorHandler (AC #1330).
+// O `skip` interno libera métodos não-POST — leituras não são penalizadas.
+export function createBankingLimiter(): RequestHandler {
+    return rateLimit({
+        windowMs: FIFTEEN_MIN_MS,
+        max: 10,
+        standardHeaders: true,
+        legacyHeaders: false,
+        handler: rateLimitHandler(FIFTEEN_MIN_MS, 10, 'Banking rate limit exceeded. Please wait.'),
+        skip: (req: Request) => req.method !== 'POST',
+    });
+}
+
+// =============================================
 // Public API
 // =============================================
 
