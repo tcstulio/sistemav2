@@ -407,9 +407,15 @@ export class SessionService {
         if (phone && phone.includes('@lid')) {
             try {
                 const contact = await msg.getContact();
-                if (contact && contact.number) {
-                    return `${contact.number}@c.us`;
-                }
+                // @lid: `contact.number` devolve o PRÓPRIO @lid (ex.: 59936436445425), que NÃO casa o
+                // cadastro Dolibarr. O número REAL vive em `contact.id` — verificado ao vivo 22/07:
+                // id._serialized = "5511986781025@c.us", id.user = "5511986781025". Preferimos o JID
+                // @c.us serializado; senão montamos do user; fallback legado no contact.number.
+                const serialized: string | undefined = contact?.id?._serialized;
+                if (serialized && serialized.endsWith('@c.us')) return serialized;
+                const user: string | undefined = contact?.id?.user;
+                if (user && /^\d{10,15}$/.test(user)) return `${user}@c.us`;
+                if (contact && contact.number) return `${contact.number}@c.us`;
             } catch (e) { /* ignore */ }
         }
         return phone;
