@@ -240,6 +240,25 @@ describe('BotService', () => {
             );
         });
 
+        it('handles /reset and /limpar commands', async () => {
+            clearAllChatResetTimestampsForTests();
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+
+            await botService.processMessage(createMessage({ body: '/reset', from: '5511999999999@c.us', id: 'msg_reset_1' }));
+            expect(messageService.sendText).toHaveBeenCalledWith(
+                'sess1',
+                '5511999999999@c.us',
+                expect.stringContaining('Histórico de conversa resetado')
+            );
+
+            await botService.processMessage(createMessage({ body: '/limpar', from: '5511888888888@c.us', id: 'msg_reset_2' }));
+            expect(messageService.sendText).toHaveBeenCalledWith(
+                'sess1',
+                '5511888888888@c.us',
+                expect.stringContaining('Histórico de conversa resetado')
+            );
+        });
+
         it('/resumo roda o generateReply em contexto READONLY (sem bypass de escrita)', async () => {
             (messageService.getMessages as any).mockResolvedValue([
                 { fromMe: false, body: 'oi', senderName: 'User' },
@@ -1213,25 +1232,6 @@ describe('#1658 — isAgentHistoryExcluded / buildAgentHistory (função pura)',
         expect(history.some(h => h.parts === 'oi')).toBe(true);
         // ordem preservada
         expect(history.length).toBe(3);
-    });
-
-    it('responde e registra reset do chat ao receber /reset ou /limpar', async () => {
-        clearAllChatResetTimestampsForTests();
-        (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
-
-        await botService.processMessage(createMessage({ body: '/reset', from: '5511999999999@c.us', id: 'msg_reset_1' }));
-        expect(messageService.sendText).toHaveBeenCalledWith(
-            'sess1',
-            '5511999999999@c.us',
-            expect.stringContaining('Histórico de conversa resetado')
-        );
-
-        await botService.processMessage(createMessage({ body: '/limpar', from: '5511888888888@c.us', id: 'msg_reset_2' }));
-        expect(messageService.sendText).toHaveBeenCalledWith(
-            'sess1',
-            '5511888888888@c.us',
-            expect.stringContaining('Histórico de conversa resetado')
-        );
     });
 });
 
