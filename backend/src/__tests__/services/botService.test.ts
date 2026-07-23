@@ -91,7 +91,7 @@ const mockPermissions = vi.hoisted(() => ({
 }));
 vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPermissions }));
 
-import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt, buildAgentHistory, isAgentHistoryExcluded } from '../../services/botService';
+import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt, buildAgentHistory, isAgentHistoryExcluded, resetChatHistory, clearAllChatResetTimestampsForTests } from '../../services/botService';
 import { getToolContext, DEV_TOOLS, getToolsPrompt } from '../../services/agentTools';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
@@ -1214,4 +1214,25 @@ describe('#1658 — isAgentHistoryExcluded / buildAgentHistory (função pura)',
         // ordem preservada
         expect(history.length).toBe(3);
     });
+
+    it('responde e registra reset do chat ao receber /reset ou /limpar', async () => {
+        clearAllChatResetTimestampsForTests();
+
+        const handledReset = await botService.processMessage('sess1', '5511999999999@c.us', '/reset');
+        expect(handledReset).toBe(true);
+        expect(messageService.sendText).toHaveBeenCalledWith(
+            'sess1',
+            '5511999999999@c.us',
+            expect.stringContaining('Histórico de conversa resetado')
+        );
+
+        const handledLimpar = await botService.processMessage('sess1', '5511888888888@c.us', '/limpar');
+        expect(handledLimpar).toBe(true);
+        expect(messageService.sendText).toHaveBeenCalledWith(
+            'sess1',
+            '5511888888888@c.us',
+            expect.stringContaining('Histórico de conversa resetado')
+        );
+    });
 });
+
