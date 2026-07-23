@@ -107,6 +107,7 @@ describe('BotService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         __resetMessageDedupForTests(); // o dedup de msg é de processo; os testes reusam o mesmo id
+        clearAllChatResetTimestampsForTests(); // limpa timestamps de reset entre os testes
         // #1129: comandos financeiros habilitados por padrão nos testes (comportamento histórico).
         mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(true);
         mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(true);
