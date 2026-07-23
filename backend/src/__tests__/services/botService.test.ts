@@ -1217,17 +1217,16 @@ describe('#1658 — isAgentHistoryExcluded / buildAgentHistory (função pura)',
 
     it('responde e registra reset do chat ao receber /reset ou /limpar', async () => {
         clearAllChatResetTimestampsForTests();
+        (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
 
-        const handledReset = await botService.processMessage('sess1', '5511999999999@c.us', '/reset');
-        expect(handledReset).toBe(true);
+        await botService.processMessage(createMessage({ body: '/reset', from: '5511999999999@c.us', id: 'msg_reset_1' }));
         expect(messageService.sendText).toHaveBeenCalledWith(
             'sess1',
             '5511999999999@c.us',
             expect.stringContaining('Histórico de conversa resetado')
         );
 
-        const handledLimpar = await botService.processMessage('sess1', '5511888888888@c.us', '/limpar');
-        expect(handledLimpar).toBe(true);
+        await botService.processMessage(createMessage({ body: '/limpar', from: '5511888888888@c.us', id: 'msg_reset_2' }));
         expect(messageService.sendText).toHaveBeenCalledWith(
             'sess1',
             '5511888888888@c.us',
