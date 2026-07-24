@@ -142,14 +142,11 @@ const bankingLimiter = rateLimit({
 // `middleware/rateLimit.ts` (single source of truth) — ver teste
 // `schedulerRoutes.test.ts` (AC #1567: 11ª chamada POST → 429).
 
-// Strict limiter for auth (login attempts)
-const authLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 20,
-    message: { error: 'Too many requests to auth endpoints.' },
-    standardHeaders: true,
-    legacyHeaders: false
-});
+// Strict limiter for auth (login attempts) — REMOVIDO (#1329). O `rateLimiters.login`
+// (5/15min, chave = IP+login) é aplicado direto nas rotas em `routes/authRoutes.ts`,
+// que é o nível correto (combina chave com o e-mail/login para travar botnet distribuído).
+// O limiter antigo aqui era global do prefixo /api/auth (20/min/IP) e mascarava o
+// limite dedicado. Removido para não competir/duplicar com o do factory.
 
 // Apply global limiter
 app.use(globalLimiter);
@@ -187,7 +184,7 @@ app.use('/api/ai', aiLimiter, aiRoutes);
 app.use('/api/ai-jobs', requireDolibarrLogin, aiJobsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', groupsRoutes); // grupos/direitos (sistemav2#820) — mesmo prefixo, paths distintos
-app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/auth', authRoutes);
 
 // Endereço público do túnel cloudflared (sem auth — a URL não é segredo)
 import { tunnelService } from './services/tunnelService';

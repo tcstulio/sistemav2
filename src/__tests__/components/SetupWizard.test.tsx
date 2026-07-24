@@ -44,7 +44,9 @@ describe('SetupWizard', () => {
     });
 
     it('calls onComplete with config after successful login', async () => {
-        (DolibarrService.login as any).mockResolvedValue({ apiKey: 'test-key', user: { id: '1' } });
+        // (#1329) Login agora devolve o token de sessão em `token` (a chave vai via cookie
+        // httpOnly `auth_token`); o backend não retorna mais `apiKey` em texto plano.
+        (DolibarrService.login as any).mockResolvedValue({ token: 'test-key', user: { id: '1' } });
         (DolibarrService.checkConnection as any).mockResolvedValue(true);
 
         render(<SetupWizard onComplete={mockOnComplete} />);

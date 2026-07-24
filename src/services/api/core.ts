@@ -469,11 +469,12 @@ export const fetchCurrentUser = async (config: DolibarrConfig, loginHint?: strin
     return null;
 };
 
-export const login = async (login: string, password: string): Promise<{ token: string, entity: string, message: string, apiKey?: string, user?: DolibarrUser }> => {
+export const login = async (login: string, password: string): Promise<{ token: string, entity: string, message: string, user?: DolibarrUser }> => {
     try {
         const response = await fetch(`${AppConfig.API_BASE_URL}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ login, password })
         });
 

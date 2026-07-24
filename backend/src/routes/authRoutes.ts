@@ -6,23 +6,17 @@ import { createLogger } from '../utils/logger';
 import { config } from '../config/env';
 
 import { z } from 'zod';
-import rateLimit from 'express-rate-limit';
+import { rateLimiters } from '../middleware/rateLimit';
 
 const log = createLogger('Auth');
 const router = Router();
 
-const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
-    message: { error: "Too many login attempts, please try again later." }
-});
-
 const LoginSchema = z.object({
-    login: z.string().min(1),
-    password: z.string().min(1)
+    login: z.string().min(3),
+    password: z.string().min(6)
 });
 
-router.post('/login', loginLimiter, async (req, res) => {
+router.post('/login', rateLimiters.login, async (req, res) => {
     try {
         const { login, password } = LoginSchema.parse(req.body);
 
@@ -37,17 +31,17 @@ router.post('/login', loginLimiter, async (req, res) => {
 
         const sessionToken = createProtoSession(login, result.token, userData);
 
-        res.cookie('dolapikey', sessionToken, {
+        res.cookie('auth_token', sessionToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: true,
             sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
+            maxAge: 86400000,
             path: '/api',
         });
 
         res.json({
             success: true,
-            apiKey: sessionToken,
+            token: sessionToken,
             message: result.message
         });
     } catch (error: any) {
@@ -63,7 +57,7 @@ router.post('/login', loginLimiter, async (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-    res.clearCookie('dolapikey', { path: '/api' });
+    res.clearCookie('auth_token', { path: '/api' });
     res.json({ success: true, message: 'Logged out' });
 });
 
@@ -75,7 +69,7 @@ router.post('/logout', (req, res) => {
 
 const AdminLoginSchema = z.object({ adminKey: z.string().min(1) });
 
-router.post('/admin-login', loginLimiter, (req, res) => {
+router.post('/admin-login', rateLimiters.login, (req, res) => {
     try {
         const { adminKey } = AdminLoginSchema.parse(req.body);
         if (!config.adminKey || adminKey !== config.adminKey) {

@@ -35,7 +35,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
             // Exchange User/Pass for API Key via Backend
             const authResult = await DolibarrService.login(form.login, form.password);
-            const apiKey = authResult.apiKey || authResult.token;
+            const apiKey = authResult.token;
 
             if (!apiKey) {
                 throw new Error("Falha ao obter chave de API.");

@@ -61,9 +61,14 @@ describe('authRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            // login agora devolve uma proto-session opaca ('sess_' + 48 hex), não o token cru.
-            expect(res.body.apiKey).toMatch(/^sess_[a-f0-9]{48}$/);
-            expect(res.headers['set-cookie']).toBeDefined();
+            expect(res.body.apiKey).toBeUndefined();
+            expect(res.body.token).toMatch(/^sess_[a-f0-9]{48}$/);
+            const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
+            expect(cookie).toContain('auth_token=');
+            expect(cookie).toContain('HttpOnly');
+            expect(cookie).toContain('Secure');
+            expect(cookie).toContain('SameSite=Strict');
+            expect(cookie).toContain('Max-Age=86400');
         });
 
         it('returns 400 when login field is missing', async () => {
