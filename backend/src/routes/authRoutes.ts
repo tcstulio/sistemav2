@@ -4,6 +4,8 @@ import { dolibarrService } from '../services/dolibarrService';
 import { createProtoSession } from '../services/protoSession';
 import { createLogger } from '../utils/logger';
 import { config } from '../config/env';
+import { validateBody } from '../middleware/validation';
+import { UnauthorizedError } from '../middleware/errorHandler';
 
 import { z } from 'zod';
 import { rateLimiters } from '../middleware/rateLimit';
@@ -16,9 +18,9 @@ const LoginSchema = z.object({
     password: z.string().min(6)
 });
 
-router.post('/login', rateLimiters.login, async (req, res) => {
+router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req, res, next) => {
     try {
-        const { login, password } = LoginSchema.parse(req.body);
+        const { login, password } = req.body;
 
         const result = await dolibarrService.login(login, password);
 
@@ -35,24 +37,17 @@ router.post('/login', rateLimiters.login, async (req, res) => {
             httpOnly: true,
             secure: true,
             sameSite: 'strict',
-            maxAge: 86400000,
+            maxAge: 24 * 60 * 60 * 1000,
             path: '/api',
         });
 
         res.json({
             success: true,
-            token: sessionToken,
             message: result.message
         });
     } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
-        }
         log.error('Login Error', { error: error.message });
-        res.status(401).json({
-            success: false,
-            error: error.message || 'Authentication failed'
-        });
+        next(new UnauthorizedError(error.message || 'Authentication failed'));
     }
 });
 

@@ -81,7 +81,7 @@ const login: RequestHandler = rateLimit({
         const ip = ipKeyGenerator(req.ip || 'unknown');
         const body = (req.body && typeof req.body === 'object') ? (req.body as any) : {};
         const identifier = String(
-            body.email || body.login || body.username || 'anon'
+            body.email || body.login || body.username || body.adminKey || 'anon'
         ).toLowerCase().trim();
         return `${ip}:${identifier}`;
     },

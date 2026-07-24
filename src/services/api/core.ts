@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 
 const log = logger.child('ApiCore');
 
+export const COOKIE_AUTH_MARKER = 'http-only-cookie';
+
 // #951: prepara o corpo p/ o api_logs — redige mídia base64 e limita o tamanho.
 // Motivo: o OptimizeTab envia os api_logs à LLM; um base64 de foto/áudio (MBs) explodia
 // o contexto e inflava o IndexedDB. Qualquer string > 512 chars vira placeholder (pega
@@ -110,7 +112,10 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
     const requestBody = sanitizeBodyForLog(options.body);
 
     try {
-        const response = await fetch(proxyUrl, options);
+        const response = await fetch(proxyUrl, {
+            ...options,
+            credentials: options.credentials ?? 'include'
+        });
 
             if (!response.ok) {
                 let errorMsg = `Erro Proxy HTTP ${response.status}`;
@@ -469,7 +474,7 @@ export const fetchCurrentUser = async (config: DolibarrConfig, loginHint?: strin
     return null;
 };
 
-export const login = async (login: string, password: string): Promise<{ token: string, entity: string, message: string, user?: DolibarrUser }> => {
+export const login = async (login: string, password: string): Promise<{ success: true, message: string, user?: DolibarrUser }> => {
     try {
         const response = await fetch(`${AppConfig.API_BASE_URL}/api/auth/login`, {
             method: 'POST',
@@ -481,23 +486,22 @@ export const login = async (login: string, password: string): Promise<{ token: s
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.indexOf("application/json") !== -1) {
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Falha no Login');
+            if (!response.ok) {
+                const message = typeof data.error === 'object' ? data.error?.message : data.error;
+                throw new Error(message || 'Falha no Login');
+            }
 
-            if (data.apiKey) {
-                try {
-                    const tempConfig: DolibarrConfig = {
-                        apiUrl: '',
-                        apiKey: data.apiKey,
-                        themeColor: 'indigo',
-                        darkMode: false
-                    };
-                    const userProfile = await fetchCurrentUser(tempConfig, login);
-                    if (userProfile) {
-                        return { ...data, user: userProfile };
-                    }
-                } catch (userErr) {
-                    log.warn('Failed to fetch user profile after login', userErr);
-                }
+            try {
+                const sessionConfig: DolibarrConfig = {
+                    apiUrl: '',
+                    apiKey: COOKIE_AUTH_MARKER,
+                    themeColor: 'indigo',
+                    darkMode: false
+                };
+                const userProfile = await fetchCurrentUser(sessionConfig, login);
+                if (userProfile) return { ...data, user: userProfile };
+            } catch (userErr) {
+                log.warn('Failed to fetch user profile after login', userErr);
             }
 
             return data;

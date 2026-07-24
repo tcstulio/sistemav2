@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { DolibarrConfig } from '../types';
 import { Server, ShieldCheck, PlayCircle, Loader2, AlertTriangle, CheckCircle2, Globe, Key, Settings2, Info, ArrowRight, User, Lock, ChevronDown, ChevronUp } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
+import { COOKIE_AUTH_MARKER } from '../services/api/core';
 import { logger } from '../utils/logger';
 
 const log = logger.child('SetupWizard');
@@ -33,21 +34,13 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                 throw new Error("Por favor, informe Usuário e Senha.");
             }
 
-            // Exchange User/Pass for API Key via Backend
             const authResult = await DolibarrService.login(form.login, form.password);
-            const apiKey = authResult.token;
 
-            if (!apiKey) {
-                throw new Error("Falha ao obter chave de API.");
-            }
+            await DolibarrService.checkConnection(url, COOKIE_AUTH_MARKER);
 
-            // Verify Connection
-            await DolibarrService.checkConnection(url, apiKey);
-
-            // Complete Setup
             onComplete({
                 apiUrl: url,
-                apiKey: apiKey,
+                apiKey: COOKIE_AUTH_MARKER,
                 themeColor: form.themeColor,
                 darkMode: false,
                 apiLimit: 0,

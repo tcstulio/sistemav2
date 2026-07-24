@@ -111,19 +111,14 @@ cacheCleanupTimer.unref?.();
 
 // Check for Dolibarr User Login (Presence AND Validity of API Key)
 export const requireDolibarrLogin = async (req: Request, res: Response, next: NextFunction) => {
-    let userKey = (req.headers['dolapikey'] || req.headers['DOLAPIKEY'] || req.query.DOLAPIKEY || req.query.dolapikey || req.query.apiKey) as string;
+    const cookieSession = req.cookies?.auth_token as string | undefined;
+    let userKey = cookieSession && getProtoSession(cookieSession)
+        ? cookieSession
+        : (req.headers['dolapikey'] || req.headers['DOLAPIKEY'] || req.query.DOLAPIKEY || req.query.dolapikey || req.query.apiKey) as string;
 
     const authHeader = req.headers['authorization'];
     if (!userKey && authHeader && authHeader.startsWith('Bearer ')) {
         userKey = authHeader.substring(7);
-    }
-
-    // httpOnly cookie do novo fluxo (#1329): o token de sessão fica em `auth_token` com
-    // HttpOnly + Secure + SameSite=Strict. Mantemos `dolapikey` como fallback de
-    // retrocompatibilidade para cookies antigos (pré-issue) — a remoção total quebraria
-    // sessões já abertas em produção até o próximo login do usuário.
-    if (!userKey && req.cookies?.auth_token) {
-        userKey = req.cookies.auth_token;
     }
 
     if (!userKey && req.cookies?.dolapikey) {
