@@ -1,10 +1,14 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
 import { bankingService, CSVFormat } from '../services/bankingService';
 import multer from 'multer';
 import { createLogger } from '../utils/logger';
 import { createFileFilter, validateFileUpload, containsExecutableCode, sanitizeFilename } from '../utils/fileValidation';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { dolibarrService } from '../services/dolibarr';
+import { validateBody } from '../middleware/validation';
+import { AppError } from '../middleware/errorHandler';
+import { rateLimiters } from '../middleware/rateLimit';
 
 const log = createLogger('Banking');
 const router = Router();
@@ -19,10 +23,100 @@ const upload = multer({
     fileFilter: createFileFilter('banking')
 });
 
+const userApiKeyPattern = /^(?:\d{14}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const EmptyBodySchema = z.object({}).passthrough();
+const CsvFormatSchema = z.object({
+    dateColumn: z.string().min(1),
+    amountColumn: z.string().min(1),
+    descriptionColumn: z.string().min(1),
+    dateFormat: z.string().min(1).optional(),
+    delimiter: z.string().min(1).max(1).optional(),
+    hasHeader: z.boolean().optional()
+});
+const CsvImportBodySchema = z.union([
+    z.object({ format: z.string().min(1) }).passthrough(),
+    z.object({
+        dateColumn: z.string().min(1),
+        amountColumn: z.string().min(1),
+        descriptionColumn: z.string().min(1),
+        delimiter: z.string().min(1).max(1).optional(),
+        hasHeader: z.union([z.boolean(), z.string()]).optional()
+    }).passthrough()
+]);
+const ExportBodySchema = z.object({
+    format: z.string().min(1),
+    bankCode: z.string().min(1),
+    accountId: z.string().min(1)
+});
+const TransactionSchema = z.object({
+    date: z.union([z.string().min(1), z.date()]),
+    amount: z.number().finite()
+}).passthrough();
+const TransactionsBodySchema = z.object({
+    transactions: z.array(TransactionSchema)
+});
+const CashFlowBodySchema = z.object({
+    accounts: z.array(z.unknown()),
+    transactions: z.array(TransactionSchema),
+    period: z.enum(['week', 'month', 'quarter']).optional()
+});
+const ChartDataBodySchema = z.object({
+    transactions: z.array(TransactionSchema),
+    groupBy: z.enum(['day', 'week', 'month']).optional()
+});
+const ReconcileSuggestBodySchema = z.object({
+    bankLines: z.array(z.unknown()),
+    invoices: z.array(z.unknown())
+});
+const ReconcileSaveBodySchema = z.object({
+    lineId: z.string().min(1),
+    invoiceId: z.string().min(1)
+});
+const ReconcileToggleBodySchema = z.object({
+    accountId: z.string().min(1),
+    lineId: z.string().min(1),
+    reconciled: z.boolean()
+});
+const BalanceBodySchema = z.object({
+    initialBalance: z.number().finite(),
+    transactions: z.array(TransactionSchema)
+});
+
+function validateUserApiKey(req: Request, _res: Response, next: NextFunction) {
+    const userApiKey = req.headers['userapikey'] ?? req.headers['dolapikey'];
+    if (typeof userApiKey !== 'string' || !userApiKeyPattern.test(userApiKey)) {
+        return next(new AppError(401, 'UNAUTHORIZED', 'userApiKey ausente ou inválido'));
+    }
+    req.headers['dolapikey'] = userApiKey;
+    next();
+}
+
+function parseFormat(format: string, next: NextFunction): unknown {
+    try {
+        return JSON.parse(format);
+    } catch {
+        next(new AppError(400, 'BAD_REQUEST', 'Formato inválido'));
+        return undefined;
+    }
+}
+
+router.post('/export', rateLimiters.banking, validateUserApiKey, validateBody(ExportBodySchema), (req: Request, res: Response, next: NextFunction) => {
+    const parsedFormat = parseFormat(req.body.format, next);
+    if (parsedFormat === undefined) return;
+    res.json({
+        success: true,
+        data: {
+            format: parsedFormat,
+            bankCode: req.body.bankCode,
+            accountId: req.body.accountId
+        }
+    });
+});
+
 // --- Import Endpoints ---
 
 // Import OFX file
-router.post('/import/ofx', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/import/ofx', rateLimiters.banking, validateUserApiKey, upload.single('file'), validateBody(EmptyBodySchema), async (req: Request, res: Response) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'Nenhum arquivo enviado' });
@@ -64,7 +158,7 @@ router.post('/import/ofx', upload.single('file'), async (req: Request, res: Resp
 });
 
 // Import CSV file
-router.post('/import/csv', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/import/csv', rateLimiters.banking, validateUserApiKey, upload.single('file'), validateBody(CsvImportBodySchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'Nenhum arquivo enviado' });
@@ -75,11 +169,13 @@ router.post('/import/csv', upload.single('file'), async (req: Request, res: Resp
         // Get format from body or use auto-detection
         let format: CSVFormat;
         if (req.body.format) {
-            try {
-                format = JSON.parse(req.body.format);
-            } catch {
-                return res.status(400).json({ error: 'Formato CSV inválido: JSON mal formatado' });
+            const parsedFormat = parseFormat(req.body.format, next);
+            if (parsedFormat === undefined) return;
+            const validatedFormat = CsvFormatSchema.safeParse(parsedFormat);
+            if (!validatedFormat.success) {
+                return next(new AppError(400, 'BAD_REQUEST', 'Formato inválido'));
             }
+            format = validatedFormat.data;
         } else {
             format = {
                 dateColumn: req.body.dateColumn || 'date',
@@ -107,7 +203,7 @@ router.post('/import/csv', upload.single('file'), async (req: Request, res: Resp
 });
 
 // Auto-detect and import any supported file
-router.post('/import/auto', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/import/auto', rateLimiters.banking, validateUserApiKey, upload.single('file'), validateBody(EmptyBodySchema), async (req: Request, res: Response) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'Nenhum arquivo enviado' });
@@ -135,7 +231,7 @@ router.post('/import/auto', upload.single('file'), async (req: Request, res: Res
 // --- Analysis Endpoints ---
 
 // Categorize transactions using LLM
-router.post('/analyze/categorize', async (req: Request, res: Response) => {
+router.post('/analyze/categorize', rateLimiters.banking, validateUserApiKey, validateBody(TransactionsBodySchema), async (req: Request, res: Response) => {
     try {
         const { transactions } = req.body;
 
@@ -162,7 +258,7 @@ router.post('/analyze/categorize', async (req: Request, res: Response) => {
 });
 
 // Detect spending anomalies
-router.post('/analyze/anomalies', async (req: Request, res: Response) => {
+router.post('/analyze/anomalies', rateLimiters.banking, validateUserApiKey, validateBody(TransactionsBodySchema), async (req: Request, res: Response) => {
     try {
         const { transactions } = req.body;
 
@@ -191,7 +287,7 @@ router.post('/analyze/anomalies', async (req: Request, res: Response) => {
 // --- Insights Endpoints ---
 
 // Get cash flow insights
-router.post('/insights/cash-flow', async (req: Request, res: Response) => {
+router.post('/insights/cash-flow', rateLimiters.banking, validateUserApiKey, validateBody(CashFlowBodySchema), async (req: Request, res: Response) => {
     try {
         const { accounts, transactions, period } = req.body;
 
@@ -221,7 +317,7 @@ router.post('/insights/cash-flow', async (req: Request, res: Response) => {
 });
 
 // Get chart data for cash flow visualization
-router.post('/insights/chart-data', async (req: Request, res: Response) => {
+router.post('/insights/chart-data', rateLimiters.banking, validateUserApiKey, validateBody(ChartDataBodySchema), async (req: Request, res: Response) => {
     try {
         const { transactions, groupBy } = req.body;
 
@@ -249,7 +345,7 @@ router.post('/insights/chart-data', async (req: Request, res: Response) => {
 // --- Reconciliation Endpoints ---
 
 // Get reconciliation suggestions
-router.post('/reconcile/suggest', async (req: Request, res: Response) => {
+router.post('/reconcile/suggest', rateLimiters.banking, validateUserApiKey, validateBody(ReconcileSuggestBodySchema), async (req: Request, res: Response) => {
     try {
         const { bankLines, invoices } = req.body;
 
@@ -271,7 +367,7 @@ router.post('/reconcile/suggest', async (req: Request, res: Response) => {
 });
 
 // Save reconciliation (legacy: requires invoiceId)
-router.post('/reconcile/save', async (req: Request, res: Response) => {
+router.post('/reconcile/save', rateLimiters.banking, validateUserApiKey, validateBody(ReconcileSaveBodySchema), async (req: Request, res: Response) => {
     try {
         const { lineId, invoiceId } = req.body;
         const userApiKey = req.headers['dolapikey'] as string;
@@ -293,7 +389,7 @@ router.post('/reconcile/save', async (req: Request, res: Response) => {
 });
 
 // Toggle reconciliation state of a bank line — persists directly to Dolibarr
-router.post('/reconcile/toggle', async (req: Request, res: Response) => {
+router.post('/reconcile/toggle', rateLimiters.banking, validateUserApiKey, validateBody(ReconcileToggleBodySchema), async (req: Request, res: Response) => {
     try {
         const { accountId, lineId, reconciled } = req.body;
         const userApiKey = req.headers['dolapikey'] as string;
@@ -315,7 +411,7 @@ router.post('/reconcile/toggle', async (req: Request, res: Response) => {
 });
 
 // Calculate dynamic balance
-router.post('/balance/calculate', async (req: Request, res: Response) => {
+router.post('/balance/calculate', rateLimiters.banking, validateUserApiKey, validateBody(BalanceBodySchema), async (req: Request, res: Response) => {
     try {
         const { initialBalance, transactions } = req.body;
 

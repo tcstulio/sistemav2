@@ -145,11 +145,13 @@ describe('rateLimiters (#1540 infrastructure)', () => {
         });
     });
 
-    describe('banking preset (30/1min)', () => {
-        it('configures 1min window with max 30', () => {
+    describe('banking preset (10/15min)', () => {
+        it('configures 15min window with max 10 for POST requests', () => {
             const opts = rateLimitCalls[2];
-            expect(opts.windowMs).toBe(ONE_MIN_MS);
-            expect(opts.max).toBe(30);
+            expect(opts.windowMs).toBe(FIFTEEN_MIN_MS);
+            expect(opts.max).toBe(10);
+            expect(opts.skip({ method: 'POST' } as any, {} as any)).toBe(false);
+            expect(opts.skip({ method: 'GET' } as any, {} as any)).toBe(true);
         });
 
         it('handler builds RATE_LIMIT error mentioning banking', () => {
@@ -160,7 +162,8 @@ describe('rateLimiters (#1540 infrastructure)', () => {
             expect(err.status).toBe(429);
             expect(err.code).toBe('RATE_LIMIT');
             expect(err.message).toMatch(/banking/i);
-            expect(err.details.limit).toBe(30);
+            expect(err.details.limit).toBe(10);
+            expect(err.details.retryAfter).toBe(15 * 60);
         });
     });
 
