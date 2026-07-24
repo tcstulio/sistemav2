@@ -107,8 +107,13 @@ describe('webhookRoutes', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.stubEnv('NODE_ENV', 'development');
         mockAuthState.authenticated = true;
         app = createApp();
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
     });
 
     describe('POST /api/webhooks/trigger', () => {
@@ -300,34 +305,97 @@ describe('webhookRoutes', () => {
             expect(mockEventRouter.processEvent).toHaveBeenCalledWith('dolibarr', { id: '1' });
         });
 
-        it('retorna 404 para /simulate em produção', async () => {
-            const previous = process.env.NODE_ENV;
-            process.env.NODE_ENV = 'production';
+        it('retorna 404 para /simulate em produção antes da autenticação', async () => {
+            vi.stubEnv('NODE_ENV', 'production');
+            mockAuthState.authenticated = false;
+
             const res = await request(app).post('/api/webhooks/simulate').send({ event: 'invoice_created' });
-            process.env.NODE_ENV = previous;
 
             expect(res.status).toBe(404);
             expect(res.body.error.code).toBe('NOT_FOUND');
+            expect(mockRequireDolibarrLogin).not.toHaveBeenCalled();
         });
     });
 
     describe('validação anti-ReDoS', () => {
-        it('rejeita pattern com mais de 200 caracteres', async () => {
+        it('rejeita pattern aninhado com mais de 200 caracteres', async () => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
                 .send({ name: 'Test', event: 'custom', sessionId: 'default', conditions: { pattern: 'a'.repeat(201) } });
 
             expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
         });
 
-        it.each(['(a+)+$', '.*.*.*'])('rejeita pattern inseguro %s', async (pattern) => {
+        it('rejeita pattern no corpo com mais de 200 caracteres', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'a'.repeat(201) });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it.each(['(a+)+$', '.*.*.*'])('rejeita pattern aninhado inseguro %s', async (pattern) => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
                 .send({ name: 'Test', event: 'custom', sessionId: 'default', conditions: { pattern } });
 
             expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it.each(['(a+)+$', '.*.*.*'])('rejeita pattern inseguro no corpo %s', async (pattern) => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it('rejeita caracteres fora da whitelist', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'invoice paid' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it('rejeita regex inválida mesmo com caracteres permitidos', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: '[invoice' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it('aceita pattern válido com até 200 caracteres', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'invoice_[0-9]+' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockSchedulerService.createRule).toHaveBeenCalledOnce();
+        });
+
+        it('valida pattern ao atualizar uma regra', async () => {
+            const res = await request(app)
+                .put('/api/webhooks/rules/rule-1')
+                .send({ pattern: 'a'.repeat(201) });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.updateRule).not.toHaveBeenCalled();
         });
     });
 

@@ -44,6 +44,13 @@ function requireWebhookSecret(req: Request, res: Response, next: NextFunction) {
     next();
 }
 
+function requireDevelopment(_req: Request, res: Response, next: NextFunction) {
+    if (process.env.NODE_ENV !== 'development') {
+        return fail(res, 'NOT_FOUND', 'Route not found', 404);
+    }
+    return next();
+}
+
 function validatePattern(pattern: unknown): string | undefined {
     if (pattern === undefined) return undefined;
     if (typeof pattern !== 'string' || pattern.length === 0 || pattern.length > 200) {
@@ -52,7 +59,7 @@ function validatePattern(pattern: unknown): string | undefined {
     if (!/^[a-zA-Z0-9_\-.:/\\*?+()[\]\\]+$/.test(pattern)) {
         return 'Pattern contains unsupported characters';
     }
-    if (/(\([^)]*[+*][^)]*\))[+*?]|\.\*\.\*/.test(pattern)) {
+    if (/(\([^)]*[+*?][^)]*\))[+*?]|\.\*\.\*/.test(pattern)) {
         return 'Pattern contains unsafe constructs';
     }
     try {
@@ -60,6 +67,23 @@ function validatePattern(pattern: unknown): string | undefined {
     } catch {
         return 'Pattern is not a valid regular expression';
     }
+    return undefined;
+}
+
+function validateRulePatterns(body: unknown): string | undefined {
+    if (!body || typeof body !== 'object') return undefined;
+
+    const payload = body as Record<string, unknown>;
+    const conditions = payload.conditions;
+    const nestedPattern = conditions && typeof conditions === 'object' && !Array.isArray(conditions)
+        ? (conditions as Record<string, unknown>).pattern
+        : undefined;
+
+    for (const pattern of [payload.pattern, nestedPattern]) {
+        const error = validatePattern(pattern);
+        if (error) return error;
+    }
+
     return undefined;
 }
 
@@ -218,8 +242,7 @@ router.post('/rules', requireAuth, (req: Request, res: Response) => {
         if (!name || !event || !sessionId) {
             return fail(res, 'BAD_REQUEST', 'Missing required fields: name, event, sessionId', 400);
         }
-        const pattern = conditions?.pattern;
-        const patternError = validatePattern(pattern);
+        const patternError = validateRulePatterns(req.body);
         if (patternError) {
             return fail(res, 'INVALID_PATTERN', patternError, 400);
         }
@@ -239,7 +262,7 @@ router.delete('/rules/:id', requireAuth, (req: Request, res: Response) => {
 router.put('/rules/:id', requireAuth, (req: Request, res: Response) => {
     try {
         const { name, message, delay, templateId, sessionId, conditions, channel, subject } = req.body;
-        const patternError = validatePattern(conditions?.pattern);
+        const patternError = validateRulePatterns(req.body);
         if (patternError) {
             return fail(res, 'INVALID_PATTERN', patternError, 400);
         }
@@ -391,11 +414,7 @@ router.post('/rules/:id/test', requireAuth, async (req: Request, res: Response) 
 });
 
 // Simulate an event (for testing automation flow)
-router.post('/simulate', requireAuth, async (req: Request, res: Response) => {
-    if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
-        return fail(res, 'NOT_FOUND', 'Route not found', 404);
-    }
-
+router.post('/simulate', requireDevelopment, requireAuth, async (req: Request, res: Response) => {
     try {
         const { event, mockPhone, sessionId } = req.body;
 
