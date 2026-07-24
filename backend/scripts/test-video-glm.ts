@@ -257,7 +257,7 @@ async function callCase(
 
 function conciseEvidence(result: CaseResult): string {
     const responseMessage = result.message ?? result.body ?? result.code ?? 'sem mensagem';
-    const normalizedMessage = responseMessage.replace(/\s+/g, ' ').slice(0, 300);
+    const normalizedMessage = responseMessage.replace(/\s+/g, ' ').trim().slice(0, 300);
     return `status=${result.status ?? 'n/a'}; mensagem=${normalizedMessage}`;
 }
 
@@ -401,10 +401,12 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
-    process.exitCode = 1;
-});
+main()
+    .then(() => process.exit(0))
+    .catch((error: unknown) => {
+        console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+        process.exit(1);
+    });
 
 /*
  * DECISÃO registrada após execução real do spike.
@@ -412,14 +414,14 @@ main().catch((error: unknown) => {
  * Resultado: SUPORTA
  * Base: https://api.z.ai/api/coding/paas/v4
  * Modelo: glm-4.6v
- * Caso 1 (data URL curta): status=200; mensagem=O vídeo mostra barras verticais coloridas com formas geométricas em movimento e um cronômetro no canto superior esquerdo.
- * Caso 2 (URL pública): status=200; mensagem=O vídeo mostra uma animação de uma paisagem natural com um coelho saindo de sua toca, além de árvores, um riacho e um pássaro.
- * Caso 3 (data URL maior): status=200; mensagem=O vídeo apresenta uma animação abstrata com listras coloridas verticais e elementos gráficos em movimento, criando um efeito visual glitch.
+ * Caso 1 (data URL curta): status=200; mensagem=O vídeo exibe uma tela com listras verticais coloridas e elementos animados (linhas, quadrados, cruz) junto a um cronômetro.
+ * Caso 2 (URL pública): status=200; mensagem=O vídeo apresenta uma animação de uma paisagem com árvores, um riacho, um pássaro e um coelho emergindo de uma toca.
+ * Caso 3 (data URL maior): status=200; mensagem=O vídeo exibe uma tela com listras verticais coloridas e elementos animados (linhas, pontos, formas) em movimento, criando um efeito visual dinâmico e glitch.
  *
  * Limites observados para a sub-tarefa 2 do #937:
- * - MP4 data URL: aceito com 0,94 MiB, 15 fps e 3s.
+ * - MP4 data URL: aceito com 0.94 MiB, 15 fps e 3s.
  * - MP4 por URL pública: aceito.
- * - Tamanho: ao menos 8,47 MiB aceitos (30 fps, 12s); máximo exato não determinado.
+ * - Tamanho: ao menos 8.48 MiB aceitos (30 fps, 12s); máximo exato não determinado.
  * - Formato observado: MP4/H.264; WebM não foi testado.
  * === END spike-decision ===
  */
