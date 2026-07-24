@@ -6,7 +6,7 @@
  *
  *   login      → brute-force de credenciais (5/15min, chave = IP+email)
  *   ai         → operações caras de IA (20/min, pula GETs de polling)
- *   banking    → operações bancárias sensíveis (30/min)
+ *   banking    → operações bancárias sensíveis (10/15min)
  *   scheduler  → agendamento de mensagens (10/min)
  *   strict     → enumeração de IDs/secrets (10/min/IP)
  *   default    → fallback genérico para rotas sem preset dedicado (100/15min)
@@ -106,14 +106,13 @@ const ai: RequestHandler = rateLimit({
 // =============================================
 // 3. banking — operações bancárias sensíveis
 // =============================================
-// 30/min cobre uso legítimo de um operador humano (consulta + ação por
-// minuto) e trava automação maliciosa (script que varre extratos).
 const banking: RequestHandler = rateLimit({
-    windowMs: ONE_MIN_MS,
-    max: 30,
+    windowMs: FIFTEEN_MIN_MS,
+    max: 10,
     standardHeaders: true,
     legacyHeaders: false,
-    handler: rateLimitHandler(ONE_MIN_MS, 30, 'Banking rate limit exceeded. Please wait.'),
+    handler: rateLimitHandler(FIFTEEN_MIN_MS, 10, 'Banking rate limit exceeded. Please wait.'),
+    skip: (req: Request) => req.method !== 'POST',
 });
 
 // =============================================
