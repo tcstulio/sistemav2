@@ -161,5 +161,13 @@ export function isCodingBase(baseUrl?: string): boolean {
     return /\/coding\//.test(url);
 }
 
-/** Log informativo quando o serviço é importado pela 1ª vez (ajuda debug). */
-log.debug('visionService inicializado', { baseUrl: getVisionClientConfig().baseUrl, model: getVisionClientConfig().model });
+/**
+ * Log de "serviço carregado" sob demanda — NÃO roda no import do módulo,
+ * porque polui testes (vitest/jest) e logs estruturados quando o módulo
+ * é carregado só para reusar config. Chame explicitamente se quiser
+ * registrar a inicialização (ex.: no startup do app).
+ */
+export function logVisionInit(): void {
+    const cfg = getVisionClientConfig();
+    log.debug('visionService inicializado', { baseUrl: cfg.baseUrl, model: cfg.model });
+}
