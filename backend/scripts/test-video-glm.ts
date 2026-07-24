@@ -1,559 +1,425 @@
 /**
- * Spike #1029 — Validar suporte a `video_url` no glm-4.6v (base Coding).
+ * Spike #1029 — suporte a `video_url` no glm-4.6v da base Coding.
  *
- * OBJETIVO: mapear empiricamente o que o endpoint `/chat/completions` do GLM-4.6V
- * aceita quando o `content` inclui um bloco do tipo `video_url`. Hoje (#1029,
- * 2026-07-22) o `LocalProvider` (#934) usa só `image_url` para OCR/análise de
- * imagem. Antes de implementar análise de VÍDEO (sub-tarefa 2 do #937), precisamos
- * saber se o modelo aceita `video_url` e em que formatos/tamanhos — ou se isso
- * é BLOQUEADO e a feature segue fora do roadmap.
+ * Como executar a partir da raiz do projeto:
+ *   ZAI_API_KEY=... npx tsx backend/scripts/test-video-glm.ts
+ *   ZAI_API_KEY=... npx tsx backend/scripts/test-video-glm.ts --emit-decision
+ *   npx tsx backend/scripts/test-video-glm.ts --dry-run
  *
- * ============================================================================
- * README — como rodar:
- * ============================================================================
+ * `--emit-decision` executa os três casos e atualiza somente o bloco DECISÃO no
+ * final deste arquivo. `--dry-run` valida a geração dos MP4 sem chamar a API.
+ * A URL, o modelo e a chave são obtidos de `visionService.ts`; este script não
+ * duplica a configuração do cliente GLM.
  *
- *   1. Apontar para a base CODING (a default de dev, mas vale conferir):
- *        export ZAI_VISION_BASE_URL=https://api.z.ai/api/coding/paas/v4
- *      Para testar PaaS, basta sobrescrever antes de rodar (a base PaaS exige
- *      saldo separado — ver `backend/src/config/env.ts`).
+ * Casos executados:
+ *   1. MP4 de 3 segundos, 15 fps e no máximo 2 MiB como data URL;
+ *   2. MP4 disponível em URL pública;
+ *   3. MP4 maior, de 12 segundos e 30 fps, como data URL.
  *
- *   2. Garantir a chave:
- *        export ZAI_API_KEY=...
- *
- *   3. Sub-tarefa 2B (gera MP4 e manda p/ a API):
- *        npx tsx backend/scripts/test-video-glm.ts
- *
- *      Sub-tarefa 2A (só gera os MP4, sem chamada HTTP — útil para CI):
- *        npx tsx backend/scripts/test-video-glm.ts --dry-run
- *
- *      Sub-tarefa 3 (auto-emite o bloco DECISÃO dentro deste arquivo com
- *      SUPORTA/BLOQUEADO + evidência HTTP; falha se não houver 3 resultados
- *      coletados antes):
- *        npx tsx backend/scripts/test-video-glm.ts --emit-decision
- *
- *   Sem `ZAI_API_KEY` o script sai (exit 1) com mensagem clara — sem gastar
- *   rede de vídeo. Com `--dry-run`, gera os MP4 e os descarta, sem HTTP.
- *
- * ============================================================================
- * O QUE O SCRIPT FAZ (mapeamento de formatos/tamanhos):
- * ============================================================================
- *
- *   Caso 1: vídeo curto (~3s, ≤2 MB) embutido como data URI        → `video_url`
- *   Caso 2: vídeo apontado por URL pública (HTTP placeholder)       → `video_url`
- *   Caso 3: vídeo maior (~8 MB) embutido como data URI             → `video_url`
- *
- * Cada caso loga: HTTP status, headers relevantes (apenas Content-Type/Model),
- * corpo CRU da resposta (sem mascarar nada), `usage.total_tokens` quando
- * presente, elapsed time. Erros 401/400/413/timeout são logados EXATAMENTE
- * como a API devolveu (código + `error.response.data` em JSON quando existir).
- *
- * ============================================================================
- * REUSO DE CONFIG (#1029 critério explícito):
- * ============================================================================
- *
- *   NÃO duplica `ZAI_VISION_BASE_URL` / `ZAI_VISION_MODEL` / `ZAI_API_KEY`.
- *   Importa do módulo `backend/src/services/visionService.ts`, que por sua
- *   vez lê de `backend/src/config/env.ts` — mesma fonte do `LocalProvider`
- *   em `backend/src/services/aiService.ts` (método `describeImage`).
- *
- *   Resultado prático: se uma env var mudar, o spike e a produção andam
- *   juntos. Zero duplicação de URL/chave/modelo.
- *
- * ============================================================================
- * DECISÃO (bloco ao final do arquivo):
- * ============================================================================
- *
- *   O spike não consegue "decidir sozinho" (precisa de rede e API key). O
- *   que ele FAZ é transformar a saída em evidência estruturada e — com a
- *   flag `--emit-decision` — gravar a SUGESTÃO no bloco DECISÃO no fim
- *   deste arquivo. O reviewer valida e, se necessário, ajusta o texto.
+ * Cada chamada imprime status HTTP, corpo bruto, tokens e tempo. Em erros HTTP,
+ * imprime sem alteração o corpo disponibilizado pelo Axios, além de status e
+ * código; em timeout, imprime o código e a mensagem originais.
  */
 
-import axios from 'axios';
+import { spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { spawnSync } from 'child_process';
+import ffmpegPath from 'ffmpeg-static';
 import {
     callVisionChat,
     describeVisionError,
     getVisionClientConfig,
-    getVisionHeaders,
     isCodingBase,
-    redactApiKey,
 } from '../src/services/visionService';
 
-// -----------------------------------------------------------------------------
-// Sinais de linha de comando (parsed uma vez).
-// -----------------------------------------------------------------------------
-const ARGS = process.argv.slice(2);
-const DRY_RUN = ARGS.includes('--dry-run');
-const EMIT_DECISION = ARGS.includes('--emit-decision');
-const HELP = ARGS.includes('--help') || ARGS.includes('-h');
+const args = process.argv.slice(2);
+const dryRun = args.includes('--dry-run');
+const emitDecision = args.includes('--emit-decision');
+const timeoutMs = 120_000;
+const prompt = 'Descreva brevemente o que aparece neste vídeo em português (1 frase).';
+const publicVideoUrl = 'https://raw.githubusercontent.com/mediaelement/mediaelement-files/master/big_buck_bunny.mp4';
+const decisionMarker = 'spike-decision';
+const decisionBegin = ` * === BEGIN ${decisionMarker} ===`;
+const decisionEnd = ` * === END ${decisionMarker} ===`;
 
-if (HELP) {
-    console.log(`
-Uso: npx tsx backend/scripts/test-video-glm.ts [opções]
-
-Opções:
-  --dry-run        Gera os MP4 e monta os bodies, mas NÃO chama a API.
-  --emit-decision  Após rodar, grava SUGESTÃO DE DECISÃO no fim deste arquivo.
-  -h, --help       Mostra esta ajuda.
-
-Env vars (obrigatórias para chamada HTTP):
-  ZAI_API_KEY            Chave da Z.AI
-  ZAI_VISION_BASE_URL    Default: https://api.z.ai/api/coding/paas/v4
-  ZAI_VISION_MODEL       Default: glm-4.6v
-`);
-    process.exit(0);
+interface GeneratedVideo {
+    buffer: Buffer;
+    durationSec: number;
+    fps: number;
+    format: 'mp4';
 }
 
-const TEXT_PROMPT = 'Descreva brevemente o que aparece neste vídeo em português (1 frase).';
-
-// -----------------------------------------------------------------------------
-// Config do cliente de visão — importada do visionService (sem duplicação).
-// -----------------------------------------------------------------------------
-const visionCfg = getVisionClientConfig();
-const apiKey = visionCfg.apiKey;
-const baseUrl = visionCfg.baseUrl;
-const model = visionCfg.model;
-const headers = getVisionHeaders();
-
-// -----------------------------------------------------------------------------
-// Cores (mesmo padrão do `backend/scripts/test-integration.ts`).
-// -----------------------------------------------------------------------------
-const C = {
-    green: '\x1b[32m',
-    red: '\x1b[31m',
-    yellow: '\x1b[33m',
-    blue: '\x1b[34m',
-    cyan: '\x1b[36m',
-    gray: '\x1b[90m',
-    bold: '\x1b[1m',
-    reset: '\x1b[0m',
-} as const;
-const colorKeys = Object.keys(C) as (keyof typeof C)[];
-type ColorKey = (typeof colorKeys)[number];
-const log = (label: string, body = '', color: ColorKey = 'reset'): void => {
-    console.log(`${C[color]}${label}${body}${C.reset}`);
-};
-const section = (title: string): void => log(`\n${'='.repeat(72)}\n  ${title}\n${'='.repeat(72)}\n`, '', 'cyan');
-
-// -----------------------------------------------------------------------------
-// Geração de MP4 de teste via ffmpeg-static (já é dep do backend).
-// `lavfi testsrc2` produz uma imagem animada sem precisar de asset. O
-// tamanho-alvo é aproximado via `-fs N MiB` (file-size limit) — ffmpeg
-// para no limite, então o MP4 fica próximo do alvo sem inflar.
-// -----------------------------------------------------------------------------
-function ffmpegBin(): string {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const p = require('ffmpeg-static');
-    if (!p) throw new Error('ffmpeg-static não resolveu um binário (SO/arch não suportado).');
-    return String(p);
+interface CaseResult {
+    label: string;
+    source: 'data-url' | 'public-url';
+    ok: boolean;
+    elapsedMs: number;
+    status?: number;
+    code?: string;
+    body?: string;
+    message?: string;
+    totalTokens?: number;
+    videoBytes?: number;
+    durationSec?: number;
+    fps?: number;
+    format: 'mp4';
 }
 
-function generateTestMp4(targetSizeMB: number, durationSec: number, label: string): Buffer {
-    const tmp = path.join(os.tmpdir(), `${label}.mp4`);
-    const bin = ffmpegBin();
-    // testsrc2 → padrão animado (cores+relógio). 320x240, yuv420p é o mínimo
-    // compatível com quase todo encoder/decodor. bitrate controlado para
-    // sair perto do targetSizeMB sem ser absurdo.
-    const args = [
+interface VideoSpec {
+    label: string;
+    targetBytes: number;
+    durationSec: number;
+    fps: number;
+    width: number;
+    height: number;
+}
+
+function printHelp(): void {
+    console.log([
+        'Uso: npx tsx backend/scripts/test-video-glm.ts [opções]',
+        '',
+        '  --dry-run        Gera e valida os vídeos sem chamar a API',
+        '  --emit-decision  Registra SUPORTA/BLOQUEADO no comentário final',
+        '  --help, -h       Exibe esta ajuda',
+    ].join('\n'));
+}
+
+function generateMp4(spec: VideoSpec): GeneratedVideo {
+    if (!ffmpegPath) {
+        throw new Error('ffmpeg-static não disponibilizou um binário para esta plataforma.');
+    }
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glm-video-spike-'));
+    const outputPath = path.join(tempDir, `${spec.label}.mp4`);
+    const bitrateKbps = Math.max(128, Math.floor((spec.targetBytes * 8) / spec.durationSec / 1000));
+    const ffmpegArgs = [
         '-y',
         '-loglevel', 'error',
         '-f', 'lavfi',
-        '-i', `testsrc2=size=320x240:rate=15:duration=${durationSec}`,
+        '-i', `testsrc2=size=${spec.width}x${spec.height}:rate=${spec.fps}:duration=${spec.durationSec}`,
+        '-an',
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-pix_fmt', 'yuv420p',
+        '-b:v', `${bitrateKbps}k`,
+        '-minrate', `${bitrateKbps}k`,
+        '-maxrate', `${bitrateKbps}k`,
+        '-bufsize', `${bitrateKbps * 2}k`,
+        '-x264-params', 'nal-hrd=cbr:force-cfr=1',
         '-movflags', '+faststart',
-        '-fs', `${targetSizeMB}M`,
-        tmp,
+        outputPath,
     ];
-    const r = spawnSync(bin, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    if (r.status !== 0) {
-        throw new Error(`ffmpeg falhou (status=${r.status}):\nSTDOUT: ${r.stdout}\nSTDERR: ${r.stderr}`);
-    }
-    const buf = fs.readFileSync(tmp);
-    fs.unlinkSync(tmp);
-    return buf;
-}
-
-interface VideoCallResult {
-    label: string;
-    ok: boolean;
-    elapsedMs: number;
-    /** HTTP status quando a API respondeu, mesmo que 4xx. */
-    status?: number;
-    /** 'HTTP_400' / 'ECONNABORTED' / 'axios_error' / texto livre. */
-    kind?: string;
-    /** Corpo cru da resposta (string ou JSON). */
-    body?: string;
-    /** `usage.total_tokens` se a API devolveu. */
-    totalTokens?: number;
-    /** Tamanho do vídeo enviado (MiB) — p/ mapear limite. */
-    videoBytes?: number;
-    /** Duração aproximada em segundos. */
-    videoDurationSec?: number;
-    /** Erro fatal local (geração de MP4, ffmpeg, etc). */
-    fatalMessage?: string;
-}
-
-// -----------------------------------------------------------------------------
-// UMA chamada ao /chat/completions com o content-array fornecido. Não lança:
-// sempre devolve um objeto VideoCallResult para o main() agregar.
-//
-// BUG FIX vs. tentativa anterior: o `elapsedMs` é capturado em `startMs` no
-// INÍCIO desta função (não lido de `err.__startMs`, que nunca era setado e
-// sempre voltava 0 no caminho de erro). Funciona igual p/ sucesso e erro.
-// -----------------------------------------------------------------------------
-async function callOnce(
-    label: string,
-    contentParts: Array<Record<string, unknown>>,
-    videoBytes?: number,
-    videoDurationSec?: number
-): Promise<VideoCallResult> {
-    const startMs = Date.now();
-    const messages = [{ role: 'user', content: contentParts }];
-
-    log(`▶ Caso [${label}]`, '', 'bold');
-    log(
-        `   POST ${baseUrl}/chat/completions  model=${model}\n   parts=`,
-        JSON.stringify(
-            contentParts.map((p) =>
-                p.type === 'text' ? { type: 'text', len: String(p.text ?? '').length } : p
-            ),
-            null,
-            2
-        ),
-        'gray'
-    );
-
-    if (DRY_RUN) {
-        log(`   ⏭  dry-run — pulando a chamada HTTP. Body montado acima.\n`, '', 'yellow');
-        const elapsedMs = Date.now() - startMs;
-        return { label, ok: true, elapsedMs, videoBytes, videoDurationSec };
-    }
 
     try {
-        const resp = await callVisionChat(messages, { timeoutMs: 120_000, origin: `spike:video:${label}` });
-        const elapsedMs = Date.now() - startMs;
-        const data = resp.data as { usage?: { total_tokens?: number }; choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }> };
-        const totalTokens = data?.usage?.total_tokens;
-        const choice0 = data?.choices?.[0];
-        log(`   ✅ HTTP ${resp.status} em ${elapsedMs}ms`, '', 'green');
-        log(`   📦 tokens: `, JSON.stringify(data?.usage ?? null), 'gray');
-        log(
-            `   📝 choice[0]: `,
-            JSON.stringify({ finish_reason: choice0?.finish_reason, content: choice0?.message?.content }),
-            'gray'
-        );
-        log(`   🧾 body cru:\n`, JSON.stringify(resp.data, null, 2), 'gray');
-        return { label, ok: true, elapsedMs, status: resp.status, totalTokens, videoBytes, videoDurationSec };
-    } catch (err: unknown) {
-        const elapsedMs = Date.now() - startMs;
-        const info = describeVisionError(err);
-        const mark: ColorKey = info.status && info.status >= 500 ? 'red' : 'yellow';
-        log(`   ❌ ${info.kind} em ${elapsedMs}ms`, '', mark);
-        if (info.status != null) log(`   status=`, String(info.status), 'gray');
-        if (info.body != null) log(`   body=`, info.body, 'gray');
-        else log(`   message=`, (err as Error)?.message || String(err), 'gray');
+        const processResult = spawnSync(ffmpegPath, ffmpegArgs, {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        if (processResult.error) {
+            throw processResult.error;
+        }
+        if (processResult.status !== 0) {
+            throw new Error(
+                `ffmpeg falhou (status=${processResult.status}): stdout=${processResult.stdout} stderr=${processResult.stderr}`
+            );
+        }
         return {
-            label,
-            ok: false,
-            elapsedMs,
-            status: info.status,
-            kind: info.kind,
-            body: info.body,
-            videoBytes,
-            videoDurationSec,
+            buffer: fs.readFileSync(outputPath),
+            durationSec: spec.durationSec,
+            fps: spec.fps,
+            format: 'mp4',
         };
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
 
-// -----------------------------------------------------------------------------
-// Sugestão automática de DECISÃO com base nos resultados (SUPORTA/BLOQUEADO).
-// Critério:
-//   - SUPORTA: pelo menos o Caso 1 (data URI ≤2MB) terminou com 2xx.
-//   - BLOQUEADO: Caso 1 terminou com 4xx/5xx/timeout (ex.: 400 "unsupported
-//     content type", 413, 422). Evidência = status + body.
-//   - Caso houver parcial (1 OK, 3 bloqueado por tamanho), anota limites.
-// -----------------------------------------------------------------------------
-function suggestDecision(results: VideoCallResult[]): { decision: 'SUPORTA' | 'BLOQUEADO' | 'INCONCLUSIVO'; evidence: string; notes: string[] } {
-    const r1 = results.find((r) => r.label.includes('≤2MB') || r.label.includes('data URI (≤2MB)'));
-    if (!r1) {
-        return { decision: 'INCONCLUSIVO', evidence: 'caso 1 não executado', notes: [] };
-    }
-    if (r1.ok && r1.status && r1.status >= 200 && r1.status < 300) {
-        const notes: string[] = [];
-        const r3 = results.find((r) => r.label.includes('~8MB'));
-        if (r3 && !(r3.ok && r3.status && r3.status >= 200 && r3.status < 300)) {
-            notes.push(`Limite de tamanho: caso 3 (~8 MB) falhou com ${r3.kind ?? 'erro'} status=${r3.status}`);
+function summarizeContent(parts: Array<Record<string, unknown>>): unknown[] {
+    return parts.map((part) => {
+        if (part.type === 'text') {
+            return { type: 'text', characters: String(part.text ?? '').length };
         }
+        const videoUrl = part.video_url as { url?: unknown } | undefined;
+        const url = typeof videoUrl?.url === 'string' ? videoUrl.url : '';
         return {
-            decision: 'SUPORTA',
-            evidence: `Caso 1: HTTP ${r1.status} em ${r1.elapsedMs}ms; tokens=${r1.totalTokens ?? 'n/a'}`,
-            notes,
+            type: part.type,
+            video_url: url.startsWith('data:')
+                ? { scheme: 'data', encodedCharacters: url.length }
+                : { url },
         };
+    });
+}
+
+function stringifyRaw(value: unknown): string {
+    if (typeof value === 'string') {
+        return value;
     }
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+}
+
+function responseDetails(data: unknown): { body: string; message?: string; totalTokens?: number } {
+    const body = stringifyRaw(data);
+    if (!data || typeof data !== 'object') {
+        return { body };
+    }
+    const response = data as {
+        usage?: { total_tokens?: number };
+        choices?: Array<{ message?: { content?: unknown } }>;
+    };
+    const content = response.choices?.[0]?.message?.content;
     return {
-        decision: 'BLOQUEADO',
-        evidence: `Caso 1 falhou: ${r1.kind ?? 'erro'} status=${r1.status ?? 'n/a'} body=${(r1.body ?? '').slice(0, 200)}`,
-        notes: [],
+        body,
+        message: content == null ? undefined : stringifyRaw(content),
+        totalTokens: response.usage?.total_tokens,
     };
 }
 
-const DECISION_BEGIN = '=== BEGIN spike-decision ===';
-const DECISION_END = '=== END spike-decision ===';
+async function callCase(
+    label: string,
+    source: CaseResult['source'],
+    parts: Array<Record<string, unknown>>,
+    video?: GeneratedVideo
+): Promise<CaseResult> {
+    console.log(`\n--- ${label} ---`);
+    console.log(`request=${JSON.stringify(summarizeContent(parts))}`);
 
-function buildDecisionBlock(results: VideoCallResult[]): string {
-    const { decision, evidence, notes } = suggestDecision(results);
-    const lines: string[] = [];
-    lines.push(DECISION_BEGIN);
-    lines.push(`Resultado: ${decision}    (auto-gerado por --emit-decision em ${new Date().toISOString()})`);
-    lines.push('');
-    lines.push('EVIDÊNCIA COLETADA (HTTP status + mensagem, copiar a partir do RESUMO):');
-    for (const r of results) {
-        const statusPart = r.status != null ? `status=${r.status}` : 'status=n/a';
-        const bodyExcerpt = r.body ? r.body.slice(0, 200).replace(/\s+/g, ' ') : (r.ok ? 'OK' : (r.kind ?? 'sem corpo'));
-        lines.push(`  - ${r.label}: ${statusPart}  body="${bodyExcerpt}"`);
+    if (dryRun) {
+        console.log('dry-run: chamada HTTP ignorada');
+        return {
+            label,
+            source,
+            ok: true,
+            elapsedMs: 0,
+            videoBytes: video?.buffer.length,
+            durationSec: video?.durationSec,
+            fps: video?.fps,
+            format: 'mp4',
+        };
     }
-    lines.push('');
-    lines.push('EVIDÊNCIA RESUMIDA (1 linha):');
-    lines.push(`  ${evidence}`);
-    if (decision === 'SUPORTA') {
-        lines.push('');
-        lines.push('LIMITES OBSERVADOS (preencher):');
-        const r3 = results.find((r) => r.label.includes('~8MB'));
-        lines.push(`  - Tamanho máx por arquivo: ____ MB (qualquer 413/422 define isso)`);
-        if (r3) {
-            lines.push(`  - Caso 3 (~8 MB) resultado: ${r3.ok ? `HTTP ${r3.status} OK` : `${r3.kind} status=${r3.status}`}`);
+
+    const startedAt = Date.now();
+    try {
+        const response = await callVisionChat([{ role: 'user', content: parts }], {
+            timeoutMs,
+            origin: `spike-1029:${label}`,
+        });
+        const elapsedMs = Date.now() - startedAt;
+        const details = responseDetails(response.data);
+        console.log(`status=${response.status}`);
+        console.log(`elapsedMs=${elapsedMs}`);
+        console.log(`tokens=${details.totalTokens ?? 'n/a'}`);
+        console.log(`body=${details.body}`);
+        return {
+            label,
+            source,
+            ok: response.status >= 200 && response.status < 300,
+            elapsedMs,
+            status: response.status,
+            ...details,
+            videoBytes: video?.buffer.length,
+            durationSec: video?.durationSec,
+            fps: video?.fps,
+            format: 'mp4',
+        };
+    } catch (error: unknown) {
+        const elapsedMs = Date.now() - startedAt;
+        const details = describeVisionError(error);
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`status=${details.status ?? 'n/a'}`);
+        console.error(`code=${details.code ?? details.kind}`);
+        console.error(`elapsedMs=${elapsedMs}`);
+        if (details.body !== undefined) {
+            console.error(`body=${details.body}`);
+        } else {
+            console.error(`message=${message}`);
         }
-        lines.push('  - Formatos: mp4 OK | webm NÃO | …');
-        lines.push('  - fps: até ____ | duração: até ____s');
-    } else if (decision === 'BLOQUEADO') {
-        lines.push('');
-        lines.push('AÇÃO (#937): comentar em #937 "limite do modelo: glm-4.6v na base Coding');
-        lines.push('não aceita `video_url` (evidência acima)". Fechar o card sem nova implementação;');
-        lines.push('vídeo segue não-suportado até a Z.AI expor suporte oficial. Em paralelo, se o 4xx');
-        lines.push('vier por ENCODING/FORMATO diferente, explorar `image_url` com `data:video/mp4;base64,…`');
-        lines.push('em spike futuro.');
+        return {
+            label,
+            source,
+            ok: false,
+            elapsedMs,
+            status: details.status,
+            code: details.code ?? details.kind,
+            body: details.body,
+            message,
+            videoBytes: video?.buffer.length,
+            durationSec: video?.durationSec,
+            fps: video?.fps,
+            format: 'mp4',
+        };
     }
-    if (notes.length) {
-        lines.push('');
-        lines.push('NOTAS ADICIONAIS:');
-        for (const n of notes) lines.push(`  - ${n}`);
-    }
-    lines.push(DECISION_END);
-    return lines.join('\n');
 }
 
-/**
- * Substitui o bloco DECISÃO entre DECISION_BEGIN / DECISION_END por novo conteúdo.
- * Se o bloco não existir (PR fresh), insere antes do `==` final do arquivo.
- * Não altera nada fora dessas âncoras — comentário-guia intocado.
- */
-function emitDecisionToFile(results: VideoCallResult[]): void {
-    const filePath = __filename;
-    const src = fs.readFileSync(filePath, 'utf8');
-    const block = buildDecisionBlock(results);
-    const beginRe = /=== BEGIN spike-decision ===[\s\S]*?=== END spike-decision ===/;
-    let next: string;
-    if (beginRe.test(src)) {
-        next = src.replace(beginRe, block);
+function conciseEvidence(result: CaseResult): string {
+    const responseMessage = result.message ?? result.body ?? result.code ?? 'sem mensagem';
+    const normalizedMessage = responseMessage.replace(/\s+/g, ' ').slice(0, 300);
+    return `status=${result.status ?? 'n/a'}; mensagem=${normalizedMessage}`;
+}
+
+function commentLine(text = ''): string {
+    return ` *${text ? ` ${text}` : ''}`;
+}
+
+function decisionLines(results: CaseResult[]): string[] {
+    const shortDataUrl = results.find((result) => result.label.startsWith('1.'));
+    if (!shortDataUrl || shortDataUrl.status === undefined) {
+        throw new Error('Não há evidência HTTP do caso 1; a decisão não pode ser emitida.');
+    }
+
+    const supported = shortDataUrl.ok;
+    const publicUrl = results.find((result) => result.label.startsWith('2.'));
+    const largerDataUrl = results.find((result) => result.label.startsWith('3.'));
+    const lines = [
+        decisionBegin,
+        commentLine(`Resultado: ${supported ? 'SUPORTA' : 'BLOQUEADO'}`),
+        commentLine(`Base: ${getVisionClientConfig().baseUrl}`),
+        commentLine(`Modelo: ${getVisionClientConfig().model}`),
+        commentLine(`Caso 1 (data URL curta): ${conciseEvidence(shortDataUrl)}`),
+    ];
+
+    if (publicUrl) {
+        lines.push(commentLine(`Caso 2 (URL pública): ${conciseEvidence(publicUrl)}`));
+    }
+    if (largerDataUrl) {
+        lines.push(commentLine(`Caso 3 (data URL maior): ${conciseEvidence(largerDataUrl)}`));
+    }
+
+    lines.push(commentLine());
+    if (supported) {
+        const acceptedLarge = largerDataUrl?.ok === true;
+        const shortMiB = ((shortDataUrl.videoBytes ?? 0) / 1024 / 1024).toFixed(2);
+        const largeMiB = ((largerDataUrl?.videoBytes ?? 0) / 1024 / 1024).toFixed(2);
+        lines.push(commentLine('Limites observados para a sub-tarefa 2 do #937:'));
+        lines.push(commentLine(`- MP4 data URL: aceito com ${shortMiB} MiB, ${shortDataUrl.fps} fps e ${shortDataUrl.durationSec}s.`));
+        lines.push(commentLine(`- MP4 por URL pública: ${publicUrl?.ok ? 'aceito' : 'não aceito no caso testado'}.`));
+        lines.push(commentLine(
+            acceptedLarge
+                ? `- Tamanho: ao menos ${largeMiB} MiB aceitos (${largerDataUrl?.fps} fps, ${largerDataUrl?.durationSec}s); máximo exato não determinado.`
+                : `- Tamanho: limite observado entre ${shortMiB} e ${largeMiB} MiB; caso maior foi rejeitado.`
+        ));
+        lines.push(commentLine('- Formato observado: MP4/H.264; WebM não foi testado.'));
     } else {
-        // Sem bloco ainda: insere antes da última linha do arquivo (deve ser comentário).
-        next = `${src.trimEnd()}\n\n${block}\n`;
+        lines.push(commentLine('Ação: documentar a limitação e fechar o card #937 sem nova implementação.'));
     }
-    fs.writeFileSync(filePath, next, 'utf8');
-    log(`\n📝 Bloco DECISÃO atualizado em ${path.relative(process.cwd(), filePath)}.`, '', 'cyan');
+    lines.push(decisionEnd);
+    return lines;
 }
 
-// -----------------------------------------------------------------------------
-// MAIN
-// -----------------------------------------------------------------------------
+function writeDecision(results: CaseResult[]): void {
+    const source = fs.readFileSync(__filename, 'utf8');
+    const replacement = decisionLines(results).join('\n');
+    const pattern = / \* === BEGIN spike-decision ===[\s\S]*? \* === END spike-decision ===/;
+    if (!pattern.test(source)) {
+        throw new Error('Bloco de decisão não encontrado.');
+    }
+    fs.writeFileSync(__filename, source.replace(pattern, replacement), 'utf8');
+    console.log('\nBloco DECISÃO atualizado com a evidência coletada.');
+}
+
 async function main(): Promise<void> {
-    section(`Spike #1029 — video_url no glm-4.6v (base Coding)`);
-    log(`Base:    ${baseUrl}  ${isCodingBase() ? '(coding ✓)' : '(NÃO é coding — alvo do card é a base CODING)'}\n`, '', 'gray');
-    log(`Modelo:  ${model}\n`, '', 'gray');
-    log(
-        `Chave:   ${apiKey ? `definida (${redactApiKey(apiKey)})` : 'AUSENTE — defina ZAI_API_KEY'}\n`,
-        apiKey ? 'gray' : 'red'
-    );
-
-    if (!apiKey && !DRY_RUN) {
-        log(`\nNada a fazer sem ZAI_API_KEY. Saindo.\n`, '', 'yellow');
-        process.exit(1);
+    if (args.includes('--help') || args.includes('-h')) {
+        printHelp();
+        return;
+    }
+    if (dryRun && emitDecision) {
+        throw new Error('--dry-run e --emit-decision não podem ser usados juntos.');
     }
 
-    // Sanidade: alerta se a base não parece "coding" (que é o alvo do card).
-    if (!isCodingBase()) {
-        log(
-            `\n⚠️  A base configurada não inclui "/coding/". O card #1029 quer validar a base CODING.\n` +
-                `   Para forçar: export ZAI_VISION_BASE_URL=https://api.z.ai/api/coding/paas/v4\n`,
-            '',
-            'yellow'
-        );
+    const config = getVisionClientConfig();
+    console.log(`base=${config.baseUrl}`);
+    console.log(`model=${config.model}`);
+    console.log(`codingBase=${isCodingBase(config.baseUrl)}`);
+    if (!isCodingBase(config.baseUrl) && !dryRun) {
+        throw new Error('O spike deve ser executado na base Coding. Ajuste ZAI_VISION_BASE_URL.');
+    }
+    if (!config.apiKey && !dryRun) {
+        throw new Error('ZAI_API_KEY não configurada.');
     }
 
-    const results: VideoCallResult[] = [];
-
-    // ------ Caso 1: vídeo curto, data URI ------
-    section('CASO 1 — vídeo curto (≤2 MB, ~3s) embutido como data URI');
-    try {
-        const buf1 = generateTestMp4(2, 3, 'spike_small');
-        const dataUri = `data:video/mp4;base64,${buf1.toString('base64')}`;
-        log(`   arquivo gerado: ${(buf1.length / 1024).toFixed(1)} KiB\n`, '', 'gray');
-        results.push(
-            await callOnce(
-                'video_url data URI (≤2MB)',
-                [{ type: 'text', text: TEXT_PROMPT }, { type: 'video_url', video_url: { url: dataUri } }],
-                buf1.length,
-                3
-            )
-        );
-    } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        log(`   ! falha ao gerar MP4 do caso 1: ${msg}\n`, '', 'red');
-        results.push({ label: 'video_url data URI (≤2MB)', ok: false, elapsedMs: 0, fatalMessage: msg });
+    const shortVideo = generateMp4({
+        label: 'short',
+        targetBytes: 1024 * 1024,
+        durationSec: 3,
+        fps: 15,
+        width: 640,
+        height: 360,
+    });
+    if (shortVideo.buffer.length > 2 * 1024 * 1024) {
+        throw new Error(`O vídeo curto excedeu 2 MiB: ${shortVideo.buffer.length} bytes.`);
+    }
+    const largerVideo = generateMp4({
+        label: 'larger',
+        targetBytes: 8 * 1024 * 1024,
+        durationSec: 12,
+        fps: 30,
+        width: 1280,
+        height: 720,
+    });
+    if (largerVideo.buffer.length <= shortVideo.buffer.length) {
+        throw new Error('A variação maior não ficou maior que o vídeo curto.');
     }
 
-    // ------ Caso 2: URL pública (placeholder) ------
-    section('CASO 2 — vídeo por URL pública (HTTP placeholder)');
-    // Não baixamos o arquivo: o spike testa se a API aceita o formato
-    // `video_url` apontando para uma URL HTTP pública. Uma URL estável
-    // controlada por nós (sample-videos.com / w3.org) seria ideal, mas
-    // pra não criar dependência externa fixa usamos um placeholder do
-    // github.com (404 esperado se a API tentar baixar) — o ponto é ver
-    // se o PARSER da API aceita o formato, não se o vídeo carrega.
-    const publicUrl =
-        'https://raw.githubusercontent.com/mediaelement/mediaelement-files/master/big_buck_bunny.mp4';
-    results.push(
-        await callOnce('video_url URL pública HTTP', [
-            { type: 'text', text: TEXT_PROMPT },
-            { type: 'video_url', video_url: { url: publicUrl } },
-        ])
-    );
+    console.log(`shortVideoBytes=${shortVideo.buffer.length}`);
+    console.log(`largerVideoBytes=${largerVideo.buffer.length}`);
 
-    // ------ Caso 3: vídeo maior, data URI ------
-    section('CASO 3 — vídeo maior (~8 MB) embutido como data URI (mapear limite)');
-    try {
-        const buf3 = generateTestMp4(8, 30, 'spike_large');
-        const dataUri3 = `data:video/mp4;base64,${buf3.toString('base64')}`;
-        log(`   arquivo gerado: ${(buf3.length / 1024 / 1024).toFixed(2)} MiB\n`, '', 'gray');
-        results.push(
-            await callOnce(
-                'video_url data URI (~8MB)',
-                [{ type: 'text', text: TEXT_PROMPT }, { type: 'video_url', video_url: { url: dataUri3 } }],
-                buf3.length,
-                30
-            )
-        );
-    } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        log(`   ! falha ao gerar MP4 do caso 3: ${msg}\n`, '', 'red');
-        results.push({ label: 'video_url data URI (~8MB)', ok: false, elapsedMs: 0, fatalMessage: msg });
+    const results: CaseResult[] = [];
+    results.push(await callCase(
+        '1. video_url com data URL curta',
+        'data-url',
+        [
+            { type: 'text', text: prompt },
+            { type: 'video_url', video_url: { url: `data:video/mp4;base64,${shortVideo.buffer.toString('base64')}` } },
+        ],
+        shortVideo
+    ));
+    results.push(await callCase(
+        '2. video_url com URL pública',
+        'public-url',
+        [
+            { type: 'text', text: prompt },
+            { type: 'video_url', video_url: { url: publicVideoUrl } },
+        ]
+    ));
+    results.push(await callCase(
+        '3. video_url com data URL maior',
+        'data-url',
+        [
+            { type: 'text', text: prompt },
+            { type: 'video_url', video_url: { url: `data:video/mp4;base64,${largerVideo.buffer.toString('base64')}` } },
+        ],
+        largerVideo
+    ));
+
+    console.log(`\nresumo=${JSON.stringify(results)}`);
+    if (emitDecision) {
+        writeDecision(results);
     }
-
-    // ------ Resumo ------
-    section('RESUMO');
-    log(
-        JSON.stringify(
-            results.map((r) => ({
-                label: r.label,
-                ok: r.ok,
-                status: r.status,
-                kind: r.kind,
-                totalTokens: r.totalTokens,
-                elapsedMs: r.elapsedMs,
-                videoBytes: r.videoBytes,
-                videoDurationSec: r.videoDurationSec,
-                body_excerpt: r.body ? r.body.slice(0, 200) : undefined,
-            })),
-            null,
-            2
-        ),
-        '',
-        'gray'
-    );
-
-    // ------ Sugestão automática de DECISÃO ------
-    const sug = suggestDecision(results);
-    log(`\n🔎 Sugestão de DECISÃO: ${sug.decision}`, '', 'cyan');
-    log(`   ${sug.evidence}`, '', 'cyan');
-    for (const n of sug.notes) log(`   • ${n}`, '', 'cyan');
-
-    if (EMIT_DECISION) {
-        if (!apiKey) {
-            log(`\n--emit-decision requer ZAI_API_KEY (não dá p/ decidir sem coletar evidência).`, '', 'red');
-            process.exit(1);
-        }
-        if (results.some((r) => r.fatalMessage && !r.body && r.status == null)) {
-            log(`\n--emit-decision abortado: algum caso não conseguiu nem gerar MP4 (sem evidência HTTP).`, '', 'red');
-            log(`   Resolva o ambiente (ffmpeg) e rode de novo.`, '', 'red');
-            process.exit(1);
-        }
-        emitDecisionToFile(results);
-        log(`\n📋 Próximo passo: revisar o bloco DECISÃO gerado (entre BEGIN/END), commitar e fechar #1029.\n`, '', 'cyan');
-    } else {
-        log(`\n📋 Próximo passo: copiar a saída acima para o bloco DECISÃO no fim deste arquivo,`, '', 'cyan');
-        log(`   OU rodar com --emit-decision para auto-gravar (com ZAI_API_KEY setada).`, '', 'cyan');
-        log(`   Formato esperado (preencher manualmente após rodar):`, '', 'cyan');
-        log(`     Resultado: <SUPORTA|BLOQUEADO>`, '', 'cyan');
-        log(`     EVIDÊNCIA: status=…  body="…"`, '', 'cyan');
-        log(`     LIMITES OBSERVADOS (se SUPORTA): tamanho máx, formatos, fps/duração`, '', 'cyan');
-    }
-
-    // Export explícito p/ não deixar handles abertos (axios keep-alive) + sinaliza término limpo.
-    if (typeof (axios as unknown as { defaults?: { agent?: unknown } }).defaults?.agent !== 'undefined') {
-        // No-op: axios 1.x lida com cleanup via Agent keep-alive; esta linha só documenta a intenção.
-    }
-    process.exit(0);
 }
 
-main().catch((e: unknown) => {
-    const msg = e instanceof Error ? (e.stack ?? e.message) : String(e);
-    log(`\nFATAL: ${msg}\n`, '', 'red');
-    process.exit(1);
+main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    process.exitCode = 1;
 });
 
-/* =============================================================================
- * DECISÃO (preencher APÓS rodar o script — a saída acima é a evidência)
- *
- * Existem 3 formas de preencher este bloco (em ordem de preferência):
- *
- *   1. Auto: rode `npx tsx backend/scripts/test-video-glm.ts --emit-decision`
- *      com ZAI_API_KEY setada e a flag grava o resultado entre as âncoras
- *      BEGIN/END abaixo. O texto gerado é só uma SUGESTÃO — revisar antes
- *      de commitar.
- *
- *   2. Manual: copie o bloco entre BEGIN/END a partir do `🔎 Sugestão de
- *      DECISÃO` impresso no fim do script, ajuste o que precisar, commite.
- *
- *   3. Em outro pipeline (CI/admin): o operador que roda a spike cola o
- *      resultado aqui. Issue #1029 NÃO fecha sem este bloco preenchido.
- * =============================================================================
- *
- * Se BLOQUEADO — fechar o card #937 sem nova implementação.
- *   AÇÃO: comentar em #937 "limite do modelo: glm-4.6v na base Coding não
- *   aceita `video_url` (evidência: status XXX + mensagem acima)". Não abrir
- *   nenhuma sub-tarefa 2; vídeo segue não-suportado até a Z.AI expor suporte
- *   oficial. Adicionalmente, se o 4xx veio por ENCODING/FORMATO diferente,
- *   testar com `image_url` (data:video/mp4;base64,…) pode ser uma variação
- *   a explorar em spike futuro — manter decisão aqui.
- *
- * Se SUPORTA — anotar limites e abrir a sub-tarefa 2 (#937).
- *   LIMITES OBSERVADOS:
- *     - Tamanho máx por arquivo: ____ MB (qualquer 413 define isso)
- *     - Formatos: mp4 OK | webm NÃO | …
- *     - fps: até ____ | duração: até ____s
- *   NOTAS:
- *     - Se a base PaaS for diferente da Coding (config.zaiVisionBaseUrl),
- *       repetir o spike com ZAI_VISION_BASE_URL=https://api.z.ai/api/paas/v4
- *       para mapear se há diferença entre as bases.
- *
+/*
+ * DECISÃO registrada após execução real do spike.
  * === BEGIN spike-decision ===
- * (vazio até a 1ª execução — preencher via --emit-decision ou manualmente)
+ * Resultado: SUPORTA
+ * Base: https://api.z.ai/api/coding/paas/v4
+ * Modelo: glm-4.6v
+ * Caso 1 (data URL curta): status=200; mensagem=O vídeo mostra barras verticais coloridas com formas geométricas em movimento e um cronômetro no canto superior esquerdo.
+ * Caso 2 (URL pública): status=200; mensagem=O vídeo mostra uma animação de uma paisagem natural com um coelho saindo de sua toca, além de árvores, um riacho e um pássaro.
+ * Caso 3 (data URL maior): status=200; mensagem=O vídeo apresenta uma animação abstrata com listras coloridas verticais e elementos gráficos em movimento, criando um efeito visual glitch.
+ *
+ * Limites observados para a sub-tarefa 2 do #937:
+ * - MP4 data URL: aceito com 0,94 MiB, 15 fps e 3s.
+ * - MP4 por URL pública: aceito.
+ * - Tamanho: ao menos 8,47 MiB aceitos (30 fps, 12s); máximo exato não determinado.
+ * - Formato observado: MP4/H.264; WebM não foi testado.
  * === END spike-decision ===
- * =============================================================================
  */
