@@ -293,10 +293,18 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
     }
 };
 
+type AuthenticatedUser = {
+    role?: unknown;
+    roles?: unknown;
+    admin?: unknown;
+};
+
+function getAuthenticatedUser(req: Request): AuthenticatedUser {
+    return (req as Request & { user?: AuthenticatedUser }).user || {};
+}
+
 function getAuthenticatedRoles(req: Request): Set<string> {
-    const user = (req as Request & {
-        user?: { role?: unknown; roles?: unknown; admin?: unknown };
-    }).user;
+    const user = getAuthenticatedUser(req);
     if (!user || typeof user !== 'object') return new Set();
 
     const roles = new Set<string>();
@@ -309,6 +317,20 @@ function getAuthenticatedRoles(req: Request): Set<string> {
     if (user.admin === true || user.admin === 1 || user.admin === '1') roles.add('admin');
 
     return roles;
+}
+
+/**
+ * Helper puro para identificar se o usuário autenticado na requisição possui
+ * papel de admin. Aceita `role: 'admin'` (case-insensitive), `roles: ['admin']`
+ * (em array) ou a flag Dolibarr `admin: '1' | 1 | true`. NÃO consulta o
+ * Dolibarr novamente — usa apenas o snapshot já presente em `req.user` (cache
+ * populado por `requireDolibarrLogin`).
+ *
+ * Útil em guards condicionais dentro de handlers (ex.: liberar `skipApproval`
+ * só para admin sem precisar montar um middleware separado).
+ */
+export function isAdmin(req: Request): boolean {
+    return getAuthenticatedRoles(req).has('admin');
 }
 
 export function requireRole(role: string | string[]) {

@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
-import { requireDolibarrLogin, requireAdmin } from '../middleware/authMiddleware';
+import { requireDolibarrLogin, requireAdmin, isAdmin } from '../middleware/authMiddleware';
 import { validateBody } from '../middleware/validation';
 import { created, fail, ok, success } from '../utils/apiResponse';
 import { asyncHandler } from '../utils/asyncHandler';
@@ -26,7 +26,6 @@ type DocumentUser = {
     id?: string | number;
     login?: string;
     role?: string;
-    roles?: unknown;
     admin?: string | number | boolean;
 };
 
@@ -40,20 +39,10 @@ function getRequestUser(req: Request): DocumentUser {
     return (req as Request & { user?: DocumentUser }).user || {};
 }
 
-export function isAdmin(req: Request): boolean {
-    const user = getRequestUser(req);
-    const roles = Array.isArray(user.roles) ? user.roles : [];
-    return user.role?.trim().toLowerCase() === 'admin' ||
-        roles.some((role) => typeof role === 'string' && role.trim().toLowerCase() === 'admin') ||
-        user.admin === '1' ||
-        user.admin === 1 ||
-        user.admin === true;
-}
-
 function auditSkipApproval(req: Request, fields: DocumentAuditFields, allowed: boolean): void {
     const user = getRequestUser(req);
     const userId = String(user.id || user.login || 'unknown');
-    const userRole = isAdmin(req) ? 'admin' : user.role || 'user';
+    const userRole = isAdmin(req) ? 'admin' : (typeof user.role === 'string' ? user.role : 'user');
     const timestamp = new Date().toISOString();
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
 

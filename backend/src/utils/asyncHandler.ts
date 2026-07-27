@@ -25,6 +25,19 @@ export type AsyncRequestHandler<
 ) => Promise<unknown> | void;
 
 /**
+ * Re-exports utilitários para que handlers possam anotar o body/query
+ * validados via generics de `asyncHandler` sem precisar montar o tipo
+ * do zero. Exemplo:
+ *
+ *   asyncHandler<DefaultParams, unknown, z.infer<typeof MySchema>>(
+ *     async (req, res) => {
+ *       const { field } = req.body; // tipado, sem `as`
+ *     }
+ *   );
+ */
+export type { DefaultParams, DefaultQuery };
+
+/**
  * Wrapper para handlers assíncronos do Express que captura rejeições
  * (e qualquer erro lançado via Promise) e as encaminha automaticamente
  * para `next(error)`. Isso evita que promises rejeitadas em handlers

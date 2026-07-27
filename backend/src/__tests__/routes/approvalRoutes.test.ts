@@ -45,14 +45,16 @@ vi.mock('../../services/approvalService', () => ({
     ActionStatus: {},
 }));
 
+const mockLogger = vi.hoisted(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+}));
+
 vi.mock('../../utils/logger', () => ({
-    createLogger: () => ({
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-        fatal: vi.fn(),
-    }),
+    createLogger: () => mockLogger,
 }));
 
 import approvalRoutes from '../../routes/approvalRoutes';
@@ -462,9 +464,11 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
+            // Rejeição COM motivo não deve gerar log de auditoria de ausência.
+            expect(mockLogger.warn).not.toHaveBeenCalled();
         });
 
-        it('returns 200 when an admin rejects without a reason', async () => {
+        it('returns 200 when an admin rejects without a reason and logs an audit warning', async () => {
             mockUser.current = { id: 'admin-1', login: 'boss', role: 'admin', admin: '0' };
             mockApprovalService.rejectAction.mockResolvedValue({
                 success: true,
@@ -475,6 +479,30 @@ describe('approvalRoutes', () => {
                 .send({});
 
             expect(res.status).toBe(200);
+            // Rejeição SEM motivo: rota emite log.warn com actionId + rejectedBy p/ investigação.
+            // `rejectedBy` cai para o login quando presente (mais legível no log do que o id).
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.stringContaining('actionId=action-123')
+            );
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.stringContaining('by=boss')
+            );
+        });
+
+        it('treats whitespace-only reasons as missing for the audit log', async () => {
+            mockUser.current = { id: 'admin-1', login: 'boss', role: 'admin', admin: '0' };
+            mockApprovalService.rejectAction.mockResolvedValue({
+                success: true,
+            });
+
+            const res = await request(app)
+                .post('/api/approvals/action-123/reject')
+                .send({ reason: '   ' });
+
+            expect(res.status).toBe(200);
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.stringContaining('actionId=action-123')
+            );
         });
 
         it('returns 403 when a non-admin user tries to reject (#1544)', async () => {

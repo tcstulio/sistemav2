@@ -24,6 +24,12 @@ const mockRequireAdmin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) 
     next();
 }));
 
+const mockIsAdmin = vi.hoisted(() => vi.fn((req: any) => {
+    const user = req?.user || {};
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+    return user.role === 'admin' || roles.includes('admin') || user.admin === '1' || user.admin === 1 || user.admin === true;
+}));
+
 const mockAdminAuditService = vi.hoisted(() => ({
     record: vi.fn(),
 }));
@@ -38,6 +44,7 @@ const mockDocumentService = vi.hoisted(() => ({
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
     requireAdmin: mockRequireAdmin,
+    isAdmin: mockIsAdmin,
 }));
 
 vi.mock('../../services/adminAuditService', () => ({
@@ -189,6 +196,10 @@ describe('documentRoutes', () => {
                     message: 'Access Denied: Insufficient role.',
                 },
             });
+            // A guarda `requireAdminForSkipApproval` consulta isAdmin(req) ANTES do
+            // requireAdmin real, e usa o resultado para classificar o audit log
+            // (allowed → 'document.skip-approval' / 'document.skip-approval.denied').
+            expect(mockIsAdmin).toHaveBeenCalled();
             expect(mockAdminAuditService.record).toHaveBeenCalledWith(expect.objectContaining({
                 action: 'document.skip-approval.denied',
                 userId: 'user-1',

@@ -12,7 +12,9 @@ import { validateQuery, validateBody, validateParams } from '../middleware/valid
 import { created, fail, ok, success } from '../utils/apiResponse';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
+import { createLogger } from '../utils/logger';
 
+const log = createLogger('ApprovalRoutes');
 const router = Router();
 
 router.get('/*', requireDolibarrLogin);
@@ -318,6 +320,15 @@ router.post(
         const { reason } = req.body as z.infer<typeof RejectionSchema>;
         const user = getRequestUser(req);
         const rejectedBy = String(user?.login || user?.id || 'unknown');
+
+        // Auditoria: rejeição SEM motivo compromete a rastreabilidade da decisão.
+        // O schema permite reason opcional, mas em produção a UI sempre envia.
+        // Log para detectar fluxos sem motivo (ex.: integrações, scripts de limpeza).
+        if (typeof reason !== 'string' || !reason.trim()) {
+            log.warn(
+                `Rejeição sem motivo: actionId=${id} by=${rejectedBy} — investigando origem do request`
+            );
+        }
 
         const result = await approvalService.rejectAction(id, rejectedBy, reason);
         if (!result.success) {
