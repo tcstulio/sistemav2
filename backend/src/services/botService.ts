@@ -417,6 +417,23 @@ class BotService {
                 }
             }
 
+            // IMAGEM recebida → passa pro generateReply (visão/OCR via glm-4.6v em describeImage).
+            // Best-effort: se a visão não estiver configurada/sem saldo, o modelo responde sem a imagem.
+            let incomingImages: string[] = [];
+            if (message.type === 'image' && message.hasMedia) {
+                try {
+                    const media = await messageService.getMessageMedia(sessionId, message.id);
+                    if (media && media.data) {
+                        const b64 = Buffer.isBuffer(media.data) ? media.data.toString('base64') : String(media.data);
+                        incomingImages = [`data:${media.contentType || 'image/jpeg'};base64,${b64}`];
+                        if (!body || body.length < 2) body = '[imagem enviada]'; // sem legenda → corpo mínimo p/ passar o filtro e o buffer
+                        log.info('Image message detected → passando para a visão.');
+                    }
+                } catch (e: any) {
+                    log.warn(`Falha ao buscar imagem recebida: ${e.message}`);
+                }
+            }
+
             if (!body || body.length < 2) return; // Ignore empty/short messages
 
             // #1501 — canal WhatsApp NUNCA é admin (ver comentário em getWhatsAppBotToolsPrompt
@@ -675,7 +692,7 @@ class BotService {
                 }
             }
             let replyResult = await retryWithBackoff(
-                () => runWithToolContext(toolCtx, () => aiService.generateReply(history, context)),
+                () => runWithToolContext(toolCtx, () => aiService.generateReply(history, context, incomingImages.length ? incomingImages : undefined)),
                 3,
                 1000
             );
