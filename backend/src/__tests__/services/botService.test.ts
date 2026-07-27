@@ -242,20 +242,24 @@ describe('BotService', () => {
             expect(aiService.generateReply).not.toHaveBeenCalled();
         });
 
-        it('skip-if-covered: rajada coalescida (2 enfileiradas juntas) → o 2º run pula o LLM', async () => {
-            (messageService.getMessages as any).mockResolvedValue([
-                { fromMe: false, body: 'q1', id: 'q1', timestamp: nowSec() },
-                { fromMe: false, body: 'q2', id: 'q2', timestamp: nowSec() },
-            ]);
-            (aiService.generateReply as any).mockResolvedValue('resposta coalescida');
-            const p1 = botService.processMessage(createMessage({ body: 'q1', id: 'q1' }));
-            const p2 = botService.processMessage(createMessage({ body: 'q2', id: 'q2' }));
-            await Promise.all([p1, p2]);
-            expect(aiService.generateReply).toHaveBeenCalledTimes(1); // q2 coberta por q1
-            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+        it('buffer: a RESPOSTA do bot entra no histórico da PRÓXIMA mensagem → não re-responde (mata o dump)', async () => {
+            // ORÁCULO DA CAUSA-RAIZ: o getMessages do WhatsApp não retorna as respostas recém-enviadas
+            // pelo bot; o buffer em memória sim. A 2ª chamada ao LLM DEVE ver a resposta da 1ª.
+            (messageService.getMessages as any).mockResolvedValue([]); // cold start vazio
+            (aiService.generateReply as any)
+                .mockResolvedValueOnce('sou o Marciano')
+                .mockResolvedValueOnce('eventos: X e Y');
+            await botService.processMessage(createMessage({ body: 'quem é voce?', id: 'q1' }));
+            await botService.processMessage(createMessage({ body: 'quais os eventos?', id: 'q2' }));
+            const hist2 = (aiService.generateReply as any).mock.calls[1][0];
+            expect(hist2).toEqual(expect.arrayContaining([
+                expect.objectContaining({ role: 'user', parts: 'quem é voce?' }),
+                expect.objectContaining({ role: 'model', parts: 'sou o Marciano' }),   // <- faltava no código antigo
+                expect.objectContaining({ role: 'user', parts: 'quais os eventos?' }),
+            ]));
         });
 
-        it('skip-if-covered NÃO aplica se o 1º run falhou no envio: o 2º executa (não é engolido)', async () => {
+        it('run que falhou no envio NÃO bloqueia a próxima mensagem do chat', async () => {
             (messageService.getMessages as any).mockResolvedValue([
                 { fromMe: false, body: 'q1', id: 'q1', timestamp: nowSec() },
                 { fromMe: false, body: 'q2', id: 'q2', timestamp: nowSec() },
@@ -278,17 +282,16 @@ describe('BotService', () => {
             ]));
         });
 
-        it('/reset: mensagem no MESMO segundo do reset NÃO é filtrada (granularidade em segundos)', async () => {
+        it('/reset limpa o buffer: mensagens antes do reset NÃO entram no histórico seguinte', async () => {
             const chatId = '5511999999999@c.us';
-            resetChatHistory(chatId);
-            const sameSec = nowSec();
-            (messageService.getMessages as any).mockResolvedValue([
-                { fromMe: false, body: 'msg no mesmo segundo do reset', id: 'h1', timestamp: sameSec },
-            ]);
-            (aiService.generateReply as any).mockResolvedValue('R');
-            await botService.processMessage(createMessage({ body: 'pergunta', id: 'q2', timestamp: sameSec + 1 }));
-            const historyArg = (aiService.generateReply as any).mock.calls[0][0];
-            expect(historyArg.some((h: any) => String(h.parts).includes('mesmo segundo'))).toBe(true);
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockResolvedValue('ok');
+            await botService.processMessage(createMessage({ body: 'primeira pergunta', id: 'q1' }));
+            resetChatHistory(chatId); // /reset zera a conversa em memória
+            await botService.processMessage(createMessage({ body: 'depois do reset', id: 'q2' }));
+            const hist2 = (aiService.generateReply as any).mock.calls[1][0];
+            expect(hist2.some((h: any) => String(h.parts).includes('primeira pergunta'))).toBe(false);
+            expect(hist2.some((h: any) => String(h.parts).includes('depois do reset'))).toBe(true);
         });
 
         it('handles /status command', async () => {

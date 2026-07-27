@@ -286,9 +286,13 @@ class BotService {
     // degenerados + consolidação do histórico). Chaves distintas por chat NÃO se bloqueiam.
     private chatChains = new Map<string, Promise<void>>();
     private chatPending = new Map<string, number>();
-    // ids de user cobertos pela ÚLTIMA resposta OK de cada chat (coalescência de rajada): um run
-    // enfileirado cujo id já foi respondido pula o LLM (evita turno degenerado → dump de identidade).
-    private coveredMsgIds = new Map<string, Set<string>>();
+    // Conversa POR CHAT em memória (turnos user+model em ordem, cap 40). É a FONTE do histórico
+    // enviada ao LLM — o getMessages do WhatsApp NÃO retorna as respostas que o bot ACABOU de enviar
+    // (atrasam/somem no fetch), então o histórico ficava só com as PERGUNTAS acumuladas e o modelo
+    // re-respondia TODAS (o "dump de identidade", PROVADO por captura do input real). O buffer
+    // registra pergunta→resposta (serializado por chat, sem corrida) → o modelo vê a conversa correta.
+    private chatTurns = new Map<string, { role: 'user' | 'model'; parts: string }[]>();
+    private chatResetApplied = new Map<string, number>();  // resetTime já aplicado (limpa o buffer no /reset)
 
     /**
      * ENTRADA (síncrona): guardas baratas (fromMe/dedup/idade) + enfileira na corrente do chat.
@@ -325,7 +329,7 @@ class BotService {
                 const n = (this.chatPending.get(key) || 1) - 1;
                 if (n <= 0) {
                     this.chatPending.delete(key);
-                    this.coveredMsgIds.delete(key);
+                    // chatTurns NÃO é apagado aqui: é a conversa, persiste entre mensagens (limpo só no /reset).
                     if (this.chatChains.get(key) === link) this.chatChains.delete(key);
                 } else {
                     this.chatPending.set(key, n);
@@ -335,11 +339,12 @@ class BotService {
         return link;
     }
 
-    /** SÓ TESTES: zera as filas/coberturas por chat (Maps de processo). */
+    /** SÓ TESTES: zera as filas + o buffer de conversa por chat (Maps de processo). */
     __resetChatQueuesForTests(): void {
         this.chatChains.clear();
         this.chatPending.clear();
-        this.coveredMsgIds.clear();
+        this.chatTurns.clear();
+        this.chatResetApplied.clear();
     }
 
     /** Envolve runOne num watchdog: se um turno pendurar > 5min, libera a fila (não trava o chat). */
@@ -525,55 +530,45 @@ class BotService {
                 return;
             }
 
-            // skip-if-covered: numa rajada, o 1º run buscou e respondeu TODAS as msgs pendentes
-            // (o fetch + a consolidação coalescem numa resposta só). Os runs enfileirados cujo id
-            // já foi coberto pulam o LLM — evita turno degenerado (→ dump de identidade) e resposta
-            // repetida. Comandos/confirmações/fluxos já retornaram acima; aqui só chega msg p/ LLM.
-            if (this.coveredMsgIds.get(key)?.has(msgId)) {
-                log.debug(`Mensagem ${msgId.slice(0, 16)}… já coberta por resposta anterior (rajada coalescida) — pulando LLM.`);
-                return;
-            }
-
             log.info(`Generating Auto-Reply for ${chatId}...`);
 
             // Detect if this is a group chat
             const isGroup = chatId.endsWith('@g.us');
 
-            // 5. Generate AI Reply with configurable history limit
+            // 5. Histórico da conversa — FONTE = buffer em memória por chat (chatTurns), NÃO o
+            // getMessages (que não retorna as respostas recém-enviadas pelo bot; ver comentário do
+            // campo). Serializado por chat → sem corrida. O modelo vê pergunta→resposta→nova pergunta
+            // e responde só a última — mata o re-despejo de identidade na raiz.
             const historyLimit = sessionSettings.historyLimit || 30;
-            let history: any[] = [];
-            // ids de user cobertos por ESTE run → marcados como respondidos após envio OK (coalescência).
-            let coveredThisRun = new Set<string>([msgId]);
-            try {
-                const rawHistory = await messageService.getMessages(sessionId, chatId, historyLimit);
-                const resetTime = chatResetTimestamps.get(chatId);
-                // Granularidade: o timestamp da msg é em SEGUNDOS (arredondado p/ baixo); resetTime em ms.
-                // Comparar em segundos evita filtrar indevidamente a msg do MESMO segundo do /reset.
-                const resetSec = resetTime ? Math.floor(resetTime / 1000) : 0;
-                const filteredRawHistory = resetTime
-                    ? rawHistory.filter((m: any) => Number(m.timestamp) >= resetSec)
-                    : rawHistory;
-                // #1658 — `buildAgentHistory` aplica o filtro de notificações automáticas, placeholder
-                // de mídia, prefix de sender em grupo e a consolidação de turnos consecutivos.
-                history = buildAgentHistory(filteredRawHistory, isGroup);
-                // Garantia-de-inclusão: se o fetch NÃO trouxe a mensagem corrente (falha/race), o LLM
-                // rodaria SEM a pergunta → turno degenerado (dump de identidade). Empurra o body atual.
-                const rawUserIds: string[] = (rawHistory || []).filter((m: any) => !m.fromMe).map((m: any) => m.id).filter(Boolean);
-                coveredThisRun = new Set<string>([...rawUserIds, msgId]);
-                const isTranscribedAudio = message.type === 'ptt' || message.type === 'audio';
-                // Empurra a pergunta atual SÓ se o histórico construído ainda não termina com ela
-                // (evita duplicar quando o fetch já trouxe a msg corrente). Por CONTEÚDO, não por id:
-                // robusto a fetch sem id. Áudio sempre empurra (o histórico só tem "[Mídia recebida]").
-                const lastTurn = history[history.length - 1];
-                const alreadyLast = !!lastTurn && lastTurn.role === 'user' && String(lastTurn.parts).includes(body);
-                if (!alreadyLast || isTranscribedAudio) {
-                    history.push({ role: 'user', parts: body });
-                }
-            } catch (e) {
-                // Fetch falhou: NÃO rode sem a pergunta (viraria turno degenerado). Usa a msg atual.
-                log.warn(`Failed to fetch history for ${chatId} — usando só a mensagem atual.`);
-                history = [{ role: 'user', parts: body }];
+            const resetTime = chatResetTimestamps.get(chatId) || 0;
+            let turns = this.chatTurns.get(key);
+            // /reset novo → zera o buffer daquele chat.
+            if (resetTime && (this.chatResetApplied.get(key) || 0) < resetTime) {
+                turns = [];
+                this.chatTurns.set(key, turns);
+                this.chatResetApplied.set(key, resetTime);
             }
+            // Cold start (buffer vazio, ex.: pós-restart): semeia UMA vez do getMessages p/ ter o
+            // contexto anterior. Best-effort; se falhar, começa vazio.
+            if (!turns) {
+                turns = [];
+                try {
+                    const rawHistory = await messageService.getMessages(sessionId, chatId, historyLimit);
+                    const resetSec = resetTime ? Math.floor(resetTime / 1000) : 0;
+                    const filtered = resetTime ? rawHistory.filter((m: any) => Number(m.timestamp) >= resetSec) : rawHistory;
+                    turns = buildAgentHistory(filtered, isGroup);
+                } catch { turns = []; }
+                this.chatTurns.set(key, turns);
+            }
+            // Registra a pergunta atual (não duplica se o seed já a trouxe como último turno).
+            const isTranscribedAudio = message.type === 'ptt' || message.type === 'audio';
+            const lastBuf = turns[turns.length - 1];
+            const alreadyLast = !!lastBuf && lastBuf.role === 'user' && String(lastBuf.parts).includes(body);
+            if (!alreadyLast || isTranscribedAudio) {
+                turns.push({ role: 'user', parts: body });
+            }
+            if (turns.length > 40) turns.splice(0, turns.length - 40); // cap de memória por chat
+            const history: any[] = turns.slice(-historyLimit);
 
             // 6. Resolve Signature & Context (Session/Account Level)
             let context = sessionSettings.autoReplyContext || "Você é um assistente virtual útil.";
@@ -683,9 +678,11 @@ class BotService {
 
             await messageService.sendText(sessionId, chatId, finalMessage);
             log.info(`Auto-reply sent to ${chatId}`);
-            // Marca as msgs de user cobertas por ESTA resposta (a rajada foi coalescida num turno).
-            // Só após envio OK — um run que falhou NÃO pode marcar as irmãs como respondidas.
-            this.coveredMsgIds.set(key, coveredThisRun);
+            // Registra a RESPOSTA do bot no buffer (SÓ após envio OK). É ISTO que faltava no
+            // getMessages e causava o re-despejo: agora a conversa em memória tem pergunta→resposta,
+            // então a próxima mensagem vê o histórico correto e não re-responde as anteriores.
+            turns.push({ role: 'model', parts: replyText });
+            if (turns.length > 40) turns.splice(0, turns.length - 40);
 
             // [ANTIGRAVITY] Update Group Stats (Last Replied / Reset Burst)
             if (chatId.endsWith('@g.us')) {
