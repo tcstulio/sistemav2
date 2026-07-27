@@ -136,8 +136,8 @@ const HistoryQuerySchema = z
     .object({
         type: z.enum(ACTION_TYPES).optional(),
         status: z.enum(ACTION_STATUSES).optional(),
-        startDate: z.string().regex(DATE_REGEX, 'startDate deve estar no formato YYYY-MM-DD').optional(),
-        endDate: z.string().regex(DATE_REGEX, 'endDate deve estar no formato YYYY-MM-DD').optional(),
+        dateFrom: z.string().regex(DATE_REGEX, 'dateFrom deve estar no formato YYYY-MM-DD').optional(),
+        dateTo: z.string().regex(DATE_REGEX, 'dateTo deve estar no formato YYYY-MM-DD').optional(),
         limit: z
             .string()
             .regex(DIGITS_REGEX, 'limit deve ser numérico')
@@ -184,13 +184,13 @@ router.get(
     '/history',
     validateQuery(HistoryQuerySchema),
     asyncHandler(async (req, res) => {
-        const { type, status, startDate, endDate, limit } = req.query as unknown as z.infer<typeof HistoryQuerySchema>;
+        const { type, status, dateFrom, dateTo, limit } = req.query as unknown as z.infer<typeof HistoryQuerySchema>;
 
         const history = await approvalService.getActionHistory({
             type: type as ActionType,
             status: status as ActionStatus,
-            startDate: startDate ? new Date(startDate) : undefined,
-            endDate: endDate ? new Date(endDate) : undefined,
+            dateFrom: dateFrom ? new Date(dateFrom) : undefined,
+            dateTo: dateTo ? new Date(dateTo) : undefined,
             limit: limit || 100,
         });
 

@@ -161,15 +161,15 @@ describe('approvalRoutes', () => {
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
-        it('returns 400 for malformed startDate', async () => {
-            const res = await request(app).get('/api/approvals/history?startDate=not-a-date');
+        it('returns 400 for malformed dateFrom', async () => {
+            const res = await request(app).get('/api/approvals/history?dateFrom=not-a-date');
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
-        it('returns 400 for malformed endDate', async () => {
-            const res = await request(app).get('/api/approvals/history?endDate=2025/01/01');
+        it('returns 400 for malformed dateTo', async () => {
+            const res = await request(app).get('/api/approvals/history?dateTo=2025/01/01');
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');

@@ -586,25 +586,25 @@ describe('approvalService', () => {
             expect(history).toHaveLength(2);
         });
 
-        it('filters by startDate', async () => {
+        it('filters by dateFrom', async () => {
             const action = await approvalService.createPendingAction({
                 type: 'consulta_saldo', description: 'd', requestedBy: 'u', payload: {},
             });
             action.requestedAt = new Date('2024-01-01');
             await approvalService.rejectAction(action.id, 'admin');
             const future = new Date('2025-01-01');
-            const history = await approvalService.getActionHistory({ startDate: future });
+            const history = await approvalService.getActionHistory({ dateFrom: future });
             expect(history).toHaveLength(0);
         });
 
-        it('filters by endDate', async () => {
+        it('filters by dateTo', async () => {
             const action = await approvalService.createPendingAction({
                 type: 'consulta_saldo', description: 'd', requestedBy: 'u', payload: {},
             });
             action.requestedAt = new Date('2025-01-01');
             await approvalService.rejectAction(action.id, 'admin');
             const past = new Date('2024-01-01');
-            const history = await approvalService.getActionHistory({ endDate: past });
+            const history = await approvalService.getActionHistory({ dateTo: past });
             expect(history).toHaveLength(0);
         });
 

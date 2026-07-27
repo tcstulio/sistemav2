@@ -345,8 +345,8 @@ export class ApprovalService {
      * Obtém histórico de ações com filtros
      */
     async getActionHistory(filters?: {
-        startDate?: Date;
-        endDate?: Date;
+        dateFrom?: Date;
+        dateTo?: Date;
         type?: ActionType;
         status?: ActionStatus;
         limit?: number;
@@ -355,11 +355,11 @@ export class ApprovalService {
         // Histórico = ações terminais (não-pendentes).
         let history = Array.from(this.actions.values()).filter(a => a.status !== 'pending');
 
-        if (filters?.startDate) {
-            history = history.filter(a => new Date(a.requestedAt) >= filters.startDate!);
+        if (filters?.dateFrom) {
+            history = history.filter(a => new Date(a.requestedAt) >= filters.dateFrom!);
         }
-        if (filters?.endDate) {
-            history = history.filter(a => new Date(a.requestedAt) <= filters.endDate!);
+        if (filters?.dateTo) {
+            history = history.filter(a => new Date(a.requestedAt) <= filters.dateTo!);
         }
         if (filters?.type) {
             history = history.filter(a => a.type === filters.type);
