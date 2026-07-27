@@ -583,16 +583,16 @@ class BotService {
                 this.chatTurns.set(key, turns);
                 this.chatResetApplied.set(key, resetTime);
             }
-            // Cold start (buffer vazio, ex.: pós-restart): semeia UMA vez do getMessages p/ ter o
-            // contexto anterior. Best-effort; se falhar, começa vazio.
+            // Cold start (buffer vazio, ex.: pós-restart): começa VAZIO — NÃO semeia do getMessages.
+            // O getMessages é justamente a fonte quebrada (não retorna as respostas recém-enviadas do
+            // bot); semear dele re-introduzia o re-despejo de identidade a cada restart (o buffer
+            // esvazia + o marcador do /reset é em memória → o seed trazia perguntas acumuladas SEM as
+            // respostas → o modelo re-respondia todas). O buffer passa a ser 100% em-processo/confiável.
+            // Custo honesto: após um restart o bot "esquece" o contexto anterior (aceitável; muito
+            // melhor que re-despejar). Follow-up p/ recuperar contexto entre restarts: PERSISTIR o
+            // buffer em disco (não re-semear da fonte não-confiável).
             if (!turns) {
                 turns = [];
-                try {
-                    const rawHistory = await messageService.getMessages(sessionId, chatId, historyLimit);
-                    const resetSec = resetTime ? Math.floor(resetTime / 1000) : 0;
-                    const filtered = resetTime ? rawHistory.filter((m: any) => Number(m.timestamp) >= resetSec) : rawHistory;
-                    turns = buildAgentHistory(filtered, isGroup);
-                } catch { turns = []; }
                 this.chatTurns.set(key, turns);
             }
             // Registra a pergunta atual (não duplica se o seed já a trouxe como último turno).
