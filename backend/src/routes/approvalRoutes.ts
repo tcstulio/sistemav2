@@ -6,9 +6,16 @@
 
 import { Router, Request } from 'express';
 import { z } from 'zod';
-import { approvalService, ActionType, ActionStatus } from '../services/approvalService';
+import { approvalService } from '../services/approvalService';
 import { requireDolibarrLogin, requireAdmin } from '../middleware/authMiddleware';
-import { validateQuery, validateBody, validateParams } from '../middleware/validation';
+import {
+    validateQuery,
+    validateBody,
+    validateParams,
+    validatedBody,
+    validatedParams,
+    validatedQuery,
+} from '../middleware/validation';
 import { created, fail, ok, success } from '../utils/apiResponse';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
@@ -175,11 +182,12 @@ router.get(
     '/pending',
     validateQuery(PendingQuerySchema),
     asyncHandler(async (req, res) => {
-        const { type, banco } = req.query as z.infer<typeof PendingQuerySchema>;
+        const query = validatedQuery(req, PendingQuerySchema) ?? {};
+        const { type, banco } = query;
 
         const actions = await approvalService.getPendingActions({
-            type: type as ActionType,
-            banco: banco as 'inter' | 'itau',
+            type,
+            banco,
         });
 
         return ok(res, actions, { count: actions.length });
@@ -194,11 +202,12 @@ router.get(
     '/history',
     validateQuery(HistoryQuerySchema),
     asyncHandler(async (req, res) => {
-        const { type, status, dateFrom, dateTo, limit } = req.query as unknown as z.infer<typeof HistoryQuerySchema>;
+        const query = validatedQuery(req, HistoryQuerySchema) ?? {};
+        const { type, status, dateFrom, dateTo, limit } = query;
 
         const history = await approvalService.getActionHistory({
-            type: type as ActionType,
-            status: status as ActionStatus,
+            type,
+            status,
             dateFrom: dateFrom ? new Date(dateFrom) : undefined,
             dateTo: dateTo ? new Date(dateTo) : undefined,
             limit: limit || 100,
@@ -230,7 +239,10 @@ router.get(
     validateQuery(EmptyQuerySchema),
     validateParams(IdParamSchema),
     asyncHandler(async (req, res) => {
-        const { id } = req.params as z.infer<typeof IdParamSchema>;
+        const { id } = validatedParams(req, IdParamSchema) ?? ({} as { id: string });
+        if (!id) {
+            return fail(res, 'BAD_REQUEST', 'id é obrigatório', 400);
+        }
         const action = await approvalService.getActionById(id);
 
         if (!action) {
@@ -249,7 +261,10 @@ router.post(
     '/',
     validateBody(CreateActionSchema),
     asyncHandler(async (req, res) => {
-        const data = req.body as z.infer<typeof CreateActionSchema>;
+        const data = validatedBody(req, CreateActionSchema);
+        if (!data) {
+            throw new AppError(400, 'BAD_REQUEST', 'Corpo da requisição inválido');
+        }
         const user = getRequestUser(req);
 
         const action = await approvalService.createPendingAction({
@@ -273,7 +288,11 @@ router.post(
     requireAdmin,
     validateBody(BulkApprovalSchema),
     asyncHandler(async (req, res) => {
-        const { actionIds } = req.body as z.infer<typeof BulkApprovalSchema>;
+        const data = validatedBody(req, BulkApprovalSchema);
+        if (!data) {
+            throw new AppError(400, 'BAD_REQUEST', 'Corpo da requisição inválido');
+        }
+        const { actionIds } = data;
         const user = getRequestUser(req);
         const approvedBy = String(user?.login || user?.id || 'unknown');
 
@@ -293,7 +312,8 @@ router.post(
     validateParams(IdParamSchema),
     validateBody(ApprovalDecisionSchema),
     asyncHandler(async (req, res) => {
-        const { id } = req.params as z.infer<typeof IdParamSchema>;
+        const params = validatedParams(req, IdParamSchema) ?? ({} as { id: string });
+        const { id } = params;
         const user = getRequestUser(req);
         const approvedBy = String(user?.login || user?.id || 'unknown');
 
@@ -316,8 +336,10 @@ router.post(
     validateParams(IdParamSchema),
     validateBody(RejectionSchema),
     asyncHandler(async (req, res) => {
-        const { id } = req.params as z.infer<typeof IdParamSchema>;
-        const { reason } = req.body as z.infer<typeof RejectionSchema>;
+        const params = validatedParams(req, IdParamSchema) ?? ({} as { id: string });
+        const { id } = params;
+        const data = validatedBody(req, RejectionSchema) ?? {};
+        const { reason } = data;
         const user = getRequestUser(req);
         const rejectedBy = String(user?.login || user?.id || 'unknown');
 

@@ -4,6 +4,9 @@ import {
     validateBody,
     validateQuery,
     validateParams,
+    validatedBody,
+    validatedQuery,
+    validatedParams,
     PagamentoBoletoSchema,
     PixCobrancaSchema,
     PixPagamentoSchema,
@@ -695,5 +698,91 @@ describe('BoletoWebhookSchema', () => {
             valorTotalRecebimento: 100,
         };
         expect(() => BoletoWebhookSchema.parse(data)).not.toThrow();
+    });
+});
+
+describe('req.validated bag (#1544)', () => {
+    const BodySchema = z.object({ name: z.string(), count: z.number().int().positive() });
+    const QuerySchema = z.object({ page: z.string().transform(Number) });
+    const ParamsSchema = z.object({ id: z.string().min(1) });
+
+    it('validateBody attaches parsed body to req.validated.body', () => {
+        const req: any = { body: { name: 'Alice', count: 7 } };
+        const res = mockRes();
+        const next = mockNext();
+
+        validateBody(BodySchema)(req, res, next);
+
+        expect(next).toHaveBeenCalledWith();
+        expect(req.validated).toBeDefined();
+        expect(req.validated.body).toEqual({ name: 'Alice', count: 7 });
+        // validatedBody helper devolve o mesmo valor (e a tipagem é o z.infer)
+        expect(validatedBody(req, BodySchema)).toEqual({ name: 'Alice', count: 7 });
+    });
+
+    it('validateQuery attaches parsed query to req.validated.query (com transform)', () => {
+        const req: any = { query: { page: '3' } };
+        const res = mockRes();
+        const next = mockNext();
+
+        validateQuery(QuerySchema)(req, res, next);
+
+        expect(next).toHaveBeenCalledWith();
+        expect(req.validated.query).toEqual({ page: 3 });
+        expect(validatedQuery(req, QuerySchema)).toEqual({ page: 3 });
+    });
+
+    it('validateParams attaches parsed params to req.validated.params', () => {
+        const req: any = { params: { id: 'abc-123' } };
+        const res = mockRes();
+        const next = mockNext();
+
+        validateParams(ParamsSchema)(req, res, next);
+
+        expect(next).toHaveBeenCalledWith();
+        expect(req.validated.params).toEqual({ id: 'abc-123' });
+        expect(validatedParams(req, ParamsSchema)).toEqual({ id: 'abc-123' });
+    });
+
+    it('combines os 3 bags quando validateBody/Query/Params rodam em sequência', () => {
+        const req: any = {
+            body: { name: 'Bob', count: 1 },
+            query: { page: '2' },
+            params: { id: 'x' },
+        };
+        const res = mockRes();
+        const next = mockNext();
+
+        validateBody(BodySchema)(req, res, next);
+        validateQuery(QuerySchema)(req, res, next);
+        validateParams(ParamsSchema)(req, res, next);
+
+        expect(req.validated).toEqual({
+            body: { name: 'Bob', count: 1 },
+            query: { page: 2 },
+            params: { id: 'x' },
+        });
+    });
+
+    it('NÃO preenche req.validated quando a validação falha', () => {
+        const req: any = { body: { name: 123 } };
+        const res = mockRes();
+        const next = mockNext();
+
+        validateBody(BodySchema)(req, res, next);
+
+        expect(next).toHaveBeenCalledTimes(1);
+        const err = next.mock.calls[0][0];
+        expect(err.code).toBe('VALIDATION_ERROR');
+        // req.validated não foi tocado neste caminho de erro
+        expect(req.validated).toBeUndefined();
+    });
+
+    it('validatedBody/Query/Params retornam undefined quando o middleware não rodou', () => {
+        const req: any = {};
+
+        expect(validatedBody(req, BodySchema)).toBeUndefined();
+        expect(validatedQuery(req, QuerySchema)).toBeUndefined();
+        expect(validatedParams(req, ParamsSchema)).toBeUndefined();
     });
 });

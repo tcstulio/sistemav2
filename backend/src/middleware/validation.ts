@@ -8,11 +8,56 @@
  * garante: (1) envelope padronizado via `fail(...)`, (2) sanitização
  * consistente das mensagens em produção, (3) log centralizado no
  * errorHandler.
+ *
+ * Os middlewares (`validateBody`/`validateQuery`/`validateParams`) gravam
+ * os dados parseados em DUAS superfícies:
+ *
+ *  1. `req.body` / `req.query` / `req.params` — mantém a API Express
+ *     compatível (handlers legados continuam funcionando).
+ *  2. `req.validated.body` / `req.validated.query` / `req.validated.params`
+ *     — superfície paralela usada em handlers novos (issue #1544) para
+ *     evitar `req.body as z.infer<...>`: o cast bypassa o type checker
+ *     e, se o middleware for removido ou alterado, o TypeScript não
+ *     detecta a incompatibilidade. Com `req.validated`, o tipo real é
+ *     carregado pelo `z.infer<typeof Schema>` e lido pelos helpers
+ *     `validatedBody`/`validatedQuery`/`validatedParams`.
+ *
+ * Erros são propagados via `next(validationError)` para o errorHandler
+ * global, que monta o envelope padronizado e o status 400.
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { z, ZodError, ZodSchema } from 'zod';
 import { ValidationError } from './errorHandler';
+
+/**
+ * Bag de dados validados anexada a cada `Request` pelos middlewares
+ * `validateBody`/`validateQuery`/`validateParams`. Cada chave só é
+ * preenchida se o middleware correspondente rodou antes do handler —
+ * acessar uma chave ausente indica erro de programação (middleware
+ * faltando) e os helpers `validatedBody/Query/Params` tratam isso
+ * como `undefined` em vez de explodir, para não acoplar handlers a
+ * checagens redundantes.
+ */
+export interface ValidatedRequestBag {
+    body?: unknown;
+    query?: unknown;
+    params?: unknown;
+}
+
+/**
+ * Augmenta o tipo `Request` do Express para incluir `req.validated`.
+ * Sem isso, o TypeScript não reconhece o novo campo e força `as any`
+ * nos handlers — exatamente o que queremos evitar.
+ */
+declare global {
+    // eslint-disable-next-line @typescript-eslint/no-namespace
+    namespace Express {
+        interface Request {
+            validated?: ValidatedRequestBag;
+        }
+    }
+}
 
 /**
  * Formato canônico de cada item em `details` de uma ValidationError —
@@ -42,12 +87,26 @@ function buildValidationError(zodError: ZodError, source: 'body' | 'query' | 'pa
 }
 
 /**
+ * Escreve o valor parseado em `req.validated` (e, quando aplicável, na
+ * superfície Express padrão `req.body`/`req.query`/`req.params`). Usado
+ * pelos 3 middlewares abaixo para manter as duas representações
+ * sincronizadas.
+ */
+function attachValidated(req: Request, source: 'body' | 'query' | 'params', parsed: unknown): void {
+    const bag: ValidatedRequestBag = req.validated || {};
+    bag[source] = parsed;
+    req.validated = bag;
+}
+
+/**
  * Creates a validation middleware for request body
  */
 export function validateBody<T extends ZodSchema>(schema: T) {
     return (req: Request, _res: Response, next: NextFunction) => {
         try {
-            req.body = schema.parse(req.body);
+            const parsed = schema.parse(req.body);
+            req.body = parsed;
+            attachValidated(req, 'body', parsed);
             next();
         } catch (error) {
             if (error instanceof ZodError) {
@@ -64,7 +123,9 @@ export function validateBody<T extends ZodSchema>(schema: T) {
 export function validateQuery<T extends ZodSchema>(schema: T) {
     return (req: Request, _res: Response, next: NextFunction) => {
         try {
-            req.query = schema.parse(req.query) as any;
+            const parsed = schema.parse(req.query);
+            req.query = parsed as Request['query'];
+            attachValidated(req, 'query', parsed);
             next();
         } catch (error) {
             if (error instanceof ZodError) {
@@ -81,7 +142,9 @@ export function validateQuery<T extends ZodSchema>(schema: T) {
 export function validateParams<T extends ZodSchema>(schema: T) {
     return (req: Request, _res: Response, next: NextFunction) => {
         try {
-            req.params = schema.parse(req.params) as any;
+            const parsed = schema.parse(req.params);
+            req.params = parsed as Record<string, string>;
+            attachValidated(req, 'params', parsed);
             next();
         } catch (error) {
             if (error instanceof ZodError) {
@@ -90,6 +153,33 @@ export function validateParams<T extends ZodSchema>(schema: T) {
             next(error);
         }
     };
+}
+
+/**
+ * Helpers tipados para leitura do bag `req.validated` (issue #1544).
+ * Substituem o padrão `req.body as z.infer<typeof X>` — o cast bypassa o
+ * type checker; aqui o tipo é inferido a partir do schema passado e
+ * verificado em runtime via `req.validated` (populado pelo middleware).
+ *
+ * Uso:
+ *   const data = validatedBody(req, MySchema);   // tipado, sem `as`
+ *   const q    = validatedQuery(req, QSchema);
+ *   const p    = validatedParams(req, PSchema);
+ *
+ * Retornam `undefined` se o middleware correspondente não rodou — o handler
+ * decide se isso é erro (ex.: `if (!data) throw ...`) ou se aceita a ausência
+ * (ex.: schemas parciais com `.partial()`).
+ */
+export function validatedBody<S extends ZodSchema>(req: Request, _schema: S): z.infer<S> | undefined {
+    return req.validated?.body as z.infer<S> | undefined;
+}
+
+export function validatedQuery<S extends ZodSchema>(req: Request, _schema: S): z.infer<S> | undefined {
+    return req.validated?.query as z.infer<S> | undefined;
+}
+
+export function validatedParams<S extends ZodSchema>(req: Request, _schema: S): z.infer<S> | undefined {
+    return req.validated?.params as z.infer<S> | undefined;
 }
 
 // =============================================

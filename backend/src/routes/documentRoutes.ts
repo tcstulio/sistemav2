@@ -10,7 +10,7 @@ import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
 import { requireDolibarrLogin, requireAdmin, isAdmin } from '../middleware/authMiddleware';
-import { validateBody } from '../middleware/validation';
+import { validateBody, validatedBody } from '../middleware/validation';
 import { created, fail, ok, success } from '../utils/apiResponse';
 import { asyncHandler } from '../utils/asyncHandler';
 import { NotFoundError } from '../middleware/errorHandler';
@@ -138,7 +138,10 @@ router.post(
         entityId: data.entityId ?? 'unknown',
     })),
     asyncHandler(async (req, res) => {
-        const data = req.body as z.infer<typeof documentCreateSchema>;
+        const data = validatedBody(req, documentCreateSchema);
+        if (!data) {
+            return fail(res, 'BAD_REQUEST', 'Corpo da requisição inválido', 400);
+        }
         return created(res, data);
     })
 );
@@ -152,7 +155,10 @@ router.put(
         entityId: data.entityId ?? req.params.id ?? 'unknown',
     })),
     asyncHandler(async (req, res) => {
-        const data = req.body as z.infer<typeof documentUpdateSchema>;
+        const data = validatedBody(req, documentUpdateSchema);
+        if (!data) {
+            return fail(res, 'BAD_REQUEST', 'Corpo da requisição inválido', 400);
+        }
         return ok(res, { id: req.params.id, ...data });
     })
 );
@@ -170,7 +176,10 @@ router.post(
         entityId: data.documentId ?? 'unknown',
     })),
     asyncHandler(async (req, res) => {
-        const data = req.body as z.infer<typeof SendDocumentSchema>;
+        const data = validatedBody(req, SendDocumentSchema);
+        if (!data) {
+            return fail(res, 'BAD_REQUEST', 'Corpo da requisição inválido', 400);
+        }
         const user = getRequestUser(req);
 
         // Se thirdPartyId foi fornecido, buscar telefone
