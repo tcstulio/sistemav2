@@ -18,7 +18,13 @@ export type SenderIdentity =
     | { kind: 'unknown' };
 
 const UNKNOWN: SenderIdentity = { kind: 'unknown' };
-const CACHE_TTL_MS = 5 * 60 * 1000;
+// TTL do cache de identidade (lista de usuários + resultado por telefone). Curto de propósito:
+// a identificação por telefone é sensível a segurança — quando um telefone muda no cadastro
+// (revogar/reatribuir acesso), a mudança precisa refletir RÁPIDO. Antes era 5 min, o que fazia o
+// bot continuar reconhecendo o número antigo por até 5 min (confundiu o teste de permissões do
+// dono). Default 60s; configurável via env WHATSAPP_IDENTITY_CACHE_TTL_SECONDS (piso 5s). Para
+// invalidação IMEDIATA numa edição feita pelo próprio app, chame whatsappIdentityService.clearCache().
+const CACHE_TTL_MS = Math.max(5, Number(process.env.WHATSAPP_IDENTITY_CACHE_TTL_SECONDS) || 60) * 1000;
 
 /**
  * Sufixo de 8 dígitos p/ comparação tolerante a DDI/DDD/9º dígito — usado SÓ p/ o lookup de

@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
-const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
+const mockAuthState = vi.hoisted(() => ({ authenticated: true }));
+const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((_req: any, res: any, next: any) => {
+    if (!mockAuthState.authenticated) {
+        return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    }
+    return next();
+}));
 
 const mockSchedulerService = vi.hoisted(() => ({
     scheduleMessage: vi.fn(() => ({ id: 'msg-1', chatId: '123', message: 'test', scheduledAt: Date.now() })),
@@ -58,11 +64,13 @@ vi.mock('../../services/legacy/messageService', () => ({
     messageService: mockMessageService,
 }));
 
+const mockEventRouter = vi.hoisted(() => ({
+    route: vi.fn(),
+    processEvent: vi.fn(),
+}));
+
 vi.mock('../../services/eventRouter', () => ({
-    eventRouter: {
-        route: vi.fn(),
-        processEvent: vi.fn(),
-    },
+    eventRouter: mockEventRouter,
 }));
 
 vi.mock('../../services/notificationService', () => ({
@@ -99,7 +107,13 @@ describe('webhookRoutes', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.stubEnv('NODE_ENV', 'development');
+        mockAuthState.authenticated = true;
         app = createApp();
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
     });
 
     describe('POST /api/webhooks/trigger', () => {
@@ -221,7 +235,7 @@ describe('webhookRoutes', () => {
             const res = await request(app).get('/api/webhooks/variables');
 
             expect(res.status).toBe(200);
-            expect(res.body).toHaveProperty('invoice_created');
+            expect(res.body.data).toHaveProperty('invoice_created');
         });
     });
 
@@ -248,6 +262,140 @@ describe('webhookRoutes', () => {
                 .send({ name: 'X' });
 
             expect(res.status).toBe(404);
+        });
+    });
+
+    describe('proteção das rotas', () => {
+        const protectedEndpoints = [
+            ['post', '/api/webhooks/trigger'],
+            ['post', '/api/webhooks/dolibarr/invoice'],
+            ['post', '/api/webhooks/dolibarr/ticket'],
+            ['post', '/api/webhooks/dolibarr/order'],
+            ['get', '/api/webhooks/rules'],
+            ['post', '/api/webhooks/rules'],
+            ['delete', '/api/webhooks/rules/rule-1'],
+            ['put', '/api/webhooks/rules/rule-1'],
+            ['patch', '/api/webhooks/rules/rule-1/toggle'],
+            ['get', '/api/webhooks/logs'],
+            ['get', '/api/webhooks/flows'],
+            ['post', '/api/webhooks/flows'],
+            ['put', '/api/webhooks/flows/flow-1'],
+            ['delete', '/api/webhooks/flows/flow-1'],
+            ['patch', '/api/webhooks/flows/flow-1/toggle'],
+            ['post', '/api/webhooks/rules/rule-1/test'],
+            ['post', '/api/webhooks/simulate'],
+            ['get', '/api/webhooks/variables'],
+        ] as const;
+
+        it.each(protectedEndpoints)('%s %s retorna 401 sem autenticação', async (method, path) => {
+            mockAuthState.authenticated = false;
+
+            const res = await (request(app) as any)[method](path).send({});
+
+            expect(res.status).toBe(401);
+        });
+
+        it('mantém /receive/:source acessível sem autenticação', async () => {
+            mockAuthState.authenticated = false;
+
+            const res = await request(app).post('/api/webhooks/receive/dolibarr').send({ id: '1' });
+
+            expect(res.status).toBe(200);
+            expect(mockRequireDolibarrLogin).not.toHaveBeenCalled();
+            expect(mockEventRouter.processEvent).toHaveBeenCalledWith('dolibarr', { id: '1' });
+        });
+
+        it('retorna 404 para /simulate em produção antes da autenticação', async () => {
+            vi.stubEnv('NODE_ENV', 'production');
+            mockAuthState.authenticated = false;
+
+            const res = await request(app).post('/api/webhooks/simulate').send({ event: 'invoice_created' });
+
+            expect(res.status).toBe(404);
+            expect(res.body.error.code).toBe('NOT_FOUND');
+            expect(mockRequireDolibarrLogin).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('validação anti-ReDoS', () => {
+        it('rejeita pattern aninhado com mais de 200 caracteres', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', conditions: { pattern: 'a'.repeat(201) } });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it('rejeita pattern no corpo com mais de 200 caracteres', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'a'.repeat(201) });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it.each(['(a+)+$', '.*.*.*'])('rejeita pattern aninhado inseguro %s', async (pattern) => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', conditions: { pattern } });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it.each(['(a+)+$', '.*.*.*'])('rejeita pattern inseguro no corpo %s', async (pattern) => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it('rejeita caracteres fora da whitelist', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'invoice paid' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it('rejeita regex inválida mesmo com caracteres permitidos', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: '[invoice' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
+        it('aceita pattern válido com até 200 caracteres', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'invoice_[0-9]+' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockSchedulerService.createRule).toHaveBeenCalledOnce();
+        });
+
+        it('valida pattern ao atualizar uma regra', async () => {
+            const res = await request(app)
+                .put('/api/webhooks/rules/rule-1')
+                .send({ pattern: 'a'.repeat(201) });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.updateRule).not.toHaveBeenCalled();
         });
     });
 
