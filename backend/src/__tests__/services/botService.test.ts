@@ -97,7 +97,7 @@ const mockPermissions = vi.hoisted(() => ({
 }));
 vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPermissions }));
 
-import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt, buildAgentHistory, isAgentHistoryExcluded, resetChatHistory, clearAllChatResetTimestampsForTests } from '../../services/botService';
+import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt, buildAgentHistory, isAgentHistoryExcluded, resetChatHistory, clearAllChatResetTimestampsForTests, stripMediaUrls } from '../../services/botService';
 import { getToolContext, DEV_TOOLS, getToolsPrompt } from '../../services/agentTools';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
@@ -335,7 +335,23 @@ describe('BotService', () => {
             expect(String((messageService.sendVoice as any).mock.calls[0][2])).toMatch(/^data:audio\/mpeg;base64,/);
         });
 
-        it('mídia nativa: download da URL falha → NÃO envia nativo, mas o texto (com link) vai normal', async () => {
+        it('mídia nativa: link REMOVIDO do texto quando o áudio vai anexado (envio nativo OK)', async () => {
+            // ORÁCULO DO FIX (dono: "além do áudio ele mandou o link, não precisava"): com a mídia
+            // anexada nativamente, a URL sai do texto. Sem fallback (nativo funcionou).
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockImplementation(async () => {
+                getToolContext().pendingMedia?.push({ kind: 'audio', url: 'https://cdn/audio.mp3' });
+                return 'Aqui está o áudio que você pediu: https://cdn/audio.mp3';
+            });
+            (mockAxios.get as any).mockResolvedValue({ data: Buffer.from('fake-mp3'), headers: { 'content-type': 'audio/mpeg' } });
+            await botService.processMessage(createMessage({ body: 'me manda um áudio', id: 'q1b' }));
+            expect(messageService.sendVoice).toHaveBeenCalledTimes(1);
+            const texts = (messageService.sendText as any).mock.calls.map((c: any) => String(c[2]));
+            expect(texts.length).toBe(1);                              // sem fallback (nativo OK)
+            expect(texts[0]).not.toContain('https://cdn/audio.mp3');  // link removido do texto
+        });
+
+        it('mídia nativa: download da URL falha → texto principal LIMPO + link volta como FALLBACK (msg separada)', async () => {
             (messageService.getMessages as any).mockResolvedValue([]);
             (aiService.generateReply as any).mockImplementation(async () => {
                 getToolContext().pendingMedia?.push({ kind: 'audio', url: 'https://cdn/quebrado.mp3' });
@@ -343,8 +359,21 @@ describe('BotService', () => {
             });
             (mockAxios.get as any).mockRejectedValue(new Error('404'));
             await botService.processMessage(createMessage({ body: 'áudio', id: 'q2' }));
-            expect(messageService.sendText).toHaveBeenCalledTimes(1); // texto vai mesmo assim
-            expect(messageService.sendVoice).not.toHaveBeenCalled();  // sem download → sem envio nativo
+            expect(messageService.sendVoice).not.toHaveBeenCalled();   // sem download → sem envio nativo
+            const texts = (messageService.sendText as any).mock.calls.map((c: any) => String(c[2]));
+            expect(texts[0]).not.toContain('https://cdn/quebrado.mp3');                 // texto principal limpo (otimista)
+            expect(texts.some((t: string) => t.includes('https://cdn/quebrado.mp3'))).toBe(true); // link como fallback
+        });
+
+        it('stripMediaUrls: remove só as URLs de mídia e limpa rótulo órfão', () => {
+            const out = stripMediaUrls('Aqui está o áudio (mp3, válido ~24h): https://cdn/a.mp3', ['https://cdn/a.mp3']);
+            expect(out).not.toContain('https://cdn/a.mp3');
+            expect(out).not.toContain('(mp3');
+            expect(out.trim()).toBe('Aqui está o áudio');
+            // não mexe em outros links
+            const keep = stripMediaUrls('veja https://app.x/agenda/9 e o áudio https://cdn/a.mp3', ['https://cdn/a.mp3']);
+            expect(keep).toContain('https://app.x/agenda/9');
+            expect(keep).not.toContain('https://cdn/a.mp3');
         });
 
         it('mídia nativa: PDF (dataUri direto) → sendFile com anexo, sem baixar nada', async () => {
