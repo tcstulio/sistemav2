@@ -265,6 +265,26 @@ describe('BotService', () => {
             ]));
         });
 
+        it('cold start (pós-restart) NÃO semeia do getMessages → não re-desperta perguntas antigas sem resposta (mata o re-despejo)', async () => {
+            // ORÁCULO DO FIX pós-restart: no restart o buffer esvazia. O getMessages carrega perguntas
+            // antigas SEM as respostas do bot (a fonte quebrada); se semeássemos delas, o modelo
+            // re-responderia todas = o re-despejo. Buffer cold DEVE ignorar o getMessages: o histórico
+            // da 1ª mensagem pós-restart só pode conter a pergunta ATUAL.
+            (messageService.getMessages as any).mockResolvedValue([
+                { fromMe: false, body: 'quem sou eu?', id: 'old1', timestamp: nowSec() - 5 },
+                { fromMe: false, body: 'quais minhas permissoes?', id: 'old2', timestamp: nowSec() - 4 },
+                { fromMe: false, body: 'quais os proximos eventos?', id: 'old3', timestamp: nowSec() - 3 },
+            ]);
+            (aiService.generateReply as any).mockResolvedValue('R');
+            await botService.processMessage(createMessage({ body: 'qual o estoque de heineken?', id: 'nova' }));
+            const hist = (aiService.generateReply as any).mock.calls[0][0];
+            expect(hist).toEqual([{ role: 'user', parts: 'qual o estoque de heineken?' }]);
+            const flat = JSON.stringify(hist);
+            expect(flat).not.toContain('quem sou eu?');
+            expect(flat).not.toContain('permissoes');
+            expect(flat).not.toContain('eventos');
+        });
+
         it('run que falhou no envio NÃO bloqueia a próxima mensagem do chat', async () => {
             (messageService.getMessages as any).mockResolvedValue([
                 { fromMe: false, body: 'q1', id: 'q1', timestamp: nowSec() },
