@@ -98,6 +98,29 @@ export function absolutizeLinksForWhatsApp(text: string, baseUrlRaw?: string): s
     return out;
 }
 
+/**
+ * Remove do TEXTO as URLs de mídia que vão ser entregues NATIVAMENTE (nota de voz/anexo).
+ * O link no texto é redundante quando o arquivo vai anexado; o dono pediu p/ não mandar os dois.
+ * Só remove URLs exatamente iguais às da mídia (não mexe em outros links). Também limpa rótulos
+ * órfãos comuns deixados pela tool (ex.: "(mp3, válido ~24h):") e pontuação/espaço solto no fim.
+ * PURA (testável). Se o texto ficar vazio, o caller põe um recado mínimo.
+ */
+export function stripMediaUrls(text: string, urls: string[]): string {
+    if (!text || !urls.length) return text;
+    let out = text;
+    for (const u of urls) {
+        if (u) out = out.split(u).join('');
+    }
+    out = out
+        .replace(/\([^)]*v[aá]lid[oa][^)]*\)/gi, '') // "(mp3, válido ~24h)" / "(válida ~24h)" (marca das tools)
+        .replace(/[ \t]*[:：—–-][ \t]*$/gm, '')   // rótulo/dois-pontos/traço órfão no fim da linha
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    return out;
+}
+
 // #1501 — fail-fast self-check de produção (defesa em profundidade contra regressão de
 // #1498). Chamada no início de processMessage, ANTES de qualquer trabalho caro
 // (identifySender, dolibarrService.getCustomerContext, aiService.generateReply). Custo
@@ -709,6 +732,19 @@ class BotService {
                 replyText = replyText.replace(/(\n\s*~.*)+$/g, '').trim();
             }
 
+            // Link redundante: quando há mídia p/ anexar nativamente, remove a URL dela do TEXTO
+            // (o WhatsApp já entrega o arquivo — o dono pediu p/ não mandar os dois). Otimista: tira
+            // o link ANTES de enviar o texto; se o envio nativo falhar, o link volta como FALLBACK
+            // (mensagem separada, mais abaixo). WhatsApp-only: o webapp continua com o link no texto.
+            const nativeMediaUrls = pendingMedia.map(m => m.url).filter((u): u is string => !!u);
+            if (replyText && nativeMediaUrls.length) {
+                replyText = stripMediaUrls(replyText, nativeMediaUrls);
+            }
+            // Se o texto ficou vazio (o modelo só mandou o link), põe um recado mínimo.
+            if ((!replyText || replyText.trim().length < 2) && pendingMedia.length) {
+                replyText = 'Segue o arquivo. 📎';
+            }
+
             // 7. Append Signature
             const finalMessage = `${replyText}\n\n~ ${signatureName}`;
 
@@ -722,13 +758,15 @@ class BotService {
             turns.push({ role: 'model', parts: replyText });
             if (turns.length > 40) turns.splice(0, turns.length - 40);
 
-            // ENVIO NATIVO de mídia gerada no turno (nota de voz / anexo), ALÉM do link no texto.
-            // As tools generate_speech/image/video/get_document_pdf registram em pendingMedia. Envio
-            // best-effort e sequencial (após o texto); falha em uma não impede as outras nem a resposta.
+            // ENVIO NATIVO de mídia gerada no turno (nota de voz / anexo). As tools
+            // generate_speech/image/video/get_document_pdf registram em pendingMedia. Best-effort e
+            // sequencial; falha em uma não impede as outras nem a resposta. Se um envio nativo falhar,
+            // guarda a URL p/ mandar como FALLBACK (o link foi removido do texto otimista acima).
+            const failedMediaUrls: string[] = [];
             for (const media of pendingMedia) {
                 try {
                     const dataUri = media.dataUri || (media.url ? await fetchAsDataUri(media.url) : null);
-                    if (!dataUri) continue; // download falhou → o link já está no texto
+                    if (!dataUri) { if (media.url) failedMediaUrls.push(media.url); continue; } // download falhou
                     if (media.kind === 'audio') {
                         await messageService.sendVoice(sessionId, chatId, dataUri);
                     } else {
@@ -738,7 +776,15 @@ class BotService {
                     log.info(`Mídia nativa enviada (${media.kind}) para ${chatId}`);
                 } catch (e: any) {
                     log.warn(`Falha ao enviar mídia nativa (${media.kind}) para ${chatId}: ${e?.message}`);
+                    if (media.url) failedMediaUrls.push(media.url);
                 }
+            }
+            // Fallback: se algum envio nativo falhou, manda o(s) link(s) numa mensagem separada
+            // (o texto principal saiu limpo). Assim o usuário nunca fica sem o arquivo NEM sem o link.
+            if (failedMediaUrls.length) {
+                try {
+                    await messageService.sendText(sessionId, chatId, `Segue o link (caso o arquivo não abra): ${failedMediaUrls.join('  ')}`);
+                } catch { /* best-effort */ }
             }
 
             // [ANTIGRAVITY] Update Group Stats (Last Replied / Reset Burst)
