@@ -239,11 +239,15 @@ router.get(
     validateQuery(EmptyQuerySchema),
     validateParams(IdParamSchema),
     asyncHandler(async (req, res) => {
-        const { id } = validatedParams(req, IdParamSchema) ?? ({} as { id: string });
-        if (!id) {
-            return fail(res, 'BAD_REQUEST', 'id é obrigatório', 400);
+        // O middleware validateParams já garante `id.min(1)`; se chegou aqui,
+        // params está definido. O guard existe apenas para satisfazer o
+        // type-checker sem recorrer a `as` (issue #1544 — substitui `as` por
+        // checagem explícita).
+        const params = validatedParams(req, IdParamSchema);
+        if (!params) {
+            throw new AppError(400, 'BAD_REQUEST', 'id é obrigatório');
         }
-        const action = await approvalService.getActionById(id);
+        const action = await approvalService.getActionById(params.id);
 
         if (!action) {
             return fail(res, 'NOT_FOUND', 'Ação não encontrada', 404);
@@ -312,12 +316,14 @@ router.post(
     validateParams(IdParamSchema),
     validateBody(ApprovalDecisionSchema),
     asyncHandler(async (req, res) => {
-        const params = validatedParams(req, IdParamSchema) ?? ({} as { id: string });
-        const { id } = params;
+        const params = validatedParams(req, IdParamSchema);
+        if (!params) {
+            throw new AppError(400, 'BAD_REQUEST', 'id é obrigatório');
+        }
         const user = getRequestUser(req);
         const approvedBy = String(user?.login || user?.id || 'unknown');
 
-        const result = await approvalService.approveAction(id, approvedBy);
+        const result = await approvalService.approveAction(params.id, approvedBy);
         if (!result.success) {
             throw new AppError(400, 'BAD_REQUEST', result.error || 'Falha ao aprovar ação');
         }
@@ -336,10 +342,15 @@ router.post(
     validateParams(IdParamSchema),
     validateBody(RejectionSchema),
     asyncHandler(async (req, res) => {
-        const params = validatedParams(req, IdParamSchema) ?? ({} as { id: string });
-        const { id } = params;
-        const data = validatedBody(req, RejectionSchema) ?? {};
-        const { reason } = data;
+        const params = validatedParams(req, IdParamSchema);
+        if (!params) {
+            throw new AppError(400, 'BAD_REQUEST', 'id é obrigatório');
+        }
+        // `RejectionSchema` é `.strict()` com `reason` opcional; o ?? {} é seguro
+        // porque `reason` é opcional no schema — destruturar de {} apenas
+        // produz `reason === undefined`, sem `as` cast.
+        const rejection = validatedBody(req, RejectionSchema) ?? {};
+        const reason = rejection.reason;
         const user = getRequestUser(req);
         const rejectedBy = String(user?.login || user?.id || 'unknown');
 
@@ -348,11 +359,11 @@ router.post(
         // Log para detectar fluxos sem motivo (ex.: integrações, scripts de limpeza).
         if (typeof reason !== 'string' || !reason.trim()) {
             log.warn(
-                `Rejeição sem motivo: actionId=${id} by=${rejectedBy} — investigando origem do request`
+                `Rejeição sem motivo: actionId=${params.id} by=${rejectedBy} — investigando origem do request`
             );
         }
 
-        const result = await approvalService.rejectAction(id, rejectedBy, reason);
+        const result = await approvalService.rejectAction(params.id, rejectedBy, reason);
         if (!result.success) {
             throw new AppError(400, 'BAD_REQUEST', result.error || 'Falha ao rejeitar ação');
         }
