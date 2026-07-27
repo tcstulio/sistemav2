@@ -6,10 +6,9 @@
  *   ZAI_API_KEY=... npx tsx backend/scripts/test-video-glm.ts --emit-decision
  *   npx tsx backend/scripts/test-video-glm.ts --dry-run
  *
- * `--emit-decision` executa os três casos e atualiza somente o bloco DECISÃO no
- * final deste arquivo. `--dry-run` valida a geração dos MP4 sem chamar a API.
- * A URL, o modelo e a chave são obtidos de `visionService.ts`; este script não
- * duplica a configuração do cliente GLM.
+ * `GLM_SPIKE_PUBLIC_VIDEO_URL` pode substituir a URL pública padrão para repetir o caso
+ * 2 com outro arquivo sem editar o script. A URL, o modelo e a chave são obtidos de
+ * `visionService.ts`; este script não duplica a configuração do cliente GLM.
  *
  * Casos executados:
  *   1. MP4 de 3 segundos, 15 fps e no máximo 2 MiB como data URL;
@@ -38,7 +37,8 @@ const dryRun = args.includes('--dry-run');
 const emitDecision = args.includes('--emit-decision');
 const timeoutMs = 120_000;
 const prompt = 'Descreva brevemente o que aparece neste vídeo em português (1 frase).';
-const publicVideoUrl = 'https://raw.githubusercontent.com/mediaelement/mediaelement-files/master/big_buck_bunny.mp4';
+const publicVideoUrl = process.env.GLM_SPIKE_PUBLIC_VIDEO_URL
+    || 'https://raw.githubusercontent.com/mediaelement/mediaelement-files/master/big_buck_bunny.mp4';
 const decisionMarker = 'spike-decision';
 const decisionBegin = ` * === BEGIN ${decisionMarker} ===`;
 const decisionEnd = ` * === END ${decisionMarker} ===`;
