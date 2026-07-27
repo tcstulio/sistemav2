@@ -14,6 +14,7 @@ interface PersistedConfig {
     moduleConfigs: Record<string, ModuleConfig>;
     customPrompts: Record<string, string>;
     fallbackChains?: Record<string, string[]>;
+    runtimeConfig?: Record<string, string>;
 }
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
@@ -64,12 +65,14 @@ class ConfigService {
     private customPrompts: Record<string, string>;
     // Cadeia de fallback POR MÓDULO — quando presente, sobrescreve o default global.
     private fallbackChains: Record<string, string[]>;
+    private runtimeConfig: Record<string, string>;
 
     constructor() {
         const persisted = this.loadFromDisk();
         this.moduleConfigs = persisted?.moduleConfigs ?? defaultModules();
         this.customPrompts = persisted?.customPrompts ?? defaultPrompts();
         this.fallbackChains = persisted?.fallbackChains ?? {};
+        this.runtimeConfig = persisted?.runtimeConfig ?? {};
         if (!persisted) {
             // Primeiro boot: persiste defaults para que survive restart.
             this.flush();
@@ -108,7 +111,8 @@ class ConfigService {
             const persisted: PersistedConfig = {
                 moduleConfigs: this.moduleConfigs,
                 customPrompts: this.customPrompts,
-                fallbackChains: this.fallbackChains
+                fallbackChains: this.fallbackChains,
+                runtimeConfig: this.runtimeConfig
             };
             atomicWriteSync(CONFIG_PATH, persisted);
         } catch (e: any) {
@@ -118,6 +122,18 @@ class ConfigService {
 
     getModuleConfig(moduleName: string): ModuleConfig {
         return this.moduleConfigs[moduleName] || { provider: config.llmProvider, model: modelForProvider(config.llmProvider) };
+    }
+
+    getConfig(key: string): string | undefined {
+        return this.runtimeConfig[key];
+    }
+
+    setConfig(key: string, value: string): void {
+        if (key === '.env' || key.toLowerCase().includes('.env')) {
+            throw new Error('Runtime configuration cannot target .env');
+        }
+        this.runtimeConfig = { ...this.runtimeConfig, [key]: value };
+        this.flush();
     }
 
     getAllModuleConfigs(): Record<string, ModuleConfig> {

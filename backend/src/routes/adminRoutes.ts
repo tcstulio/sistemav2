@@ -1,5 +1,7 @@
 import express from 'express';
 import os from 'os';
+import axios from 'axios';
+import { GoogleGenAI } from '@google/genai';
 import { createLogger, getRecentLogEntries, MAX_LOG_BUFFER } from '../utils/logger';
 // import { wahaService } from '../services/wahaService'; // DEPRECATED
 import { sessionService } from '../services/legacy/sessionService'; // UPDATED to legacy path
@@ -24,8 +26,13 @@ import { adminAuditService } from '../services/adminAuditService';
 import { llmCallLogService } from '../services/llmCallLogService';
 import { uiConfigService } from '../services/uiConfigService';
 import { llmHealthService } from '../services/llmHealthService';
+import { validateBody } from '../middleware/validation';
+import { rateLimiters } from '../middleware/rateLimit';
+import { config } from '../config/env';
+import { aiService } from '../services/aiService';
 
 const router = express.Router();
+const EmptyBodySchema = z.object({}).strict();
 
 // Protect all admin routes
 router.use(requireDolibarrAdmin);
@@ -60,7 +67,7 @@ router.get('/status', async (req, res) => {
     });
 });
 
-router.post('/restart', async (req, res) => {
+router.post('/restart', validateBody(EmptyBodySchema), async (req, res) => {
     // We can't easily restart the node process itself without a manager like PM2, 
     // but we can restart subsystems.
     try {
@@ -75,8 +82,30 @@ router.post('/restart', async (req, res) => {
 
 
 // LLM Configuration Endpoints
-import { config } from '../config/env';
-import { aiService } from '../services/aiService';
+
+const ProviderSchema = z.enum(['local', 'google', 'glm', 'minimax']);
+const LlmConfigSchema = z.object({
+    provider: ProviderSchema,
+    url: z.string().url().max(500).optional(),
+    key: z.string().max(1000).optional(),
+    modelName: z.string().trim().min(1).max(200).optional(),
+});
+const LlmTestSchema = z.object({
+    provider: ProviderSchema,
+    url: z.string().url().max(500).optional(),
+    model: z.string().trim().min(1).max(200).optional(),
+});
+const PlaygroundSchema = z.object({
+    prompt: z.string().trim().min(1).max(4000).regex(/^[^\u0000-\u001F\u007F]*$/, 'Prompt contains control characters'),
+    provider: ProviderSchema.optional(),
+    model: z.string().trim().min(1).max(200).optional(),
+});
+const ModulesSchema = z.object({ modules: z.record(z.string(), z.object({ provider: ProviderSchema, model: z.string().min(1).max(200), fallbackChain: z.array(ProviderSchema).max(4).optional() })) });
+const FallbackChainSchema = z.object({ module: z.enum(['chat', 'banking', 'system_analysis', 'proposals']), chain: z.array(ProviderSchema).min(1).max(4) });
+const PromptsSchema = z.object({ prompts: z.record(z.string().min(1).max(100), z.string().max(4000)) });
+const StatsTrackSchema = z.object({ tokens: z.number().int().nonnegative().max(100000000).optional(), error: z.string().max(1000).nullable().optional() });
+const FeatureProviderSchema = z.object({ provider: z.enum(['legacy', 'moltbot']) });
+const DANGEROUS_PROMPT_PATTERN = /(?:<script|javascript:|data:text\/html|ignore\s+(?:all\s+)?previous\s+instructions|system\s+prompt|process\.env|child_process|rm\s+-rf|reveal\s+(?:secrets?|instructions?))/i;
 
 router.get('/config/llm', (req, res) => {
     res.json({
@@ -100,9 +129,6 @@ router.get('/config/llm/models', async (req, res) => {
         let models: string[] = [];
 
         if (providerName && (providerName === 'local' || providerName === 'google' || providerName === 'glm' || providerName === 'minimax')) {
-            const { GoogleGenAI } = require('@google/genai');
-            const axios = require('axios');
-
             if (providerName === 'google') {
                 if (!config.googleApiKey) return res.json({ models: [] });
                 const ai = new GoogleGenAI({ apiKey: config.googleApiKey });
@@ -146,17 +172,16 @@ router.get('/config/llm/models', async (req, res) => {
     }
 });
 
-router.post('/config/llm/test', async (req, res) => {
+router.post('/config/llm/test', rateLimiters.ai, validateBody(LlmTestSchema), async (req, res) => {
     try {
-        const { provider, url, model, apiKey } = req.body;
+        const { provider, url, model } = req.body;
 
         if (provider === 'google') {
-            const testKey = apiKey || config.googleApiKey;
+            const testKey = configService.getConfig('googleApiKey') || config.googleApiKey;
             if (!testKey) {
                 return res.json({ success: false, error: "API Key ausente para o Google Gemini." });
             }
 
-            const { GoogleGenAI } = require('@google/genai');
             const ai = new GoogleGenAI({ apiKey: testKey });
             
             const result = await ai.models.generateContent({
@@ -182,7 +207,7 @@ router.post('/config/llm/test', async (req, res) => {
                 availableModels: modelList
             });
         } else if (provider === 'glm') {
-            const testKey = apiKey || config.zaiApiKey;
+            const testKey = configService.getConfig('zaiApiKey') || config.zaiApiKey;
             const testUrl = url || config.zaiBaseUrl;
             const testModel = model || config.zaiModel;
 
@@ -190,7 +215,6 @@ router.post('/config/llm/test', async (req, res) => {
                 return res.json({ success: false, error: "API Key ausente para o Z.AI (GLM)." });
             }
 
-            const axios = require('axios');
             const startTime = Date.now();
 
             let modelList: string[] = [];
@@ -227,7 +251,7 @@ router.post('/config/llm/test', async (req, res) => {
                 latencyMs: Date.now() - startTime
             });
         } else if (provider === 'minimax') {
-            const testKey = apiKey || config.minimaxApiKey;
+            const testKey = configService.getConfig('minimaxApiKey') || config.minimaxApiKey;
             const testUrl = url || config.minimaxBaseUrl;
             const testModel = model || config.minimaxModel;
 
@@ -235,7 +259,6 @@ router.post('/config/llm/test', async (req, res) => {
                 return res.json({ success: false, error: "API Key ausente para o MiniMax." });
             }
 
-            const axios = require('axios');
             const startTime = Date.now();
 
             let modelList: string[] = [];
@@ -275,7 +298,6 @@ router.post('/config/llm/test', async (req, res) => {
                 return res.json({ success: false, error: "URL do servidor local ausente." });
             }
 
-            const axios = require('axios');
             const startTime = Date.now();
 
             // Try to fetch models
@@ -322,7 +344,7 @@ router.post('/config/llm/test', async (req, res) => {
     }
 });
 
-router.post('/config/llm', async (req, res) => {
+router.post('/config/llm', validateBody(LlmConfigSchema), async (req, res) => {
     try {
         const { provider, url, key, modelName } = req.body;
 
@@ -331,6 +353,16 @@ router.post('/config/llm', async (req, res) => {
         }
 
         aiService.setConfig(provider, url, key, modelName);
+        configService.setConfig('llmProvider', provider);
+        const configKeys = ({
+            local: { url: 'localLlmUrl', key: undefined, model: 'localModelName' },
+            google: { url: undefined, key: 'googleApiKey', model: 'geminiModel' },
+            glm: { url: 'zaiBaseUrl', key: 'zaiApiKey', model: 'zaiModel' },
+            minimax: { url: 'minimaxBaseUrl', key: 'minimaxApiKey', model: 'minimaxModel' },
+        } as Record<string, { url?: string; key?: string; model: string }>)[provider];
+        if (url && configKeys.url) configService.setConfig(configKeys.url, url);
+        if (key && configKeys.key) configService.setConfig(configKeys.key, key);
+        if (modelName) configService.setConfig(configKeys.model, modelName);
 
         config.llmProvider = provider;
         configService.resetModulesToGlobal();
@@ -350,7 +382,7 @@ router.post('/config/llm', async (req, res) => {
             else config.localModelName = modelName;
         }
 
-        res.json({ status: 'success', message: `LLM Provider switched to ${provider} (Model: ${modelName || 'default'}). Note: restart server to persist via .env.` });
+        res.json({ status: 'success', message: `LLM Provider switched to ${provider} (Model: ${modelName || 'default'}).` });
     } catch (e: any) {
         res.status(500).json({ status: 'error', message: e.message });
     }
@@ -402,7 +434,7 @@ router.get('/config/llm/modules', (req, res) => {
     res.json(configService.getAllModuleConfigs());
 });
 
-router.post('/config/llm/modules', (req, res) => {
+router.post('/config/llm/modules', validateBody(ModulesSchema), (req, res) => {
     const { modules } = req.body;
     if (modules && typeof modules === 'object') {
         configService.setModuleConfigs(modules);
@@ -422,7 +454,7 @@ router.get('/config/llm/fallback-chain', (req, res) => {
     res.json(result);
 });
 
-router.post('/config/llm/fallback-chain', (req, res) => {
+router.post('/config/llm/fallback-chain', validateBody(FallbackChainSchema), (req, res) => {
     const { module: moduleName, chain } = req.body;
     const validModules = new Set(['chat', 'banking', 'system_analysis', 'proposals']);
     const validProviders = new Set(['local', 'google', 'glm', 'minimax']);
@@ -450,7 +482,7 @@ router.get('/config/llm/prompts', (req, res) => {
     res.json(configService.getAllPrompts());
 });
 
-router.post('/config/llm/prompts', (req, res) => {
+router.post('/config/llm/prompts', validateBody(PromptsSchema), (req, res) => {
     const { prompts } = req.body;
     if (prompts && typeof prompts === 'object') {
         configService.setPrompts(prompts);
@@ -472,7 +504,7 @@ router.get('/config/llm/stats', (req, res) => {
 });
 
 // Increment stats (called internally by aiService)
-router.post('/config/llm/stats/track', (req, res) => {
+router.post('/config/llm/stats/track', validateBody(StatsTrackSchema), (req, res) => {
     resetStatsIfNewDay();
     const { tokens, error } = req.body;
     llmStats.callsToday++;
@@ -486,11 +518,10 @@ router.post('/config/llm/stats/track', (req, res) => {
 });
 
 // Playground - test arbitrary prompt
-router.post('/config/llm/playground', async (req, res) => {
+router.post('/config/llm/playground', rateLimiters.ai, validateBody(PlaygroundSchema), async (req, res) => {
     const { prompt, provider, model } = req.body;
-
-    if (!prompt) {
-        return res.status(400).json({ error: 'Prompt é obrigatório' });
+    if (DANGEROUS_PROMPT_PATTERN.test(prompt)) {
+        return res.status(400).json({ error: 'Prompt contém padrões não permitidos' });
     }
 
     try {
@@ -552,7 +583,7 @@ router.get('/config/features', (req, res) => {
  * POST /api/admin/config/features/provider
  * Switch WhatsApp provider at runtime
  */
-router.post('/config/features/provider', (req, res) => {
+router.post('/config/features/provider', validateBody(FeatureProviderSchema), (req, res) => {
     const { provider } = req.body;
 
     if (provider !== 'legacy' && provider !== 'moltbot') {
@@ -603,7 +634,7 @@ router.get('/integration/status', async (req, res) => {
  * POST /api/admin/integration/test
  * Test integration connections
  */
-router.post('/integration/test', async (req, res) => {
+router.post('/integration/test', validateBody(EmptyBodySchema), async (req, res) => {
     const results: any = {
         moltbot: { tested: false },
         tulipa: { tested: false }
@@ -719,10 +750,10 @@ router.get('/users/:userId/permissions', async (req, res) => {
 });
 
 // PUT /api/admin/users/:userId/permissions — merge sobre o perfil atual, persiste e invalida cache.
-router.put('/users/:userId/permissions', async (req, res) => {
+router.put('/users/:userId/permissions', validateBody(UpdatePermsSchema), async (req, res) => {
     try {
         const userId = String(req.params.userId);
-        const patch = UpdatePermsSchema.parse(req.body);
+        const patch = req.body;
 
         const current = await userPermissionsService.getProfile(userId);
         const merged = {
@@ -837,7 +868,7 @@ router.get('/llm-health', (req, res) => {
 // SEGURANÇA: o grupo é SEMPRE o configurado em ui_config — NÃO aceitamos groupId do corpo
 // (aceitar permitiria um admin jogar um usuário em qualquer grupo, ex.: administrativo, via
 // esta rota "de acesso"). Operações de grupo arbitrário continuam só na tela do Dolibarr.
-router.post('/users/:userId/enable-app-access', async (req, res) => {
+router.post('/users/:userId/enable-app-access', validateBody(EmptyBodySchema), async (req, res) => {
     try {
         const userId = String(req.params.userId);
         const groupId = uiConfigService.get().appAccessGroupId;

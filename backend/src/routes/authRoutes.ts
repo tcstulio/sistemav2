@@ -6,25 +6,24 @@ import { createLogger } from '../utils/logger';
 import { config } from '../config/env';
 
 import { z } from 'zod';
-import rateLimit from 'express-rate-limit';
+import { rateLimiters } from '../middleware/rateLimit';
+import { validateBody } from '../middleware/validation';
 
 const log = createLogger('Auth');
 const router = Router();
 
-const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
-    message: { error: "Too many login attempts, please try again later." }
-});
+const SESSION_COOKIE_NAME = 'apiKey';
+const LOGIN_COOKIE_MAX_AGE_MS = parseInt(process.env.AUTH_COOKIE_MAX_AGE_MS || `${7 * 24 * 60 * 60 * 1000}`, 10);
 
 const LoginSchema = z.object({
-    login: z.string().min(1),
-    password: z.string().min(1)
+    login: z.string().trim().min(1).max(255),
+    password: z.string().min(1).max(1024),
+    email: z.string().email().max(255).optional(),
 });
 
-router.post('/login', loginLimiter, async (req, res) => {
+router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req, res) => {
     try {
-        const { login, password } = LoginSchema.parse(req.body);
+        const { login, password } = req.body;
 
         const result = await dolibarrService.login(login, password);
 
@@ -37,18 +36,17 @@ router.post('/login', loginLimiter, async (req, res) => {
 
         const sessionToken = createProtoSession(login, result.token, userData);
 
-        res.cookie('dolapikey', sessionToken, {
+        res.cookie(SESSION_COOKIE_NAME, sessionToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: true,
             sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-            path: '/api',
+            maxAge: LOGIN_COOKIE_MAX_AGE_MS,
+            path: '/',
         });
 
         res.json({
             success: true,
-            apiKey: sessionToken,
-            message: result.message
+            data: { user: userData ? { id: userData.id, login: userData.login, admin: userData.admin } : null },
         });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -63,7 +61,7 @@ router.post('/login', loginLimiter, async (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-    res.clearCookie('dolapikey', { path: '/api' });
+    res.clearCookie(SESSION_COOKIE_NAME, { path: '/', httpOnly: true, secure: true, sameSite: 'strict' });
     res.json({ success: true, message: 'Logged out' });
 });
 
@@ -73,20 +71,20 @@ router.post('/logout', (req, res) => {
 // requireDolibarrAdmin (break-glass key) nas rotas /api/admin/*.
 // ===========================================
 
-const AdminLoginSchema = z.object({ adminKey: z.string().min(1) });
+const AdminLoginSchema = z.object({ adminKey: z.string().min(1).max(1024) });
 
-router.post('/admin-login', loginLimiter, (req, res) => {
+router.post('/admin-login', rateLimiters.login, validateBody(AdminLoginSchema), (req, res) => {
     try {
-        const { adminKey } = AdminLoginSchema.parse(req.body);
+        const { adminKey } = req.body;
         if (!config.adminKey || adminKey !== config.adminKey) {
             return res.status(401).json({ success: false, error: 'Chave de admin inválida' });
         }
         res.cookie('admin_key', adminKey, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: true,
             sameSite: 'strict',
             maxAge: 12 * 60 * 60 * 1000, // 12h
-            path: '/api',
+            path: '/',
         });
         res.json({ success: true });
     } catch (error: any) {
@@ -99,7 +97,7 @@ router.post('/admin-login', loginLimiter, (req, res) => {
 });
 
 router.post('/admin-logout', (_req, res) => {
-    res.clearCookie('admin_key', { path: '/api' });
+    res.clearCookie('admin_key', { path: '/', httpOnly: true, secure: true, sameSite: 'strict' });
     res.json({ success: true });
 });
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import { errorHandler } from '../../middleware/errorHandler';
 
 const mockDolibarrService = vi.hoisted(() => ({
     login: vi.fn(),
@@ -26,8 +27,12 @@ vi.mock('../../utils/logger', () => ({
     }),
 }));
 
-vi.mock('express-rate-limit', () => ({
-    default: vi.fn(() => (req: any, res: any, next: any) => next()),
+vi.mock('../../middleware/rateLimit', () => ({
+    rateLimiters: {
+        login: (req: any, res: any, next: any) => next(),
+        ai: (req: any, res: any, next: any) => next(),
+        default: (req: any, res: any, next: any) => next(),
+    },
 }));
 
 import authRoutes from '../../routes/authRoutes';
@@ -37,6 +42,7 @@ function createApp() {
     app.use(express.json());
     app.use(cookieParser());
     app.use('/api', authRoutes);
+    app.use(errorHandler);
     return app;
 }
 
@@ -61,9 +67,12 @@ describe('authRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            // login agora devolve uma proto-session opaca ('sess_' + 48 hex), não o token cru.
-            expect(res.body.apiKey).toMatch(/^sess_[a-f0-9]{48}$/);
-            expect(res.headers['set-cookie']).toBeDefined();
+            expect(res.body.apiKey).toBeUndefined();
+            const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
+            expect(cookie).toContain('apiKey=');
+            expect(cookie).toContain('HttpOnly');
+            expect(cookie).toContain('Secure');
+            expect(cookie).toContain('SameSite=Strict');
         });
 
         it('returns 400 when login field is missing', async () => {
@@ -72,7 +81,7 @@ describe('authRoutes', () => {
                 .send({ password: 'password123' });
 
             expect(res.status).toBe(400);
-            expect(res.body.error).toBe('Validation Error');
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
         it('returns 400 when password field is missing', async () => {
@@ -81,7 +90,7 @@ describe('authRoutes', () => {
                 .send({ login: 'admin' });
 
             expect(res.status).toBe(400);
-            expect(res.body.error).toBe('Validation Error');
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
         it('returns 400 when both login and password are empty strings', async () => {
@@ -90,7 +99,7 @@ describe('authRoutes', () => {
                 .send({ login: '', password: '' });
 
             expect(res.status).toBe(400);
-            expect(res.body.error).toBe('Validation Error');
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
         it('returns 401 when credentials are invalid', async () => {
