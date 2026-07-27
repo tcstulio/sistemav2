@@ -11,6 +11,19 @@ const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, _res: any, ne
     next();
 }));
 
+const mockRequireAdmin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => {
+    const user = req.user || {};
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+    const isAdmin = user.role === 'admin' || roles.includes('admin') || user.admin === '1' || user.admin === 1 || user.admin === true;
+    if (!isAdmin) {
+        return res.status(403).json({
+            success: false,
+            error: { code: 'INSUFFICIENT_ROLE', message: 'Access Denied: Insufficient role.' },
+        });
+    }
+    next();
+}));
+
 const mockAdminAuditService = vi.hoisted(() => ({
     record: vi.fn(),
 }));
@@ -24,6 +37,7 @@ const mockDocumentService = vi.hoisted(() => ({
 
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
+    requireAdmin: mockRequireAdmin,
 }));
 
 vi.mock('../../services/adminAuditService', () => ({
@@ -171,8 +185,8 @@ describe('documentRoutes', () => {
             expect(res.body).toEqual({
                 success: false,
                 error: {
-                    code: 'FORBIDDEN',
-                    message: 'Apenas administradores podem pular aprovação',
+                    code: 'INSUFFICIENT_ROLE',
+                    message: 'Access Denied: Insufficient role.',
                 },
             });
             expect(mockAdminAuditService.record).toHaveBeenCalledWith(expect.objectContaining({
@@ -221,6 +235,20 @@ describe('documentRoutes', () => {
                 .send({ ...validDocument, skipApproval: true });
 
             expect(res.status).toBe(201);
+            expect(mockAdminAuditService.record).toHaveBeenCalledWith(expect.objectContaining({
+                userRole: 'admin',
+            }));
+        });
+
+        it('accepts an admin role supplied in the roles array', async () => {
+            mockUser.current = { id: 'admin-roles', login: 'roles-admin', roles: ['admin'] };
+
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validDocument, skipApproval: true });
+
+            expect(res.status).toBe(201);
+            expect(mockRequireAdmin).toHaveBeenCalled();
             expect(mockAdminAuditService.record).toHaveBeenCalledWith(expect.objectContaining({
                 userRole: 'admin',
             }));

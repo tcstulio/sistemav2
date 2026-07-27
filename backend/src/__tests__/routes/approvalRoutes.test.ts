@@ -129,6 +129,14 @@ describe('approvalRoutes', () => {
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
+        it('returns 400 when banco is invalid', async () => {
+            const res = await request(app).get('/api/approvals/pending?banco=invalid');
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
         it('returns 500 when service throws', async () => {
             mockApprovalService.getPendingActions.mockRejectedValue(new Error('Database error'));
 
@@ -180,6 +188,19 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('accepts all supported history query filters', async () => {
+            const res = await request(app).get('/api/approvals/history?type=pagar_boleto&status=approved&dateFrom=2025-01-01&dateTo=2025-01-31&limit=10');
+
+            expect(res.status).toBe(200);
+            expect(mockApprovalService.getActionHistory).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'pagar_boleto',
+                status: 'approved',
+                dateFrom: expect.any(Date),
+                dateTo: expect.any(Date),
+                limit: 10,
+            }));
         });
 
         it('returns 500 when service throws', async () => {
@@ -239,6 +260,14 @@ describe('approvalRoutes', () => {
             expect(res.status).toBe(404);
             expect(res.body.success).toBe(false);
             expect(res.body.error.code).toBe('NOT_FOUND');
+        });
+
+        it('returns 400 for unknown query params on action details', async () => {
+            const res = await request(app).get('/api/approvals/action-123?foo=bar');
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
         it('returns 500 when service throws', async () => {
@@ -334,6 +363,20 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when typed payload contains arbitrary fields', async () => {
+            const res = await request(app)
+                .post('/api/approvals')
+                .send({
+                    type: 'pagar_boleto',
+                    payload: { barCode: '123', amount: 100, arbitrary: 'value' },
+                    description: 'Test',
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockApprovalService.createPendingAction).not.toHaveBeenCalled();
         });
 
         it('returns 500 when service throws', async () => {

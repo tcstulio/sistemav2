@@ -4,14 +4,14 @@
  * Endpoints para envio de documentos via WhatsApp
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
-import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { requireDolibarrLogin, requireAdmin } from '../middleware/authMiddleware';
 import { validateBody } from '../middleware/validation';
-import { created, fail, ok } from '../utils/apiResponse';
+import { created, fail, ok, success } from '../utils/apiResponse';
 import { asyncHandler } from '../utils/asyncHandler';
 import { NotFoundError } from '../middleware/errorHandler';
 import { createLogger } from '../utils/logger';
@@ -26,6 +26,7 @@ type DocumentUser = {
     id?: string | number;
     login?: string;
     role?: string;
+    roles?: unknown;
     admin?: string | number | boolean;
 };
 
@@ -41,13 +42,18 @@ function getRequestUser(req: Request): DocumentUser {
 
 export function isAdmin(req: Request): boolean {
     const user = getRequestUser(req);
-    return user.role === 'admin' || user.admin === '1' || user.admin === 1 || user.admin === true;
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+    return user.role?.trim().toLowerCase() === 'admin' ||
+        roles.some((role) => typeof role === 'string' && role.trim().toLowerCase() === 'admin') ||
+        user.admin === '1' ||
+        user.admin === 1 ||
+        user.admin === true;
 }
 
 function auditSkipApproval(req: Request, fields: DocumentAuditFields, allowed: boolean): void {
     const user = getRequestUser(req);
     const userId = String(user.id || user.login || 'unknown');
-    const userRole = user.role || (isAdmin(req) ? 'admin' : 'user');
+    const userRole = isAdmin(req) ? 'admin' : user.role || 'user';
     const timestamp = new Date().toISOString();
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
 
@@ -113,39 +119,37 @@ const documentUpdateSchema = documentCreateSchema
         }
     });
 
-// ===== Endpoints =====
+type SkipApprovalData = {
+    skipApproval?: boolean;
+    documentType?: string;
+    entityType?: string;
+    entityId?: string | number;
+    documentId?: string | number;
+};
 
-function handleSkipApprovalPolicy(
-    req: Request,
-    res: Response,
-    data: { skipApproval?: boolean; documentType?: string; entityType?: string; entityId?: string | number }
-): boolean {
-    if (data.skipApproval !== true) return true;
+type SkipApprovalFields = (req: Request, data: SkipApprovalData) => DocumentAuditFields;
 
-    const allowed = isAdmin(req);
-    auditSkipApproval(
-        req,
-        {
-            documentType: data.documentType || 'unknown',
-            entityType: data.entityType || 'unknown',
-            entityId: data.entityId || req.params.id || 'unknown',
-        },
-        allowed
-    );
+function requireAdminForSkipApproval(getFields: SkipApprovalFields) {
+    return (req: Request, res: Response, next: NextFunction) => {
+        const data = (req.body || {}) as SkipApprovalData;
+        if (data.skipApproval !== true) return next();
 
-    if (!allowed) {
-        fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
-        return false;
-    }
-    return true;
+        const allowed = isAdmin(req);
+        auditSkipApproval(req, getFields(req, data), allowed);
+        return requireAdmin(req, res, next);
+    };
 }
 
 router.post(
     '/',
     validateBody(documentCreateSchema),
+    requireAdminForSkipApproval((_req, data) => ({
+        documentType: data.documentType || 'unknown',
+        entityType: data.entityType || 'unknown',
+        entityId: data.entityId ?? 'unknown',
+    })),
     asyncHandler(async (req, res) => {
         const data = req.body as z.infer<typeof documentCreateSchema>;
-        if (!handleSkipApprovalPolicy(req, res, data)) return;
         return created(res, data);
     })
 );
@@ -153,9 +157,13 @@ router.post(
 router.put(
     '/:id',
     validateBody(documentUpdateSchema),
+    requireAdminForSkipApproval((req, data) => ({
+        documentType: data.documentType || 'unknown',
+        entityType: data.entityType || 'unknown',
+        entityId: data.entityId ?? req.params.id ?? 'unknown',
+    })),
     asyncHandler(async (req, res) => {
         const data = req.body as z.infer<typeof documentUpdateSchema>;
-        if (!handleSkipApprovalPolicy(req, res, data)) return;
         return ok(res, { id: req.params.id, ...data });
     })
 );
@@ -167,22 +175,14 @@ router.put(
 router.post(
     '/send',
     validateBody(SendDocumentSchema),
+    requireAdminForSkipApproval((_req, data) => ({
+        documentType: data.documentType || 'unknown',
+        entityType: data.documentType === 'boleto' ? 'bank-slip' : data.documentType || 'unknown',
+        entityId: data.documentId ?? 'unknown',
+    })),
     asyncHandler(async (req, res) => {
         const data = req.body as z.infer<typeof SendDocumentSchema>;
         const user = getRequestUser(req);
-
-        if (data.skipApproval) {
-            const allowed = isAdmin(req);
-            auditSkipApproval(req, {
-                documentType: data.documentType,
-                entityType: data.documentType === 'boleto' ? 'bank-slip' : data.documentType,
-                entityId: data.documentId,
-            }, allowed);
-
-            if (!allowed) {
-                return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
-            }
-        }
 
         // Se thirdPartyId foi fornecido, buscar telefone
         let phone = data.phone;
@@ -206,14 +206,11 @@ router.post(
         });
 
         if (result.approvalRequired) {
-            return res.status(202).json({
-                success: true,
-                data: {
-                    message: 'Documento adicionado à fila de aprovação',
-                    actionId: result.actionId,
-                    approvalRequired: true,
-                },
-            });
+            return success(res, {
+                message: 'Documento adicionado à fila de aprovação',
+                actionId: result.actionId,
+                approvalRequired: true,
+            }, 202);
         }
 
         return ok(res, {

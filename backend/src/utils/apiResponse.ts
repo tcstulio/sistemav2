@@ -55,13 +55,22 @@ export interface ApiMeta {
  */
 export type ApiResponse<T> = ApiSuccess<T> | ApiErrorBody;
 
+export function success<T>(
+    res: Response,
+    data: T,
+    status: number = 200,
+    meta?: ApiMeta
+): Response {
+    const body: ApiSuccess<T> = { success: true, data };
+    if (meta) body.meta = meta;
+    return res.status(status).json(body);
+}
+
 /**
  * 200 OK — payload genérico com metadados opcionais.
  */
 export function ok<T>(res: Response, data: T, meta?: ApiMeta): Response {
-    const body: ApiSuccess<T> = { success: true, data };
-    if (meta) body.meta = meta;
-    return res.status(200).json(body);
+    return success(res, data, 200, meta);
 }
 
 /**
@@ -69,9 +78,7 @@ export function ok<T>(res: Response, data: T, meta?: ApiMeta): Response {
  * O envelope inclui `data` (recurso criado); metadados opcionais.
  */
 export function created<T>(res: Response, data: T, meta?: ApiMeta): Response {
-    const body: ApiSuccess<T> = { success: true, data };
-    if (meta) body.meta = meta;
-    return res.status(201).json(body);
+    return success(res, data, 201, meta);
 }
 
 /**
@@ -124,6 +131,7 @@ export function noContent(res: Response): Response {
 }
 
 export default {
+    success,
     ok,
     created,
     fail,

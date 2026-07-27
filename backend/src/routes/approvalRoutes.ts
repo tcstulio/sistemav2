@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { approvalService, ActionType, ActionStatus } from '../services/approvalService';
 import { requireDolibarrLogin, requireAdmin } from '../middleware/authMiddleware';
 import { validateQuery, validateBody, validateParams } from '../middleware/validation';
-import { created, fail, ok } from '../utils/apiResponse';
+import { created, fail, ok, success } from '../utils/apiResponse';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 
@@ -32,6 +32,12 @@ const ACTION_TYPES = [
 
 const BANCOS = ['inter', 'itau'] as const;
 
+const AUTH_QUERY_FIELDS = {
+    DOLAPIKEY: z.string().optional(),
+    dolapikey: z.string().optional(),
+    apiKey: z.string().optional(),
+};
+
 const ACTION_STATUSES = [
     'pending',
     'approved',
@@ -45,36 +51,36 @@ const BoletoPayloadSchema = z
         barCode: z.string().min(1),
         amount: z.number().positive(),
     })
-    .passthrough();
+    .strict();
 
 const PixPayloadSchema = z
     .object({
         chave: z.string().min(1),
         valor: z.number().positive(),
     })
-    .passthrough();
+    .strict();
 
 const FaturaPayloadSchema = z
     .object({
         invoiceId: z.union([z.string(), z.number()]),
     })
-    .passthrough();
+    .strict();
 
 const DocumentoPayloadSchema = z
     .object({
         documentType: z.string().min(1),
         documentId: z.union([z.string(), z.number()]),
     })
-    .passthrough();
+    .strict();
 
 const ReconciliacaoPayloadSchema = z
     .object({
         lineId: z.union([z.string(), z.number()]),
         invoiceId: z.union([z.string(), z.number()]),
     })
-    .passthrough();
+    .strict();
 
-const SaldoPayloadSchema = z.object({}).passthrough();
+const SaldoPayloadSchema = z.object({}).strict();
 
 const CreateActionSchema = z.discriminatedUnion('type', [
     z.object({
@@ -82,39 +88,39 @@ const CreateActionSchema = z.discriminatedUnion('type', [
         banco: z.enum(BANCOS).optional(),
         payload: BoletoPayloadSchema,
         description: z.string().min(1),
-    }),
+    }).strict(),
     z.object({
         type: z.literal('enviar_pix'),
         banco: z.enum(BANCOS).optional(),
         payload: PixPayloadSchema,
         description: z.string().min(1),
-    }),
+    }).strict(),
     z.object({
         type: z.literal('baixar_fatura'),
         payload: FaturaPayloadSchema,
         description: z.string().min(1),
-    }),
+    }).strict(),
     z.object({
         type: z.literal('enviar_documento'),
         payload: DocumentoPayloadSchema,
         description: z.string().min(1),
-    }),
+    }).strict(),
     z.object({
         type: z.literal('aprovar_reconciliacao'),
         payload: ReconciliacaoPayloadSchema,
         description: z.string().min(1),
-    }),
+    }).strict(),
     z.object({
         type: z.literal('consulta_saldo'),
         banco: z.enum(BANCOS).optional(),
         payload: SaldoPayloadSchema,
         description: z.string().min(1),
-    }),
+    }).strict(),
 ]);
 
 export const RejectionSchema = z.object({
     reason: z.string().min(1).max(500).optional(),
-});
+}).strict();
 
 export const ApprovalDecisionSchema = z.object({}).strict();
 
@@ -123,10 +129,11 @@ export const BulkApprovalSchema = z.object({
         .array(z.string().min(1))
         .min(1, 'Informe ao menos uma ação')
         .max(100, 'Limite de 100 ações por requisição'),
-});
+}).strict();
 
 const PendingQuerySchema = z
     .object({
+        ...AUTH_QUERY_FIELDS,
         type: z.enum(ACTION_TYPES).optional(),
         banco: z.enum(BANCOS).optional(),
     })
@@ -134,6 +141,7 @@ const PendingQuerySchema = z
 
 const HistoryQuerySchema = z
     .object({
+        ...AUTH_QUERY_FIELDS,
         type: z.enum(ACTION_TYPES).optional(),
         status: z.enum(ACTION_STATUSES).optional(),
         dateFrom: z.string().regex(DATE_REGEX, 'dateFrom deve estar no formato YYYY-MM-DD').optional(),
@@ -146,11 +154,11 @@ const HistoryQuerySchema = z
     })
     .strict();
 
-const StatsQuerySchema = z.object({}).strict();
+const EmptyQuerySchema = z.object(AUTH_QUERY_FIELDS).strict();
 
 const IdParamSchema = z.object({
     id: z.string().min(1, 'id é obrigatório'),
-});
+}).strict();
 
 function getRequestUser(req: Request): { id?: string | number; login?: string } {
     const user = (req as Request & { user?: { id?: string | number; login?: string } }).user;
@@ -204,7 +212,7 @@ router.get(
  */
 router.get(
     '/stats',
-    validateQuery(StatsQuerySchema),
+    validateQuery(EmptyQuerySchema),
     asyncHandler(async (_req, res) => {
         const stats = await approvalService.getStats();
         return ok(res, stats);
@@ -217,6 +225,7 @@ router.get(
  */
 router.get(
     '/:id',
+    validateQuery(EmptyQuerySchema),
     validateParams(IdParamSchema),
     asyncHandler(async (req, res) => {
         const { id } = req.params as z.infer<typeof IdParamSchema>;
@@ -268,7 +277,7 @@ router.post(
 
         const summary = await approvalService.bulkApproveActions(actionIds, approvedBy);
         const status = summary.failed === 0 ? 200 : 207;
-        res.status(status).json({ success: true, data: summary });
+        return success(res, summary, status);
     })
 );
 

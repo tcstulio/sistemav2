@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ok, created, fail, paginated, noContent } from '../../utils/apiResponse';
+import { success, ok, created, fail, paginated, noContent } from '../../utils/apiResponse';
 import type { Response } from 'express';
 
 /**
@@ -25,6 +25,20 @@ function mockRes() {
         send: ReturnType<typeof vi.fn>;
     };
 }
+
+describe('success', () => {
+    it('uses a custom HTTP status while preserving the standard envelope', () => {
+        const res = mockRes();
+
+        success(res, { queued: true }, 202);
+
+        expect(res.status).toHaveBeenCalledWith(202);
+        expect(res.json).toHaveBeenCalledWith({
+            success: true,
+            data: { queued: true },
+        });
+    });
+});
 
 describe('ok (#1540 apiResponse)', () => {
     it('returns 200 with { success: true, data } and no meta by default', () => {
