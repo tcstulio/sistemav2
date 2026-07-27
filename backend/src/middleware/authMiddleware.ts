@@ -327,3 +327,11 @@ export function requireRole(role: string | string[]) {
 }
 
 export const requireAuth = requireDolibarrLogin;
+
+/**
+ * Atalho semântico para `requireRole('admin')`. Use em endpoints que mexem em
+ * recursos sensíveis (aprovar/rejeitar ações financeiras, pular aprovações, etc.)
+ * quando o requisito é apenas "usuário com papel admin" — sem precisar bater
+ * no Dolibarr para revalidar o status a cada request como o `requireDolibarrAdmin`.
+ */
+export const requireAdmin = requireRole('admin');

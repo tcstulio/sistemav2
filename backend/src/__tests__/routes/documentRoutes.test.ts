@@ -70,11 +70,13 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 import documentRoutes from '../../routes/documentRoutes';
+import { errorHandler } from '../../middleware/errorHandler';
 
 function createApp() {
     const app = express();
     app.use(express.json());
     app.use('/api/documents', documentRoutes);
+    app.use(errorHandler);
     return app;
 }
 

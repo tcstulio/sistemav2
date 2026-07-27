@@ -1,214 +1,322 @@
 /**
  * Approval Routes
- * 
+ *
  * Endpoints para gerenciar aprovações de automações bancárias
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request } from 'express';
 import { z } from 'zod';
 import { approvalService, ActionType, ActionStatus } from '../services/approvalService';
-import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
-import { createLogger } from '../utils/logger';
+import { requireDolibarrLogin, requireAdmin } from '../middleware/authMiddleware';
+import { validateQuery, validateBody, validateParams } from '../middleware/validation';
+import { created, fail, ok } from '../utils/apiResponse';
+import { asyncHandler } from '../utils/asyncHandler';
+import { AppError } from '../middleware/errorHandler';
 
-const log = createLogger('Approval');
 const router = Router();
 
-// Proteger todas as rotas de aprovação (leitura requer login, escrita requer admin)
 router.get('/*', requireDolibarrLogin);
-router.post('/', requireDolibarrLogin);
+router.post('/*', requireDolibarrLogin);
 
-// ===== Schemas de Validação =====
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const DIGITS_REGEX = /^\d+$/;
 
-const CreateActionSchema = z.object({
-    type: z.enum(['pagar_boleto', 'enviar_pix', 'baixar_fatura', 'enviar_documento']),
-    banco: z.enum(['inter', 'itau']).optional(),
-    payload: z.any(),
-    description: z.string().min(1),
+const ACTION_TYPES = [
+    'pagar_boleto',
+    'enviar_pix',
+    'baixar_fatura',
+    'enviar_documento',
+    'aprovar_reconciliacao',
+    'consulta_saldo',
+] as const;
+
+const BANCOS = ['inter', 'itau'] as const;
+
+const ACTION_STATUSES = [
+    'pending',
+    'approved',
+    'rejected',
+    'executed',
+    'failed',
+] as const;
+
+const BoletoPayloadSchema = z
+    .object({
+        barCode: z.string().min(1),
+        amount: z.number().positive(),
+    })
+    .passthrough();
+
+const PixPayloadSchema = z
+    .object({
+        chave: z.string().min(1),
+        valor: z.number().positive(),
+    })
+    .passthrough();
+
+const FaturaPayloadSchema = z
+    .object({
+        invoiceId: z.union([z.string(), z.number()]),
+    })
+    .passthrough();
+
+const DocumentoPayloadSchema = z
+    .object({
+        documentType: z.string().min(1),
+        documentId: z.union([z.string(), z.number()]),
+    })
+    .passthrough();
+
+const ReconciliacaoPayloadSchema = z
+    .object({
+        lineId: z.union([z.string(), z.number()]),
+        invoiceId: z.union([z.string(), z.number()]),
+    })
+    .passthrough();
+
+const SaldoPayloadSchema = z.object({}).passthrough();
+
+const CreateActionSchema = z.discriminatedUnion('type', [
+    z.object({
+        type: z.literal('pagar_boleto'),
+        banco: z.enum(BANCOS).optional(),
+        payload: BoletoPayloadSchema,
+        description: z.string().min(1),
+    }),
+    z.object({
+        type: z.literal('enviar_pix'),
+        banco: z.enum(BANCOS).optional(),
+        payload: PixPayloadSchema,
+        description: z.string().min(1),
+    }),
+    z.object({
+        type: z.literal('baixar_fatura'),
+        payload: FaturaPayloadSchema,
+        description: z.string().min(1),
+    }),
+    z.object({
+        type: z.literal('enviar_documento'),
+        payload: DocumentoPayloadSchema,
+        description: z.string().min(1),
+    }),
+    z.object({
+        type: z.literal('aprovar_reconciliacao'),
+        payload: ReconciliacaoPayloadSchema,
+        description: z.string().min(1),
+    }),
+    z.object({
+        type: z.literal('consulta_saldo'),
+        banco: z.enum(BANCOS).optional(),
+        payload: SaldoPayloadSchema,
+        description: z.string().min(1),
+    }),
+]);
+
+export const RejectionSchema = z.object({
+    reason: z.string().min(1).max(500).optional(),
 });
 
-const RejectActionSchema = z.object({
-    reason: z.string().optional(),
+export const ApprovalDecisionSchema = z.object({}).strict();
+
+export const BulkApprovalSchema = z.object({
+    actionIds: z
+        .array(z.string().min(1))
+        .min(1, 'Informe ao menos uma ação')
+        .max(100, 'Limite de 100 ações por requisição'),
 });
 
-// ===== Endpoints =====
+const PendingQuerySchema = z
+    .object({
+        type: z.enum(ACTION_TYPES).optional(),
+        banco: z.enum(BANCOS).optional(),
+    })
+    .strict();
+
+const HistoryQuerySchema = z
+    .object({
+        type: z.enum(ACTION_TYPES).optional(),
+        status: z.enum(ACTION_STATUSES).optional(),
+        startDate: z.string().regex(DATE_REGEX, 'startDate deve estar no formato YYYY-MM-DD').optional(),
+        endDate: z.string().regex(DATE_REGEX, 'endDate deve estar no formato YYYY-MM-DD').optional(),
+        limit: z
+            .string()
+            .regex(DIGITS_REGEX, 'limit deve ser numérico')
+            .transform((v) => Number(v))
+            .optional(),
+    })
+    .strict();
+
+const StatsQuerySchema = z.object({}).strict();
+
+const IdParamSchema = z.object({
+    id: z.string().min(1, 'id é obrigatório'),
+});
+
+function getRequestUser(req: Request): { id?: string | number; login?: string } {
+    const user = (req as Request & { user?: { id?: string | number; login?: string } }).user;
+    return user || {};
+}
 
 /**
  * GET /api/approvals/pending
  * Lista ações pendentes de aprovação
  */
-router.get('/pending', async (req: Request, res: Response) => {
-    try {
-        const { type, banco } = req.query;
+router.get(
+    '/pending',
+    validateQuery(PendingQuerySchema),
+    asyncHandler(async (req, res) => {
+        const { type, banco } = req.query as z.infer<typeof PendingQuerySchema>;
 
         const actions = await approvalService.getPendingActions({
             type: type as ActionType,
             banco: banco as 'inter' | 'itau',
         });
 
-        res.json({
-            success: true,
-            count: actions.length,
-            actions,
-        });
-    } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+        return ok(res, actions, { count: actions.length });
+    })
+);
 
 /**
  * GET /api/approvals/history
  * Lista histórico de ações (aprovadas, rejeitadas, executadas)
  */
-router.get('/history', async (req: Request, res: Response) => {
-    try {
-        const { type, status, startDate, endDate, limit } = req.query;
+router.get(
+    '/history',
+    validateQuery(HistoryQuerySchema),
+    asyncHandler(async (req, res) => {
+        const { type, status, startDate, endDate, limit } = req.query as unknown as z.infer<typeof HistoryQuerySchema>;
 
         const history = await approvalService.getActionHistory({
             type: type as ActionType,
             status: status as ActionStatus,
-            startDate: startDate ? new Date(startDate as string) : undefined,
-            endDate: endDate ? new Date(endDate as string) : undefined,
-            limit: limit ? parseInt(limit as string) : 100,
+            startDate: startDate ? new Date(startDate) : undefined,
+            endDate: endDate ? new Date(endDate) : undefined,
+            limit: limit || 100,
         });
 
-        res.json({
-            success: true,
-            count: history.length,
-            history,
-        });
-    } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+        return ok(res, history, { count: history.length });
+    })
+);
 
 /**
  * GET /api/approvals/stats
  * Estatísticas de aprovação
  */
-router.get('/stats', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/stats',
+    validateQuery(StatsQuerySchema),
+    asyncHandler(async (_req, res) => {
         const stats = await approvalService.getStats();
-        res.json({ success: true, stats });
-    } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+        return ok(res, stats);
+    })
+);
 
 /**
  * GET /api/approvals/:id
  * Detalhes de uma ação específica
  */
-router.get('/:id', async (req: Request, res: Response) => {
-    try {
-        const { id } = req.params;
+router.get(
+    '/:id',
+    validateParams(IdParamSchema),
+    asyncHandler(async (req, res) => {
+        const { id } = req.params as z.infer<typeof IdParamSchema>;
         const action = await approvalService.getActionById(id);
 
         if (!action) {
-            return res.status(404).json({ success: false, error: 'Ação não encontrada' });
+            return fail(res, 'NOT_FOUND', 'Ação não encontrada', 404);
         }
 
-        res.json({ success: true, action });
-    } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+        return ok(res, action);
+    })
+);
 
 /**
  * POST /api/approvals
  * Cria uma nova ação pendente
  */
-router.post('/', async (req: Request, res: Response) => {
-    try {
-        const data = CreateActionSchema.parse(req.body);
-        const user = (req as any).user;
+router.post(
+    '/',
+    validateBody(CreateActionSchema),
+    asyncHandler(async (req, res) => {
+        const data = req.body as z.infer<typeof CreateActionSchema>;
+        const user = getRequestUser(req);
 
         const action = await approvalService.createPendingAction({
             type: data.type,
-            banco: data.banco,
+            banco: 'banco' in data ? data.banco : undefined,
             payload: data.payload,
             description: data.description,
-            requestedBy: user?.login || user?.id || 'unknown',
+            requestedBy: String(user?.login || user?.id || 'unknown'),
         });
 
-        res.status(201).json({
-            success: true,
-            message: 'Ação criada e aguardando aprovação',
-            action,
-        });
-    } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({
-                success: false,
-                error: 'Dados inválidos',
-                details: error.issues
-            });
-        }
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+        return created(res, action);
+    })
+);
+
+/**
+ * POST /api/approvals/bulk
+ * Aprova várias ações em sequência. Admin-only (issue #1544).
+ */
+router.post(
+    '/bulk',
+    requireAdmin,
+    validateBody(BulkApprovalSchema),
+    asyncHandler(async (req, res) => {
+        const { actionIds } = req.body as z.infer<typeof BulkApprovalSchema>;
+        const user = getRequestUser(req);
+        const approvedBy = String(user?.login || user?.id || 'unknown');
+
+        const summary = await approvalService.bulkApproveActions(actionIds, approvedBy);
+        const status = summary.failed === 0 ? 200 : 207;
+        res.status(status).json({ success: true, data: summary });
+    })
+);
 
 /**
  * POST /api/approvals/:id/approve
- * Aprova uma ação e executa automaticamente
+ * Aprova uma ação e executa automaticamente. Admin-only (issue #1544).
  */
-router.post('/:id/approve', requireDolibarrAdmin, async (req: Request, res: Response) => {
-    try {
-        const { id } = req.params;
-        const user = (req as any).user;
+router.post(
+    '/:id/approve',
+    requireAdmin,
+    validateParams(IdParamSchema),
+    validateBody(ApprovalDecisionSchema),
+    asyncHandler(async (req, res) => {
+        const { id } = req.params as z.infer<typeof IdParamSchema>;
+        const user = getRequestUser(req);
+        const approvedBy = String(user?.login || user?.id || 'unknown');
 
-        const result = await approvalService.approveAction(
-            id,
-            user?.login || user?.id || 'unknown'
-        );
-
+        const result = await approvalService.approveAction(id, approvedBy);
         if (!result.success) {
-            return res.status(400).json(result);
+            throw new AppError(400, 'BAD_REQUEST', result.error || 'Falha ao aprovar ação');
         }
 
-        res.json({
-            success: true,
-            message: 'Ação aprovada e executada com sucesso',
-            result: result.result,
-        });
-    } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+        return ok(res, { result: result.result });
+    })
+);
 
 /**
  * POST /api/approvals/:id/reject
- * Rejeita uma ação
+ * Rejeita uma ação. Admin-only (issue #1544).
  */
-router.post('/:id/reject', requireDolibarrAdmin, async (req: Request, res: Response) => {
-    try {
-        const { id } = req.params;
-        const { reason } = RejectActionSchema.parse(req.body);
-        const user = (req as any).user;
+router.post(
+    '/:id/reject',
+    requireAdmin,
+    validateParams(IdParamSchema),
+    validateBody(RejectionSchema),
+    asyncHandler(async (req, res) => {
+        const { id } = req.params as z.infer<typeof IdParamSchema>;
+        const { reason } = req.body as z.infer<typeof RejectionSchema>;
+        const user = getRequestUser(req);
+        const rejectedBy = String(user?.login || user?.id || 'unknown');
 
-        const result = await approvalService.rejectAction(
-            id,
-            user?.login || user?.id || 'unknown',
-            reason
-        );
-
+        const result = await approvalService.rejectAction(id, rejectedBy, reason);
         if (!result.success) {
-            return res.status(400).json(result);
+            throw new AppError(400, 'BAD_REQUEST', result.error || 'Falha ao rejeitar ação');
         }
 
-        res.json({
-            success: true,
-            message: 'Ação rejeitada',
-        });
-    } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({
-                success: false,
-                error: 'Dados inválidos',
-                details: error.issues
-            });
-        }
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+        return ok(res, { rejected: true });
+    })
+);
 
 export default router;

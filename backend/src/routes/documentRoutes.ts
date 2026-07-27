@@ -10,7 +10,10 @@ import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { validateBody } from '../middleware/validation';
 import { created, fail, ok } from '../utils/apiResponse';
+import { asyncHandler } from '../utils/asyncHandler';
+import { NotFoundError } from '../middleware/errorHandler';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Document');
@@ -112,53 +115,60 @@ const documentUpdateSchema = documentCreateSchema
 
 // ===== Endpoints =====
 
-function validationDetails(error: z.ZodError): Array<{ field: string; message: string }> {
-    return error.issues.map((issue) => ({
-        field: issue.path.join('.'),
-        message: issue.message,
-    }));
-}
+function handleSkipApprovalPolicy(
+    req: Request,
+    res: Response,
+    data: { skipApproval?: boolean; documentType?: string; entityType?: string; entityId?: string | number }
+): boolean {
+    if (data.skipApproval !== true) return true;
 
-function handleDocumentMutation(req: Request, res: Response, update: boolean): Response {
-    const parsed = update
-        ? documentUpdateSchema.safeParse(req.body)
-        : documentCreateSchema.safeParse(req.body);
-
-    if (!parsed.success) {
-        return fail(res, 'VALIDATION_ERROR', 'Dados inválidos', 400, validationDetails(parsed.error));
-    }
-
-    const data = parsed.data;
-    if (data.skipApproval === true) {
-        const allowed = isAdmin(req);
-        auditSkipApproval(req, {
+    const allowed = isAdmin(req);
+    auditSkipApproval(
+        req,
+        {
             documentType: data.documentType || 'unknown',
             entityType: data.entityType || 'unknown',
             entityId: data.entityId || req.params.id || 'unknown',
-        }, allowed);
+        },
+        allowed
+    );
 
-        if (!allowed) {
-            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
-        }
+    if (!allowed) {
+        fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
+        return false;
     }
-
-    if (update) {
-        return ok(res, { id: req.params.id, ...data });
-    }
-
-    return created(res, data);
+    return true;
 }
 
-router.post('/', (req: Request, res: Response) => handleDocumentMutation(req, res, false));
-router.put('/:id', (req: Request, res: Response) => handleDocumentMutation(req, res, true));
+router.post(
+    '/',
+    validateBody(documentCreateSchema),
+    asyncHandler(async (req, res) => {
+        const data = req.body as z.infer<typeof documentCreateSchema>;
+        if (!handleSkipApprovalPolicy(req, res, data)) return;
+        return created(res, data);
+    })
+);
+
+router.put(
+    '/:id',
+    validateBody(documentUpdateSchema),
+    asyncHandler(async (req, res) => {
+        const data = req.body as z.infer<typeof documentUpdateSchema>;
+        if (!handleSkipApprovalPolicy(req, res, data)) return;
+        return ok(res, { id: req.params.id, ...data });
+    })
+);
 
 /**
  * POST /api/documents/send
  * Envia documento via WhatsApp (passa pelo sistema de aprovação)
  */
-router.post('/send', async (req: Request, res: Response) => {
-    try {
-        const data = SendDocumentSchema.parse(req.body);
+router.post(
+    '/send',
+    validateBody(SendDocumentSchema),
+    asyncHandler(async (req, res) => {
+        const data = req.body as z.infer<typeof SendDocumentSchema>;
         const user = getRequestUser(req);
 
         if (data.skipApproval) {
@@ -211,20 +221,16 @@ router.post('/send', async (req: Request, res: Response) => {
             messageId: result.messageId,
             approvalRequired: false,
         });
-    } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return fail(res, 'VALIDATION_ERROR', 'Dados inválidos', 400, validationDetails(error));
-        }
-        return fail(res, 'INTERNAL_ERROR', error.message, 500);
-    }
-});
+    })
+);
 
 /**
  * GET /api/documents/boleto/:banco/:nossoNumero/preview
  * Preview de boleto (retorna PDF)
  */
-router.get('/boleto/:banco/:nossoNumero/preview', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/boleto/:banco/:nossoNumero/preview',
+    asyncHandler(async (req, res) => {
         const { banco, nossoNumero } = req.params;
 
         if (banco !== 'inter' && banco !== 'itau') {
@@ -236,17 +242,16 @@ router.get('/boleto/:banco/:nossoNumero/preview', async (req: Request, res: Resp
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="boleto_${nossoNumero}.pdf"`);
         res.send(pdf);
-    } catch (error: any) {
-        return fail(res, 'INTERNAL_ERROR', error.message, 500);
-    }
-});
+    })
+);
 
 /**
  * GET /api/documents/invoice/:invoiceId/preview
  * Preview de fatura (retorna PDF)
  */
-router.get('/invoice/:invoiceId/preview', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/invoice/:invoiceId/preview',
+    asyncHandler(async (req, res) => {
         const { invoiceId } = req.params;
 
         const pdf = await documentService.getInvoicePDF(invoiceId);
@@ -254,17 +259,16 @@ router.get('/invoice/:invoiceId/preview', async (req: Request, res: Response) =>
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="fatura_${invoiceId}.pdf"`);
         res.send(pdf);
-    } catch (error: any) {
-        return fail(res, 'INTERNAL_ERROR', error.message, 500);
-    }
-});
+    })
+);
 
 /**
  * GET /api/documents/customer/:thirdPartyId/phone
  * Busca telefone do cliente
  */
-router.get('/customer/:thirdPartyId/phone', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/customer/:thirdPartyId/phone',
+    asyncHandler(async (req, res) => {
         const { thirdPartyId } = req.params;
 
         const phone = await documentService.getCustomerPhone(thirdPartyId);
@@ -274,15 +278,14 @@ router.get('/customer/:thirdPartyId/phone', async (req: Request, res: Response) 
         }
 
         return ok(res, { phone });
-    } catch (error: any) {
-        return fail(res, 'INTERNAL_ERROR', error.message, 500);
-    }
-});
+    })
+);
 
 const VALID_DOC_TYPES = ['invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'] as const;
 
-router.get('/:entityType/:entityId/pdf', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/:entityType/:entityId/pdf',
+    asyncHandler(async (req, res) => {
         const { entityType, entityId } = req.params;
 
         if (!VALID_DOC_TYPES.includes(entityType as any)) {
@@ -299,19 +302,17 @@ router.get('/:entityType/:entityId/pdf', async (req: Request, res: Response) => 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${entityType}_${entityId}.pdf"`);
         res.send(pdf);
-    } catch (error: any) {
-        log.error(`Erro ao obter PDF ${req.params.entityType}/${req.params.entityId}: ${error.message}`);
-        return fail(res, 'INTERNAL_ERROR', error.message, 500);
-    }
-});
+    })
+);
 
 /**
  * Proxy da foto de usuário (avatar). Autentica pelo cookie httpOnly (requireDolibarrLogin),
  * busca a imagem no Dolibarr server-side e devolve o binário — assim o <img> do frontend não
  * precisa carregar o token na URL (#33). A chave de serviço nunca sai do servidor.
  */
-router.get('/user-photo', async (req: Request, res: Response) => {
-    try {
+router.get(
+    '/user-photo',
+    asyncHandler(async (req, res) => {
         const userId = String(req.query.userId || '');
         const file = String(req.query.file || '');
         if (!/^\d+$/.test(userId) || !file) {
@@ -323,22 +324,24 @@ router.get('/user-photo', async (req: Request, res: Response) => {
             return fail(res, 'BAD_REQUEST', 'Nome de arquivo inválido', 400);
         }
 
-        const { buffer, contentType } = await dolibarrService.getUserPhoto(userId, safeFile);
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('Cache-Control', 'private, max-age=300');
-        res.send(buffer);
-    } catch (error: any) {
-        // "Sem foto" é uma condição esperada (não é falha de servidor): loga em debug para não
-        // poluir o log; o frontend já exibe o avatar de fallback (iniciais) ao receber o 404.
-        // Erros reais (Dolibarr fora do ar, etc.) seguem como error. (#824)
-        const msg = error?.message || String(error);
-        if (/n[ãa]o encontrada/i.test(msg)) {
-            log.debug(`Foto não disponível para userId=${req.query.userId}`);
-        } else {
+        try {
+            const { buffer, contentType } = await dolibarrService.getUserPhoto(userId, safeFile);
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Cache-Control', 'private, max-age=300');
+            res.send(buffer);
+        } catch (error: any) {
+            // "Sem foto" é uma condição esperada (não é falha de servidor): loga em debug para não
+            // poluir o log; o frontend já exibe o avatar de fallback (iniciais) ao receber o 404.
+            // Erros reais (Dolibarr fora do ar, etc.) seguem como error. (#824)
+            const msg = error?.message || String(error);
+            if (/n[ãa]o encontrada/i.test(msg)) {
+                log.debug(`Foto não disponível para userId=${req.query.userId}`);
+                throw new NotFoundError('Foto não disponível');
+            }
             log.error(`Erro ao obter foto de usuário: ${msg}`);
+            throw error;
         }
-        return fail(res, 'NOT_FOUND', 'Foto não disponível', 404);
-    }
-});
+    })
+);
 
 export default router;

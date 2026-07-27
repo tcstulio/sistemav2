@@ -225,6 +225,31 @@ export class ApprovalService {
     }
 
     /**
+     * Aprova várias ações em sequência. Para cada id, delega ao fluxo normal de
+     * `approveAction` (mesma auditoria + execução + notificação). Retorna um
+     * agregado com o status individual — o handler pode decidir se considera
+     * sucesso parcial.
+     */
+    async bulkApproveActions(actionIds: string[], approvedBy: string): Promise<{
+        total: number;
+        succeeded: number;
+        failed: number;
+        results: Array<{ id: string; success: boolean; result?: any; error?: string }>;
+    }> {
+        const results: Array<{ id: string; success: boolean; result?: any; error?: string }> = [];
+        for (const id of actionIds) {
+            try {
+                const r = await this.approveAction(id, approvedBy);
+                results.push({ id, success: r.success, result: r.result, error: r.error });
+            } catch (e: any) {
+                results.push({ id, success: false, error: e?.message || String(e) });
+            }
+        }
+        const succeeded = results.filter(r => r.success).length;
+        return { total: actionIds.length, succeeded, failed: actionIds.length - succeeded, results };
+    }
+
+    /**
      * Aprova uma ação e executa automaticamente
      */
     async approveAction(actionId: string, approvedBy: string): Promise<{
