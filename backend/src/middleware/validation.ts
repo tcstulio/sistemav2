@@ -13,6 +13,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { z, ZodError, ZodSchema } from 'zod';
 import { ValidationError } from './errorHandler';
+import apiResponse from '../utils/apiResponse';
 
 /**
  * Formato canônico de cada item em `details` de uma ValidationError —
@@ -90,6 +91,40 @@ export function validateParams<T extends ZodSchema>(schema: T) {
             next(error);
         }
     };
+}
+
+/**
+ * Formato aceito para o header de API key do usuário (`dolapikey` / `userApiKey`):
+ * apenas caracteres alfanuméricos, comprimento 32–128. Chaves com espaços,
+ * símbolos ou tamanho fora da faixa indicam header forjado/corrompido e são
+ * rejeitadas com 401 ANTES de qualquer uso downstream (ex.: repasse à API do
+ * Dolibarr). Chaves do Dolibarr são alfanuméricas de 32 caracteres.
+ */
+export const USER_API_KEY_REGEX = /^[A-Za-z0-9]{32,128}$/;
+
+/**
+ * Middleware que valida o formato do header de API key quando ele está presente.
+ *
+ * - Ausente → segue o fluxo. A autenticação de sessão (`requireDolibarrLogin`)
+ *   continua sendo a barreira; nem toda rota exige a chave via header.
+ * - Presente e MALFORMADA → 401 `INVALID_API_KEY` (envelope apiResponse).
+ * - Presente e válida → segue o fluxo.
+ *
+ * Aceita tanto o header canônico do Dolibarr (`dolapikey`) quanto o alias
+ * `userapikey` citado na issue #1542.
+ */
+export function validateUserApiKey(req: Request, res: Response, next: NextFunction): void {
+    const raw = req.headers['dolapikey'] ?? req.headers['userapikey'];
+    if (raw === undefined) {
+        next();
+        return;
+    }
+    const key = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof key !== 'string' || !USER_API_KEY_REGEX.test(key)) {
+        apiResponse.fail(res, 'INVALID_API_KEY', 'Header de API key inválido', 401);
+        return;
+    }
+    next();
 }
 
 // =============================================
@@ -281,10 +316,123 @@ export const BoletoWebhookSchema = z.object({
     valorTotalRecebimento: z.number().optional()
 });
 
+// =============================================
+// Banking Route Schemas (issue #1542)
+// =============================================
+
+/** Id de recurso — string não-vazia ou número. */
+const resourceId = z.union([z.string().min(1), z.number()]);
+
+/**
+ * Payload com um array de transações (endpoints categorize / anomalies).
+ * `.passthrough()` mantém os campos de cada transação intactos (a rota apenas
+ * converte `date` em `Date` antes de repassar ao serviço).
+ */
+export const TransactionsSchema = z.object({
+    transactions: z.array(z.any())
+}).passthrough();
+
+/** Insights de fluxo de caixa — exige contas e transações. */
+export const CashFlowInsightsSchema = z.object({
+    accounts: z.array(z.any()),
+    transactions: z.array(z.any()),
+    period: z.string().optional()
+}).passthrough();
+
+/** Dados de gráfico de fluxo de caixa. */
+export const ChartDataSchema = z.object({
+    transactions: z.array(z.any()),
+    groupBy: z.string().optional()
+}).passthrough();
+
+/** Sugestão de conciliação — exige linhas bancárias e faturas. */
+export const ReconcileSuggestSchema = z.object({
+    bankLines: z.array(z.any()),
+    invoices: z.array(z.any())
+}).passthrough();
+
+/** Salvar conciliação (legado, exige invoiceId). */
+export const ReconcileSaveSchema = z.object({
+    lineId: resourceId,
+    invoiceId: resourceId
+}).passthrough();
+
+/** Alternar o estado de conciliação de uma linha bancária. */
+export const ReconcileToggleSchema = z.object({
+    accountId: resourceId,
+    lineId: resourceId,
+    reconciled: z.boolean()
+}).passthrough();
+
+/** Cálculo de saldo dinâmico. */
+export const BalanceCalculateSchema = z.object({
+    initialBalance: z.number(),
+    transactions: z.array(z.any())
+}).passthrough();
+
+// =============================================
+// Inter Route Schemas (issue #1542)
+// =============================================
+
+/**
+ * Criação de cobrança Pix imediata. `.passthrough()` preserva os campos extras
+ * (devedor, solicitacaoPagador, infoAdicionais…) exigidos pela API do Inter —
+ * a rota valida apenas o mínimo obrigatório (valor + chave).
+ */
+export const InterPixCobrancaSchema = z.object({
+    valor: z.object({
+        original: z.union([z.string(), z.number()])
+    }).passthrough(),
+    chave: z.string().min(1, 'Chave Pix é obrigatória'),
+    txid: z.string().optional()
+}).passthrough();
+
+/** Cobrança Pix com vencimento — exige txid. */
+export const InterPixCobrancaVencimentoSchema = z.object({
+    txid: z.string().min(1, 'txid é obrigatório para cobranças agendadas')
+}).passthrough();
+
+/** Envio de Pix — exige valor e destinatário. */
+export const InterPixEnviarSchema = z.object({
+    valor: z.union([z.number(), z.string()]),
+    destinatario: z.object({}).passthrough()
+}).passthrough();
+
+/** Emissão de boleto — campos mínimos exigidos pela rota. */
+export const InterBoletoEmissaoSchema = z.object({
+    seuNumero: z.union([z.string(), z.number()]),
+    valorNominal: z.number(),
+    dataVencimento: z.string().min(1),
+    pagador: z.object({}).passthrough()
+}).passthrough();
+
+/** Cancelamento de boleto — motivo opcional. */
+export const InterBoletoCancelarSchema = z.object({
+    motivo: z.string().max(500).optional()
+}).passthrough();
+
+/** Configuração de webhook Pix — exige chave e URL. */
+export const InterWebhookConfigSchema = z.object({
+    chave: z.string().min(1, 'chave é obrigatória'),
+    webhookUrl: z.string().url('webhookUrl deve ser uma URL válida')
+}).passthrough();
+
+/**
+ * Payload de RECEBIMENTO de webhook do Inter (Pix/Boleto).
+ *
+ * Deliberadamente permissivo (`.passthrough()`): garante apenas que o corpo é
+ * um objeto JSON — a barreira de segurança real do webhook é a verificação de
+ * assinatura HMAC. Um schema estrito arriscaria REJEITAR ou DESCARTAR campos de
+ * callbacks legítimos do banco (ex.: novos status de boleto), então validamos
+ * só o formato e preservamos todos os campos para `processInterWebhook`.
+ */
+export const InterWebhookPayloadSchema = z.object({}).passthrough();
+
 export default {
     validateBody,
     validateQuery,
     validateParams,
+    validateUserApiKey,
     PagamentoBoletoSchema,
     PixCobrancaSchema,
     PixPagamentoSchema,
@@ -293,5 +441,19 @@ export default {
     IdParamSchema,
     TxIdParamSchema,
     PixWebhookSchema,
-    BoletoWebhookSchema
+    BoletoWebhookSchema,
+    TransactionsSchema,
+    CashFlowInsightsSchema,
+    ChartDataSchema,
+    ReconcileSuggestSchema,
+    ReconcileSaveSchema,
+    ReconcileToggleSchema,
+    BalanceCalculateSchema,
+    InterPixCobrancaSchema,
+    InterPixCobrancaVencimentoSchema,
+    InterPixEnviarSchema,
+    InterBoletoEmissaoSchema,
+    InterBoletoCancelarSchema,
+    InterWebhookConfigSchema,
+    InterWebhookPayloadSchema
 };
