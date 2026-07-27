@@ -4,12 +4,14 @@
  * Cada preset encapsula uma janela + máximo + chaveamento do
  * `express-rate-limit` para um caso de uso específico:
  *
- *   login      → brute-force de credenciais (5/15min, chave = IP+email)
- *   ai         → operações caras de IA (20/min, pula GETs de polling)
- *   banking    → operações bancárias sensíveis (30/min)
- *   scheduler  → agendamento de mensagens (10/min)
- *   strict     → enumeração de IDs/secrets (10/min/IP)
- *   default    → fallback genérico para rotas sem preset dedicado (100/15min)
+ *   login       → brute-force de credenciais (5/15min, chave = IP+email)
+ *   ai          → operações caras de IA (20/min, pula GETs de polling)
+ *   banking     → operações bancárias sensíveis (30/min)
+ *   scheduler   → agendamento de mensagens (10/min)
+ *   strict      → enumeração de IDs/secrets (10/min/IP)
+ *   default     → fallback genérico para rotas sem preset dedicado (100/15min)
+ *   sync        → sincronização com Dolibarr (30/min, #1569)
+ *   bankingPost → POSTs sensíveis de bankingRoutes (10/15min, #1330)
  *
  * Em caso de estouro, o handler constrói um Error padronizado
  * (`code: 'RATE_LIMIT'`, `status: 429`) e chama `next(error)` — a
@@ -198,6 +200,28 @@ const sync: RequestHandler = rateLimit({
 });
 
 // =============================================
+// 8. bankingPost — POSTs sensíveis de bankingRoutes (#1330)
+// =============================================
+// 10/15min é mais apertado que o `banking` genérico (30/min) porque cobre
+// escritas específicas do `bankingRoutes.ts` (import/OFX/CSV, analyze,
+// insights, reconcile, balance, export). Cada POST conta — não filtra
+// método. Janela de 15min (não 1min) porque as operações legítimas de
+// conciliação/import rodam em rajadas curtas (operador abre 5 OFXs
+// seguidos, dispara export, etc.) e a janela curta geraria falsos 429.
+// AC: a 11ª chamada em 15min retorna 429.
+const bankingPost: RequestHandler = rateLimit({
+    windowMs: FIFTEEN_MIN_MS,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: rateLimitHandler(
+        FIFTEEN_MIN_MS,
+        10,
+        'Banking POST rate limit exceeded. Please wait before retrying.'
+    ),
+});
+
+// =============================================
 // Public API
 // =============================================
 
@@ -209,6 +233,7 @@ export const rateLimiters = {
     strict,
     default: defaultLimiter,
     sync,
+    bankingPost,
 };
 
 export default rateLimiters;

@@ -103,6 +103,16 @@ export function validateParams<T extends ZodSchema>(schema: T) {
 export const USER_API_KEY_REGEX = /^[A-Za-z0-9]{32,128}$/;
 
 /**
+ * Regexes auxiliares (#1330) — header `userApiKey` enviado pelos POSTs
+ * sensíveis do `bankingRoutes.ts` é validado como CNPJ (14 dígitos) ou
+ * UUID ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12},
+ * case-insensitive). Esses formatos refletem o que o frontend já envia
+ * para identificação da empresa / conta corrente.
+ */
+export const USER_API_KEY_CNPJ_REGEX = /^\d{14}$/;
+export const USER_API_KEY_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
  * Middleware que valida o formato do header de API key quando ele está presente.
  *
  * - Ausente → segue o fluxo. A autenticação de sessão (`requireDolibarrLogin`)
@@ -124,6 +134,48 @@ export function validateUserApiKey(req: Request, res: Response, next: NextFuncti
         apiResponse.fail(res, 'INVALID_API_KEY', 'Header de API key inválido', 401);
         return;
     }
+    next();
+}
+
+/**
+ * Middleware que EXIGE o header `userApiKey` (aceita também o alias
+ * `dolapikey`) e o valida contra o regex CNPJ (`\d{14}`) ou UUID
+ * (`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`).
+ *
+ * Ausente ou inválido → 401 `INVALID_USER_API_KEY` (envelope apiResponse).
+ * Válido → segue o fluxo, e o valor é espelhado em `req.headers['dolapikey']`
+ * para que handlers downstream (ex.: `/reconcile/save`, `/reconcile/toggle`
+ * que repassam a chave à API do Dolibarr) continuem lendo o mesmo header.
+ *
+ * Usado especificamente pelos POSTs sensíveis do `bankingRoutes.ts` (#1330),
+ * aplicado por-ROTA (não no router.use).
+ */
+export function requireUserApiKey(req: Request, res: Response, next: NextFunction): void {
+    const raw = req.headers['userapikey'] ?? req.headers['dolapikey'];
+    if (raw === undefined) {
+        apiResponse.fail(
+            res,
+            'INVALID_USER_API_KEY',
+            'Header userApiKey ausente: esperado CNPJ (14 dígitos) ou UUID',
+            401
+        );
+        return;
+    }
+    const key = Array.isArray(raw) ? raw[0] : raw;
+    if (
+        typeof key !== 'string' ||
+        (!USER_API_KEY_CNPJ_REGEX.test(key) && !USER_API_KEY_UUID_REGEX.test(key))
+    ) {
+        apiResponse.fail(
+            res,
+            'INVALID_USER_API_KEY',
+            'Header userApiKey inválido: esperado CNPJ (14 dígitos) ou UUID',
+            401
+        );
+        return;
+    }
+    // Espelha em `dolapikey` para os handlers que repassam a chave ao Dolibarr.
+    req.headers['dolapikey'] = key;
     next();
 }
 
@@ -370,6 +422,34 @@ export const BalanceCalculateSchema = z.object({
     transactions: z.array(z.any())
 }).passthrough();
 
+/**
+ * Body de /api/banking/export (#1330) — exige os três campos canônicos
+ * `format` (string), `bankCode` (string) e `accountId` (string). O
+ * `format` é uma string JSON-serializável que o handler faz parse
+ * manual (try/catch → next(AppError)).
+ */
+export const ExportBodySchema = z.object({
+    format: z.string().min(1, 'format é obrigatório'),
+    bankCode: z.string().min(1, 'bankCode é obrigatório'),
+    accountId: z.string().min(1, 'accountId é obrigatório')
+}).passthrough();
+
+/**
+ * Esquema do objeto `CSVFormat` decodificado de `format` (#1330 / #1542).
+ * Aceita tanto o conjunto mínimo (dateColumn / amountColumn /
+ * descriptionColumn) quanto os campos opcionais (dateFormat, delimiter,
+ * hasHeader). `passthrough()` mantém compat com eventuais campos
+ * futuros do front sem quebrar o backend.
+ */
+export const CsvFormatSchema = z.object({
+    dateColumn: z.string().min(1),
+    amountColumn: z.string().min(1),
+    descriptionColumn: z.string().min(1),
+    dateFormat: z.string().min(1).optional(),
+    delimiter: z.string().min(1).max(1).optional(),
+    hasHeader: z.boolean().optional()
+}).passthrough();
+
 // =============================================
 // Inter Route Schemas (issue #1542)
 // =============================================
@@ -433,6 +513,9 @@ export default {
     validateQuery,
     validateParams,
     validateUserApiKey,
+    requireUserApiKey,
+    USER_API_KEY_CNPJ_REGEX,
+    USER_API_KEY_UUID_REGEX,
     PagamentoBoletoSchema,
     PixCobrancaSchema,
     PixPagamentoSchema,
@@ -449,6 +532,8 @@ export default {
     ReconcileSaveSchema,
     ReconcileToggleSchema,
     BalanceCalculateSchema,
+    ExportBodySchema,
+    CsvFormatSchema,
     InterPixCobrancaSchema,
     InterPixCobrancaVencimentoSchema,
     InterPixEnviarSchema,
