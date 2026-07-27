@@ -108,6 +108,7 @@ describe('BotService', () => {
         vi.clearAllMocks();
         __resetMessageDedupForTests(); // o dedup de msg é de processo; os testes reusam o mesmo id
         clearAllChatResetTimestampsForTests(); // limpa timestamps de reset entre os testes
+        botService.__resetChatQueuesForTests(); // zera filas/coberturas por chat entre os testes
         // #1129: comandos financeiros habilitados por padrão nos testes (comportamento histórico).
         mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(true);
         mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(true);
@@ -195,6 +196,99 @@ describe('BotService', () => {
                 body: '',
             }));
 
+        });
+
+        // ===== Serialização por chat + coalescência (red-team Fable) =====
+        const nowSec = () => Math.floor(Date.now() / 1000);
+
+        it('serializa por chat: rajada de 2 → o 2º run só chama o LLM APÓS o 1º terminar (falha no código antigo)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            let resolve1: any;
+            (aiService.generateReply as any)
+                .mockImplementationOnce(() => new Promise(r => { resolve1 = () => r('R1'); }))
+                .mockResolvedValueOnce('R2');
+            const p1 = botService.processMessage(createMessage({ body: 'pergunta 1', id: 'q1' }));
+            const p2 = botService.processMessage(createMessage({ body: 'pergunta 2', id: 'q2' }));
+            await new Promise(r => setTimeout(r, 30)); // deixa o run 1 chegar no LLM
+            expect(aiService.generateReply).toHaveBeenCalledTimes(1); // run 2 NÃO rodou (serializado)
+            resolve1();
+            await Promise.all([p1, p2]);
+            expect(aiService.generateReply).toHaveBeenCalledTimes(2);
+            const sent = (messageService.sendText as any).mock.calls.map((c: any[]) => String(c[2]));
+            expect(sent[0]).toContain('R1');
+            expect(sent[1]).toContain('R2'); // ordem preservada
+        });
+
+        it('não bloqueia entre chats: chat B responde enquanto o chat A está pendurado', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            let resolveA: any;
+            (aiService.generateReply as any)
+                .mockImplementationOnce(() => new Promise(r => { resolveA = () => r('RA'); }))
+                .mockResolvedValueOnce('RB');
+            const pA = botService.processMessage(createMessage({ from: 'A@c.us', body: 'oi A', id: 'a1' }));
+            const pB = botService.processMessage(createMessage({ from: 'B@c.us', body: 'oi B', id: 'b1' }));
+            await new Promise(r => setTimeout(r, 30));
+            // A está PENDURADO no LLM, mas B já invocou o seu (chaves distintas não se serializam).
+            // Assere o generateReply (roda ANTES do sleep(1500) do envio) — 2 chamadas = ambos correram.
+            expect(aiService.generateReply).toHaveBeenCalledTimes(2);
+            resolveA();
+            await Promise.all([pA, pB]);
+        });
+
+        it('guarda de idade roda no ENFILEIRAMENTO: mensagem >120s é descartada sem chamar o LLM', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockResolvedValue('R');
+            await botService.processMessage(createMessage({ body: 'velha', id: 'old1', timestamp: nowSec() - 300 }));
+            expect(aiService.generateReply).not.toHaveBeenCalled();
+        });
+
+        it('skip-if-covered: rajada coalescida (2 enfileiradas juntas) → o 2º run pula o LLM', async () => {
+            (messageService.getMessages as any).mockResolvedValue([
+                { fromMe: false, body: 'q1', id: 'q1', timestamp: nowSec() },
+                { fromMe: false, body: 'q2', id: 'q2', timestamp: nowSec() },
+            ]);
+            (aiService.generateReply as any).mockResolvedValue('resposta coalescida');
+            const p1 = botService.processMessage(createMessage({ body: 'q1', id: 'q1' }));
+            const p2 = botService.processMessage(createMessage({ body: 'q2', id: 'q2' }));
+            await Promise.all([p1, p2]);
+            expect(aiService.generateReply).toHaveBeenCalledTimes(1); // q2 coberta por q1
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+        });
+
+        it('skip-if-covered NÃO aplica se o 1º run falhou no envio: o 2º executa (não é engolido)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([
+                { fromMe: false, body: 'q1', id: 'q1', timestamp: nowSec() },
+                { fromMe: false, body: 'q2', id: 'q2', timestamp: nowSec() },
+            ]);
+            (aiService.generateReply as any).mockResolvedValue('R');
+            (messageService.sendText as any).mockRejectedValueOnce(new Error('send falhou')).mockResolvedValue(undefined);
+            const p1 = botService.processMessage(createMessage({ body: 'q1', id: 'q1' }));
+            const p2 = botService.processMessage(createMessage({ body: 'q2', id: 'q2' }));
+            await Promise.all([p1, p2]);
+            expect(aiService.generateReply).toHaveBeenCalledTimes(2); // q1 falhou no envio → não cobriu q2
+        });
+
+        it('garantia-de-inclusão: getMessages vazio → o LLM AINDA recebe a pergunta atual (não turno degenerado)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]); // fetch não trouxe a pergunta
+            (aiService.generateReply as any).mockResolvedValue('R');
+            await botService.processMessage(createMessage({ body: 'quem sou eu?', id: 'q1' }));
+            const historyArg = (aiService.generateReply as any).mock.calls[0][0];
+            expect(historyArg).toEqual(expect.arrayContaining([
+                expect.objectContaining({ role: 'user', parts: 'quem sou eu?' }),
+            ]));
+        });
+
+        it('/reset: mensagem no MESMO segundo do reset NÃO é filtrada (granularidade em segundos)', async () => {
+            const chatId = '5511999999999@c.us';
+            resetChatHistory(chatId);
+            const sameSec = nowSec();
+            (messageService.getMessages as any).mockResolvedValue([
+                { fromMe: false, body: 'msg no mesmo segundo do reset', id: 'h1', timestamp: sameSec },
+            ]);
+            (aiService.generateReply as any).mockResolvedValue('R');
+            await botService.processMessage(createMessage({ body: 'pergunta', id: 'q2', timestamp: sameSec + 1 }));
+            const historyArg = (aiService.generateReply as any).mock.calls[0][0];
+            expect(historyArg.some((h: any) => String(h.parts).includes('mesmo segundo'))).toBe(true);
         });
 
         it('handles /status command', async () => {

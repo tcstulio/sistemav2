@@ -275,34 +275,97 @@ export function buildAgentHistory(rawHistory: any[], isGroup: boolean): { role: 
     return consolidated.map(m => ({ role: m.role, parts: m.parts }));
 }
 
+// Teto de mensagens pendentes por chat (anti-crescimento sem limite) e watchdog do turno.
+const MAX_CHAT_QUEUE = Number(process.env.WHATSAPP_MAX_CHAT_QUEUE) || 10;
+const CHAT_TURN_WATCHDOG_MS = 5 * 60 * 1000;
+
 class BotService {
+    // Serialização POR CHAT (`${sessionId}:${from}`): as mensagens do MESMO chat rodam UMA de cada
+    // vez, em ordem. Sem isso, o handler de message_create (sessionService, fire-and-forget) roda
+    // vários processMessage em paralelo → sob rajada o LLM responde a pergunta ERRADA (turnos
+    // degenerados + consolidação do histórico). Chaves distintas por chat NÃO se bloqueiam.
+    private chatChains = new Map<string, Promise<void>>();
+    private chatPending = new Map<string, number>();
+    // ids de user cobertos pela ÚLTIMA resposta OK de cada chat (coalescência de rajada): um run
+    // enfileirado cujo id já foi respondido pula o LLM (evita turno degenerado → dump de identidade).
+    private coveredMsgIds = new Map<string, Set<string>>();
 
     /**
-     * Main entry point for processing incoming messages
+     * ENTRADA (síncrona): guardas baratas (fromMe/dedup/idade) + enfileira na corrente do chat.
+     * Retorna a promise do elo — testes que dão `await` preservam a semântica sequencial. O trabalho
+     * pesado (LLM) roda em runOne, serializado por chat.
      */
-    async processMessage(message: any) {
+    async processMessage(message: any): Promise<void> {
+        if (message?.fromMe) return; // ignora as próprias mensagens
+        const msgId = messageId(message);
+        // Dedup + idade rodam AQUI (síncrono, no enfileiramento) — NUNCA no dequeue: uma msg que
+        // espera vários turnos LLM na fila não pode ser descartada como "replay" por idade acumulada.
+        if (alreadyProcessed(msgId)) {
+            log.debug(`Mensagem ${msgId.slice(0, 16)}… já processada — ignorando re-emissão.`);
+            return;
+        }
+        const maxMsgAgeSec = Number(process.env.WHATSAPP_MAX_MESSAGE_AGE_SECONDS) || 120;
+        if (isReplayedOldMessage(message?.timestamp, Date.now(), maxMsgAgeSec)) {
+            const ageSec = Math.floor(Date.now() / 1000) - Number(message.timestamp);
+            log.info(`Mensagem ${msgId.slice(0, 16)}… tem ${ageSec}s (> ${maxMsgAgeSec}s) — replay de reconexão, ignorando.`);
+            return;
+        }
+        const key = `${message?.sessionId}:${message?.from}`;
+        const pending = this.chatPending.get(key) || 0;
+        if (pending >= MAX_CHAT_QUEUE) {
+            log.warn(`Fila do chat ${key} cheia (${pending}/${MAX_CHAT_QUEUE}) — descartando msg ${msgId.slice(0, 16)}…`);
+            return;
+        }
+        this.chatPending.set(key, pending + 1);
+        const prev = this.chatChains.get(key) || Promise.resolve();
+        const link: Promise<void> = prev
+            .catch(() => { })                                  // uma falha não rompe a corrente
+            .then(() => this.runOneWithWatchdog(message, key))
+            .finally(() => {
+                const n = (this.chatPending.get(key) || 1) - 1;
+                if (n <= 0) {
+                    this.chatPending.delete(key);
+                    this.coveredMsgIds.delete(key);
+                    if (this.chatChains.get(key) === link) this.chatChains.delete(key);
+                } else {
+                    this.chatPending.set(key, n);
+                }
+            });
+        this.chatChains.set(key, link);
+        return link;
+    }
+
+    /** SÓ TESTES: zera as filas/coberturas por chat (Maps de processo). */
+    __resetChatQueuesForTests(): void {
+        this.chatChains.clear();
+        this.chatPending.clear();
+        this.coveredMsgIds.clear();
+    }
+
+    /** Envolve runOne num watchdog: se um turno pendurar > 5min, libera a fila (não trava o chat). */
+    private async runOneWithWatchdog(message: any, key: string): Promise<void> {
+        let timer: any;
         try {
-            // 1. Basic Filters
-            if (message.fromMe) return; // Ignore own messages (unless we want to track manual replies for assignment?)
-            // Manual replies are tracked in the SEND route, not here. Here is implementation for INCOMING.
+            await Promise.race([
+                this.runOne(message, key),
+                new Promise<void>(resolve => {
+                    timer = setTimeout(() => {
+                        log.warn(`Watchdog: turno do chat ${key} passou de ${CHAT_TURN_WATCHDOG_MS / 1000}s — liberando a fila.`);
+                        resolve();
+                    }, CHAT_TURN_WATCHDOG_MS);
+                }),
+            ]);
+        } catch (e: any) {
+            log.error(`runOne error (${key}): ${e?.message}`);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
 
-            // Dedup de re-emissão: mesma mensagem entregue 2× (reconexão/replay do whatsapp-web.js) NÃO
-            // reprocessa. Marca ANTES de qualquer await (atômico no event loop) p/ também cobrir corrida
-            // de eventos quase-simultâneos. Uma nova pergunta do usuário tem outro id → não é bloqueada.
+    /** Processa UMA mensagem (já desduplicada/idade-checada no enfileiramento). Serializado por chat. */
+    private async runOne(message: any, key: string) {
+        try {
             const msgId = messageId(message);
-            if (alreadyProcessed(msgId)) {
-                log.debug(`Mensagem ${msgId.slice(0, 16)}… já processada — ignorando re-emissão.`);
-                return;
-            }
-
-            // Guarda de idade: descarta replay de mensagens antigas re-emitidas na reconexão
-            // (ver isReplayedOldMessage). Complementa o dedup, que é zerado a cada restart.
-            const maxMsgAgeSec = Number(process.env.WHATSAPP_MAX_MESSAGE_AGE_SECONDS) || 120;
-            if (isReplayedOldMessage(message?.timestamp, Date.now(), maxMsgAgeSec)) {
-                const ageSec = Math.floor(Date.now() / 1000) - Number(message.timestamp);
-                log.info(`Mensagem ${msgId.slice(0, 16)}… tem ${ageSec}s (> ${maxMsgAgeSec}s) — replay de reconexão, ignorando.`);
-                return;
-            }
 
             // 2. Identify Context
             const chatId = message.from; // e.g. 551199999999@c.us
@@ -462,6 +525,15 @@ class BotService {
                 return;
             }
 
+            // skip-if-covered: numa rajada, o 1º run buscou e respondeu TODAS as msgs pendentes
+            // (o fetch + a consolidação coalescem numa resposta só). Os runs enfileirados cujo id
+            // já foi coberto pulam o LLM — evita turno degenerado (→ dump de identidade) e resposta
+            // repetida. Comandos/confirmações/fluxos já retornaram acima; aqui só chega msg p/ LLM.
+            if (this.coveredMsgIds.get(key)?.has(msgId)) {
+                log.debug(`Mensagem ${msgId.slice(0, 16)}… já coberta por resposta anterior (rajada coalescida) — pulando LLM.`);
+                return;
+            }
+
             log.info(`Generating Auto-Reply for ${chatId}...`);
 
             // Detect if this is a group chat
@@ -470,20 +542,37 @@ class BotService {
             // 5. Generate AI Reply with configurable history limit
             const historyLimit = sessionSettings.historyLimit || 30;
             let history: any[] = [];
+            // ids de user cobertos por ESTE run → marcados como respondidos após envio OK (coalescência).
+            let coveredThisRun = new Set<string>([msgId]);
             try {
                 const rawHistory = await messageService.getMessages(sessionId, chatId, historyLimit);
                 const resetTime = chatResetTimestamps.get(chatId);
+                // Granularidade: o timestamp da msg é em SEGUNDOS (arredondado p/ baixo); resetTime em ms.
+                // Comparar em segundos evita filtrar indevidamente a msg do MESMO segundo do /reset.
+                const resetSec = resetTime ? Math.floor(resetTime / 1000) : 0;
                 const filteredRawHistory = resetTime
-                    ? rawHistory.filter((m: any) => (m.timestamp * 1000) > resetTime)
+                    ? rawHistory.filter((m: any) => Number(m.timestamp) >= resetSec)
                     : rawHistory;
-                // #1658 — `buildAgentHistory` é a unidade testável que aplica o filtro de
-                // notificações automáticas, placeholder de mídia, prefix de sender em grupo
-                // e a consolidação de turnos consecutivos. Aqui, só plugamos o resultado
-                // (transformação) — toda a lógica de filtragem vive na função pura
-                // exportada.
+                // #1658 — `buildAgentHistory` aplica o filtro de notificações automáticas, placeholder
+                // de mídia, prefix de sender em grupo e a consolidação de turnos consecutivos.
                 history = buildAgentHistory(filteredRawHistory, isGroup);
+                // Garantia-de-inclusão: se o fetch NÃO trouxe a mensagem corrente (falha/race), o LLM
+                // rodaria SEM a pergunta → turno degenerado (dump de identidade). Empurra o body atual.
+                const rawUserIds: string[] = (rawHistory || []).filter((m: any) => !m.fromMe).map((m: any) => m.id).filter(Boolean);
+                coveredThisRun = new Set<string>([...rawUserIds, msgId]);
+                const isTranscribedAudio = message.type === 'ptt' || message.type === 'audio';
+                // Empurra a pergunta atual SÓ se o histórico construído ainda não termina com ela
+                // (evita duplicar quando o fetch já trouxe a msg corrente). Por CONTEÚDO, não por id:
+                // robusto a fetch sem id. Áudio sempre empurra (o histórico só tem "[Mídia recebida]").
+                const lastTurn = history[history.length - 1];
+                const alreadyLast = !!lastTurn && lastTurn.role === 'user' && String(lastTurn.parts).includes(body);
+                if (!alreadyLast || isTranscribedAudio) {
+                    history.push({ role: 'user', parts: body });
+                }
             } catch (e) {
-                log.warn(`Failed to fetch history for ${chatId}, using explicit prompt only.`);
+                // Fetch falhou: NÃO rode sem a pergunta (viraria turno degenerado). Usa a msg atual.
+                log.warn(`Failed to fetch history for ${chatId} — usando só a mensagem atual.`);
+                history = [{ role: 'user', parts: body }];
             }
 
             // 6. Resolve Signature & Context (Session/Account Level)
@@ -594,6 +683,9 @@ class BotService {
 
             await messageService.sendText(sessionId, chatId, finalMessage);
             log.info(`Auto-reply sent to ${chatId}`);
+            // Marca as msgs de user cobertas por ESTA resposta (a rajada foi coalescida num turno).
+            // Só após envio OK — um run que falhou NÃO pode marcar as irmãs como respondidas.
+            this.coveredMsgIds.set(key, coveredThisRun);
 
             // [ANTIGRAVITY] Update Group Stats (Last Replied / Reset Burst)
             if (chatId.endsWith('@g.us')) {
