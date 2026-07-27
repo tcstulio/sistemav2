@@ -96,6 +96,12 @@ interface ToolContext {
      * NEGA escrita real fail-closed a não-admin (não dá p/ checar permissão sem o perfil). Ver #1514.
      */
     profileLoadFailed?: boolean;
+    /**
+     * Mídia gerada DURANTE o turno (por generate_speech/image/video/get_document_pdf) para o
+     * chamador (ex.: botService no WhatsApp) enviar NATIVAMENTE (nota de voz / anexo) além do link
+     * no texto. O caller cria o array []; as tools empurram; o caller envia após a resposta.
+     */
+    pendingMedia?: { kind: 'audio' | 'image' | 'video' | 'file'; url?: string; dataUri?: string; filename?: string; caption?: string }[];
 }
 
 const toolContextStore = new AsyncLocalStorage<ToolContext>();
@@ -1601,11 +1607,13 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'generate_speech': {
             if (!args?.text) throw new Error("Parâmetro 'text' ausente.");
             const { url } = await minimaxService.generateSpeech(String(args.text), { voiceId: args.voice_id ? String(args.voice_id) : undefined });
+            getToolContext().pendingMedia?.push({ kind: 'audio', url }); // envio nativo (nota de voz) pelo caller
             return `Áudio gerado (mp3, válido ~24h): ${url}`;
         }
         case 'generate_image': {
             if (!args?.prompt) throw new Error("Parâmetro 'prompt' ausente.");
             const { urls } = await minimaxService.generateImage(String(args.prompt), { aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined });
+            urls.forEach((u: string) => getToolContext().pendingMedia?.push({ kind: 'image', url: u })); // envio nativo (anexo)
             return `Imagem gerada (válida ~24h): ${urls.join(' , ')}`;
         }
         case 'generate_video': {
@@ -1619,7 +1627,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'check_video': {
             if (!args?.task_id) throw new Error("Parâmetro 'task_id' ausente.");
             const { status, url } = await minimaxService.getVideoStatus(String(args.task_id));
-            if (url) return `Vídeo pronto (válido ~24h): ${url}`;
+            if (url) { getToolContext().pendingMedia?.push({ kind: 'video', url }); return `Vídeo pronto (válido ~24h): ${url}`; }
             if (status === 'Fail') return `A geração do vídeo (task_id ${args.task_id}) falhou.`;
             return `Vídeo ainda processando (status: ${status}). Tente novamente em instantes com o mesmo task_id.`;
         }
@@ -2023,7 +2031,9 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 const base64 = pdf.toString('base64');
                 const typeLabels: Record<string, string> = { invoice: 'Fatura', order: 'Pedido', proposal: 'Proposta', supplier_order: 'Pedido fornecedor', supplier_invoice: 'Fatura fornecedor', intervention: 'Intervenção', contract: 'Contrato', shipment: 'Expedição' };
                 const label = typeLabels[entityType] || entityType;
-                return `PDF da ${label} #${entityId} obtido com sucesso (${pdf.length} bytes). Base64: ${base64.substring(0, 100)}...[truncado, ${base64.length} chars total]. Para download: GET /api/documents/${entityType}/${entityId}/pdf`;
+                // envio nativo do PDF como anexo (pelo caller); o base64 NÃO precisa mais ir no texto.
+                getToolContext().pendingMedia?.push({ kind: 'file', dataUri: `data:application/pdf;base64,${base64}`, filename: `${label}_${entityId}.pdf`, caption: `${label} #${entityId}` });
+                return `PDF da ${label} #${entityId} obtido (${pdf.length} bytes) — enviando o arquivo em anexo. Também disponível em: GET /api/documents/${entityType}/${entityId}/pdf`;
             } catch (e: any) {
                 return `Erro ao obter PDF de ${entityType} #${entityId}: ${e.message || e}`;
             }
