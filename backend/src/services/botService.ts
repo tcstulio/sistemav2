@@ -214,6 +214,20 @@ export function isAgentHistoryExcluded(msg: any): boolean {
     return false;
 }
 
+const chatResetTimestamps = new Map<string, number>();
+
+export function resetChatHistory(chatId: string): void {
+    chatResetTimestamps.set(chatId, Date.now());
+}
+
+export function getChatResetTimestamp(chatId: string): number | undefined {
+    return chatResetTimestamps.get(chatId);
+}
+
+export function clearAllChatResetTimestampsForTests(): void {
+    chatResetTimestamps.clear();
+}
+
 /**
  * #1658 — monta a lista de turnos `{role, parts}` enviada para o LLM a partir do
  * histórico bruto de `messageService.getMessages`. PURE (sem I/O) para que testes
@@ -458,12 +472,16 @@ class BotService {
             let history: any[] = [];
             try {
                 const rawHistory = await messageService.getMessages(sessionId, chatId, historyLimit);
+                const resetTime = chatResetTimestamps.get(chatId);
+                const filteredRawHistory = resetTime
+                    ? rawHistory.filter((m: any) => (m.timestamp * 1000) > resetTime)
+                    : rawHistory;
                 // #1658 — `buildAgentHistory` é a unidade testável que aplica o filtro de
                 // notificações automáticas, placeholder de mídia, prefix de sender em grupo
                 // e a consolidação de turnos consecutivos. Aqui, só plugamos o resultado
                 // (transformação) — toda a lógica de filtragem vive na função pura
                 // exportada.
-                history = buildAgentHistory(rawHistory, isGroup);
+                history = buildAgentHistory(filteredRawHistory, isGroup);
             } catch (e) {
                 log.warn(`Failed to fetch history for ${chatId}, using explicit prompt only.`);
             }
@@ -631,12 +649,19 @@ class BotService {
                     await messageService.sendText(sessionId, chatId, statusMsg);
                     return true;
 
+                case '/reset':
+                case '/limpar':
+                    resetChatHistory(chatId);
+                    await messageService.sendText(sessionId, chatId, '🧹 *Histórico de conversa resetado!* As mensagens anteriores a este momento serão ignoradas nos próximos atendimentos.');
+                    return true;
+
                 case '/ajuda':
                 case '/help':
                     const helpMsg = `📖 *Comandos Disponíveis*\n\n` +
                         `*Gerais:*\n` +
                         `/status - Mostra status do sistema\n` +
                         `/resumo - Resume a conversa atual\n` +
+                        `/reset - Limpa o histórico de conversa com o bot\n` +
                         `/ajuda - Lista comandos disponíveis\n\n` +
                         `*Financeiro (requer aprovação):*\n` +
                         `/pagar <código_barras> - Pagar boleto\n` +

@@ -91,7 +91,7 @@ const mockPermissions = vi.hoisted(() => ({
 }));
 vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPermissions }));
 
-import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt, buildAgentHistory, isAgentHistoryExcluded } from '../../services/botService';
+import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt, buildAgentHistory, isAgentHistoryExcluded, resetChatHistory, clearAllChatResetTimestampsForTests } from '../../services/botService';
 import { getToolContext, DEV_TOOLS, getToolsPrompt } from '../../services/agentTools';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
@@ -107,6 +107,7 @@ describe('BotService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         __resetMessageDedupForTests(); // o dedup de msg é de processo; os testes reusam o mesmo id
+        clearAllChatResetTimestampsForTests(); // limpa timestamps de reset entre os testes
         // #1129: comandos financeiros habilitados por padrão nos testes (comportamento histórico).
         mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(true);
         mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(true);
@@ -237,6 +238,25 @@ describe('BotService', () => {
 
             expect(messageService.sendText).toHaveBeenCalledWith(
                 'sess1', '5511999999999@c.us', expect.stringContaining('Resumo')
+            );
+        });
+
+        it('handles /reset and /limpar commands', async () => {
+            clearAllChatResetTimestampsForTests();
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+
+            await botService.processMessage(createMessage({ body: '/reset', from: '5511999999999@c.us', id: 'msg_reset_1' }));
+            expect(messageService.sendText).toHaveBeenCalledWith(
+                'sess1',
+                '5511999999999@c.us',
+                expect.stringContaining('Histórico de conversa resetado')
+            );
+
+            await botService.processMessage(createMessage({ body: '/limpar', from: '5511888888888@c.us', id: 'msg_reset_2' }));
+            expect(messageService.sendText).toHaveBeenCalledWith(
+                'sess1',
+                '5511888888888@c.us',
+                expect.stringContaining('Histórico de conversa resetado')
             );
         });
 
@@ -1215,3 +1235,4 @@ describe('#1658 — isAgentHistoryExcluded / buildAgentHistory (função pura)',
         expect(history.length).toBe(3);
     });
 });
+
