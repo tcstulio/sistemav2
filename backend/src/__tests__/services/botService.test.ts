@@ -341,6 +341,25 @@ describe('BotService', () => {
             expect(mockAxios.get).not.toHaveBeenCalled(); // dataUri não precisa baixar
         });
 
+        it('imagem recebida: bot busca a mídia e passa pro generateReply (visão)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (messageService.getMessageMedia as any).mockResolvedValue({ data: Buffer.from('fake-img'), contentType: 'image/png' });
+            (aiService.generateReply as any).mockResolvedValue('vejo um gato na imagem');
+            await botService.processMessage(createMessage({ type: 'image', hasMedia: true, body: '', id: 'img1' }));
+            expect(messageService.getMessageMedia).toHaveBeenCalled();
+            const imgArg = (aiService.generateReply as any).mock.calls[0][2]; // 3º arg = imageBase64
+            const first = Array.isArray(imgArg) ? imgArg[0] : imgArg;
+            expect(String(first)).toMatch(/^data:image\/png;base64,/);
+        });
+
+        it('imagem sem legenda: NÃO é ignorada como "mensagem curta" (o corpo mínimo passa)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (messageService.getMessageMedia as any).mockResolvedValue({ data: Buffer.from('img'), contentType: 'image/jpeg' });
+            (aiService.generateReply as any).mockResolvedValue('descrição da imagem');
+            await botService.processMessage(createMessage({ type: 'image', hasMedia: true, body: '', id: 'img2' }));
+            expect(aiService.generateReply).toHaveBeenCalledTimes(1); // processou apesar do body vazio
+        });
+
         it('handles /status command', async () => {
             (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
 
