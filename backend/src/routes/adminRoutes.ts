@@ -105,7 +105,7 @@ const FallbackChainSchema = z.object({ module: z.enum(['chat', 'banking', 'syste
 const PromptsSchema = z.object({ prompts: z.record(z.string().min(1).max(100), z.string().max(4000)) });
 const StatsTrackSchema = z.object({ tokens: z.number().int().nonnegative().max(100000000).optional(), error: z.string().max(1000).nullable().optional() });
 const FeatureProviderSchema = z.object({ provider: z.enum(['legacy', 'moltbot']) });
-const DANGEROUS_PROMPT_PATTERN = /(?:<script|javascript:|data:text\/html|ignore\s+(?:all\s+)?previous\s+instructions|system\s+prompt|process\.env|child_process|rm\s+-rf|reveal\s+(?:secrets?|instructions?))/i;
+const DANGEROUS_PROMPT_PATTERN = /(?:<script|<iframe|<object|javascript:|data:text\/html|file:\/\/|gopher:\/\/|ignore\s+(?:all\s+)?previous\s+instructions|system\s+prompt|process\.env|child_process|(?:rm|curl|wget)\s+-|reveal\s+(?:secrets?|instructions?))/i;
 
 router.get('/config/llm', (req, res) => {
     res.json({
@@ -177,7 +177,7 @@ router.post('/config/llm/test', rateLimiters.ai, validateBody(LlmTestSchema), as
         const { provider, url, model } = req.body;
 
         if (provider === 'google') {
-            const testKey = configService.getConfig('googleApiKey') || config.googleApiKey;
+            const testKey = configService.getConfig('googleApiKey');
             if (!testKey) {
                 return res.json({ success: false, error: "API Key ausente para o Google Gemini." });
             }
@@ -207,7 +207,7 @@ router.post('/config/llm/test', rateLimiters.ai, validateBody(LlmTestSchema), as
                 availableModels: modelList
             });
         } else if (provider === 'glm') {
-            const testKey = configService.getConfig('zaiApiKey') || config.zaiApiKey;
+            const testKey = configService.getConfig('zaiApiKey');
             const testUrl = url || config.zaiBaseUrl;
             const testModel = model || config.zaiModel;
 
@@ -251,7 +251,7 @@ router.post('/config/llm/test', rateLimiters.ai, validateBody(LlmTestSchema), as
                 latencyMs: Date.now() - startTime
             });
         } else if (provider === 'minimax') {
-            const testKey = configService.getConfig('minimaxApiKey') || config.minimaxApiKey;
+            const testKey = configService.getConfig('minimaxApiKey');
             const testUrl = url || config.minimaxBaseUrl;
             const testModel = model || config.minimaxModel;
 

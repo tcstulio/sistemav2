@@ -6,6 +6,7 @@ import { errorHandler } from '../../middleware/errorHandler';
 
 const mockDolibarrService = vi.hoisted(() => ({
     login: vi.fn(),
+    getUserByKey: vi.fn(),
 }));
 
 vi.mock('../../services/dolibarrService', () => ({
@@ -71,24 +72,28 @@ describe('authRoutes', () => {
     });
 
     describe('POST /api/login', () => {
-        it('returns 200 with token on successful login', async () => {
+        it('returns 200 with user data and a secure httpOnly cookie without exposing the token', async () => {
             mockDolibarrService.login.mockResolvedValue({
                 token: 'test-token-123',
                 message: 'Login successful',
             });
+            mockDolibarrService.getUserByKey.mockResolvedValue({ id: 1, login: 'admin', admin: '1', email: 'admin@example.com' });
 
             const res = await request(app)
                 .post('/api/login')
                 .send({ login: 'admin', password: 'password123' });
 
             expect(res.status).toBe(200);
-            expect(res.body.success).toBe(true);
+            expect(res.body).toEqual({ success: true, data: { user: { id: 1, login: 'admin', admin: '1' } } });
             expect(res.body.apiKey).toBeUndefined();
+            expect(JSON.stringify(res.body)).not.toContain('test-token-123');
             const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
             expect(cookie).toContain('apiKey=');
             expect(cookie).toContain('HttpOnly');
             expect(cookie).toContain('Secure');
             expect(cookie).toContain('SameSite=Strict');
+            expect(cookie).toContain('Path=/');
+            expect(cookie).toMatch(/Max-Age=\d+/);
         });
 
         it('returns 400 when login field is missing', async () => {
@@ -163,14 +168,19 @@ describe('authRoutes', () => {
     });
 
     describe('POST /api/logout', () => {
-        it('returns 200 and clears cookie', async () => {
+        it('returns 200 and clears the secure httpOnly cookie', async () => {
             const res = await request(app)
                 .post('/api/logout');
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(res.body.message).toBe('Logged out');
-            expect(res.headers['set-cookie']).toBeDefined();
+            const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
+            expect(cookie).toContain('apiKey=;');
+            expect(cookie).toContain('HttpOnly');
+            expect(cookie).toContain('Secure');
+            expect(cookie).toContain('SameSite=Strict');
+            expect(cookie).toContain('Path=/');
         });
     });
 

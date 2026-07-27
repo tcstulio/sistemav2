@@ -18,6 +18,19 @@ interface PersistedConfig {
 }
 
 const CONFIG_PATH = path.resolve(process.cwd(), 'data', 'config.json');
+const INITIAL_RUNTIME_CONFIG: Record<string, string | undefined> = {
+    googleApiKey: config.googleApiKey,
+    zaiApiKey: config.zaiApiKey,
+    minimaxApiKey: config.minimaxApiKey,
+    localLlmUrl: config.localLlmUrl,
+    localModelName: config.localModelName,
+    zaiBaseUrl: config.zaiBaseUrl,
+    zaiModel: config.zaiModel,
+    minimaxBaseUrl: config.minimaxBaseUrl,
+    minimaxModel: config.minimaxModel,
+    geminiModel: config.geminiModel,
+    llmProvider: config.llmProvider,
+};
 
 function assertSafeConfigPath(): void {
     const fileName = path.basename(CONFIG_PATH).toLowerCase();
@@ -134,7 +147,7 @@ class ConfigService {
     }
 
     getConfig(key: string): string | undefined {
-        return this.runtimeConfig[key];
+        return this.runtimeConfig[key] ?? INITIAL_RUNTIME_CONFIG[key];
     }
 
     setConfig(key: string, value: string): void {
