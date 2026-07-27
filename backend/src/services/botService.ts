@@ -14,8 +14,26 @@ import { isFinancialCommandsEnabled, isCrmContextInjectionEnabled, isWhatsappEmp
 import { whatsappIdentityService, SenderIdentity } from './whatsappIdentityService';
 import { userPermissionsService } from './userPermissionsService';
 import { isQuotaError, quotaStatus } from './llmQuotaState';
+import axios from 'axios';
 
 const log = logger.child('BotService');
+
+/**
+ * Baixa uma URL de mídia gerada (áudio/imagem/vídeo do MiniMax, válida ~24h) e devolve como data URI
+ * (`data:<mime>;base64,...`) para envio NATIVO no WhatsApp (sendVoice/sendFile). Best-effort: limita
+ * tamanho (25MB) e tempo (30s); devolve null em erro — o link ainda vai no texto da resposta.
+ */
+async function fetchAsDataUri(url: string): Promise<string | null> {
+    try {
+        const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 30000, maxContentLength: 25 * 1024 * 1024, maxBodyLength: 25 * 1024 * 1024 });
+        const mime = (resp.headers['content-type'] as string) || 'application/octet-stream';
+        const b64 = Buffer.from(resp.data).toString('base64');
+        return `data:${mime};base64,${b64}`;
+    } catch (e: any) {
+        log.warn(`Falha ao baixar mídia p/ envio nativo (${String(url).slice(0, 60)}…): ${e?.message}`);
+        return null;
+    }
+}
 
 // #1501 — por design, o canal WhatsApp NUNCA é admin. O bot atende Comercial/Financeiro/Produtor:
 // mesmo que o remetente tenha cargo admin no ERP, no canal WhatsApp ele é tratado como usuário
@@ -636,7 +654,10 @@ class BotService {
             // #1501 — `isAdmin: false` explícito em TODOS os caminhos (default e elevação de funcionário):
             // o canal WhatsApp nunca é admin, ponto.
             const turnId = messageId(message);
-            let toolCtx: Parameters<typeof runWithToolContext>[0] = { readOnly: true, isAdmin: false, turnId };
+            // Mídia gerada durante o turno (as tools generate_speech/image/video/get_document_pdf
+            // empurram aqui); enviada NATIVAMENTE após a resposta de texto (nota de voz / anexo).
+            const pendingMedia: NonNullable<Parameters<typeof runWithToolContext>[0]['pendingMedia']> = [];
+            let toolCtx: Parameters<typeof runWithToolContext>[0] = { readOnly: true, isAdmin: false, turnId, pendingMedia };
             // #segurança — só ELEVA (perfil + escrita) com match do número COMPLETO (E.164). O
             // matchStrength só existe como 'full' (matchEmployee já exige número inteiro), mas a
             // checagem explícita é defesa em profundidade: um match fraco jamais concede perfil.
@@ -646,7 +667,7 @@ class BotService {
                 try {
                     const permissionProfile = await userPermissionsService.getProfile(senderIdentity.userId);
                     const permContext = await userPermissionsService.getProfileForContext(senderIdentity.userId);
-                    toolCtx = { readOnly: false, userId: senderIdentity.userId, isAdmin: false, permissionProfile, turnId };
+                    toolCtx = { readOnly: false, userId: senderIdentity.userId, isAdmin: false, permissionProfile, turnId, pendingMedia };
                     context += `\n\n[FUNCIONÁRIO IDENTIFICADO]\nVocê está falando com ${senderIdentity.displayName} (usuário interno, id ${senderIdentity.userId}), identificado pelo telefone.\n\n${permContext}`;
                     log.info(`Funcionário identificado no WhatsApp: ${senderIdentity.displayName} (id ${senderIdentity.userId}) — contexto com o perfil do usuário.`);
                 } catch (e: any) {
@@ -683,6 +704,25 @@ class BotService {
             // então a próxima mensagem vê o histórico correto e não re-responde as anteriores.
             turns.push({ role: 'model', parts: replyText });
             if (turns.length > 40) turns.splice(0, turns.length - 40);
+
+            // ENVIO NATIVO de mídia gerada no turno (nota de voz / anexo), ALÉM do link no texto.
+            // As tools generate_speech/image/video/get_document_pdf registram em pendingMedia. Envio
+            // best-effort e sequencial (após o texto); falha em uma não impede as outras nem a resposta.
+            for (const media of pendingMedia) {
+                try {
+                    const dataUri = media.dataUri || (media.url ? await fetchAsDataUri(media.url) : null);
+                    if (!dataUri) continue; // download falhou → o link já está no texto
+                    if (media.kind === 'audio') {
+                        await messageService.sendVoice(sessionId, chatId, dataUri);
+                    } else {
+                        const fname = media.filename || (media.kind === 'image' ? 'imagem.jpg' : media.kind === 'video' ? 'video.mp4' : 'arquivo');
+                        await messageService.sendFile(sessionId, chatId, dataUri, fname, media.caption);
+                    }
+                    log.info(`Mídia nativa enviada (${media.kind}) para ${chatId}`);
+                } catch (e: any) {
+                    log.warn(`Falha ao enviar mídia nativa (${media.kind}) para ${chatId}: ${e?.message}`);
+                }
+            }
 
             // [ANTIGRAVITY] Update Group Stats (Last Replied / Reset Burst)
             if (chatId.endsWith('@g.us')) {

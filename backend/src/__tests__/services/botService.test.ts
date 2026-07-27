@@ -5,8 +5,14 @@ vi.mock('../../services/legacy/messageService', () => ({
         sendText: vi.fn(),
         getMessages: vi.fn(),
         getMessageMedia: vi.fn(),
+        sendVoice: vi.fn(),
+        sendFile: vi.fn(),
     },
 }));
+
+// axios: o botService baixa a URL da mídia gerada p/ enviar nativo. Mock evita HTTP real.
+const mockAxios = vi.hoisted(() => ({ get: vi.fn() }));
+vi.mock('axios', () => ({ default: mockAxios, ...mockAxios }));
 
 vi.mock('../../services/aiService', () => ({
     aiService: {
@@ -292,6 +298,47 @@ describe('BotService', () => {
             const hist2 = (aiService.generateReply as any).mock.calls[1][0];
             expect(hist2.some((h: any) => String(h.parts).includes('primeira pergunta'))).toBe(false);
             expect(hist2.some((h: any) => String(h.parts).includes('depois do reset'))).toBe(true);
+        });
+
+        // ===== Envio de mídia NATIVA (nota de voz / anexo) =====
+        it('mídia nativa: agente gera áudio → bot envia nota de voz (sendVoice) além do texto', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            // generateReply (mock) simula uma tool que empurrou áudio no pendingMedia do turno.
+            (aiService.generateReply as any).mockImplementation(async () => {
+                getToolContext().pendingMedia?.push({ kind: 'audio', url: 'https://cdn/audio.mp3' });
+                return 'aqui está seu áudio';
+            });
+            (mockAxios.get as any).mockResolvedValue({ data: Buffer.from('fake-mp3'), headers: { 'content-type': 'audio/mpeg' } });
+            await botService.processMessage(createMessage({ body: 'me manda um áudio', id: 'q1' }));
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+            expect(messageService.sendVoice).toHaveBeenCalledTimes(1);
+            expect(String((messageService.sendVoice as any).mock.calls[0][2])).toMatch(/^data:audio\/mpeg;base64,/);
+        });
+
+        it('mídia nativa: download da URL falha → NÃO envia nativo, mas o texto (com link) vai normal', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockImplementation(async () => {
+                getToolContext().pendingMedia?.push({ kind: 'audio', url: 'https://cdn/quebrado.mp3' });
+                return 'aqui está o link: https://cdn/quebrado.mp3';
+            });
+            (mockAxios.get as any).mockRejectedValue(new Error('404'));
+            await botService.processMessage(createMessage({ body: 'áudio', id: 'q2' }));
+            expect(messageService.sendText).toHaveBeenCalledTimes(1); // texto vai mesmo assim
+            expect(messageService.sendVoice).not.toHaveBeenCalled();  // sem download → sem envio nativo
+        });
+
+        it('mídia nativa: PDF (dataUri direto) → sendFile com anexo, sem baixar nada', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockImplementation(async () => {
+                getToolContext().pendingMedia?.push({ kind: 'file', dataUri: 'data:application/pdf;base64,QUJD', filename: 'Fatura_10.pdf', caption: 'Fatura #10' });
+                return 'segue o PDF em anexo';
+            });
+            await botService.processMessage(createMessage({ body: 'me manda o pdf da fatura 10', id: 'q3' }));
+            expect(messageService.sendFile).toHaveBeenCalledTimes(1);
+            const call = (messageService.sendFile as any).mock.calls[0];
+            expect(call[2]).toBe('data:application/pdf;base64,QUJD'); // dataUri direto
+            expect(call[3]).toBe('Fatura_10.pdf');
+            expect(mockAxios.get).not.toHaveBeenCalled(); // dataUri não precisa baixar
         });
 
         it('handles /status command', async () => {
