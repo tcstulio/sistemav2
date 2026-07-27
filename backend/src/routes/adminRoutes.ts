@@ -96,7 +96,7 @@ const LlmTestSchema = z.object({
     model: z.string().trim().min(1).max(200).optional(),
 });
 const PlaygroundSchema = z.object({
-    prompt: z.string().trim().min(1).max(4000).regex(/^[^\u0000-\u001F\u007F]*$/, 'Prompt contains control characters'),
+    prompt: z.string().trim().min(1).max(4000).regex(/^[^\p{Cc}]*$/u, 'Prompt contains control characters'),
     provider: ProviderSchema.optional(),
     model: z.string().trim().min(1).max(200).optional(),
 });
@@ -528,14 +528,18 @@ router.post('/config/llm/playground', rateLimiters.ai, validateBody(PlaygroundSc
         const startTime = Date.now();
 
         const originalProvider = config.llmProvider;
-        if (provider && provider !== originalProvider) {
+        const providerChanged = Boolean(provider && provider !== originalProvider);
+        if (providerChanged) {
             aiService.setConfig(provider as 'local' | 'google' | 'glm' | 'minimax', config.localLlmUrl, config.googleApiKey, model);
         }
 
-        const response = await aiService.analyzeSystem(prompt, '', 'chat');
-
-        if (provider && provider !== originalProvider) {
-            aiService.setConfig(originalProvider as 'local' | 'google' | 'glm' | 'minimax', config.localLlmUrl, config.googleApiKey, config.localModelName);
+        let response: string;
+        try {
+            response = await aiService.analyzeSystem(prompt, '', 'chat');
+        } finally {
+            if (providerChanged) {
+                aiService.setConfig(originalProvider as 'local' | 'google' | 'glm' | 'minimax', config.localLlmUrl, config.googleApiKey, config.localModelName);
+            }
         }
 
         const latency = Date.now() - startTime;

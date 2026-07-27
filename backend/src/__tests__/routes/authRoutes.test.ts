@@ -27,9 +27,24 @@ vi.mock('../../utils/logger', () => ({
     }),
 }));
 
+const mockLoginLimiter = vi.hoisted(() => {
+    const attempts = new Map<string, number>();
+    const middleware = vi.fn((req: any, res: any, next: any) => {
+        const identifier = String(req.body?.email || req.body?.login || req.body?.username || 'anon').toLowerCase();
+        const key = `${req.ip}:${identifier}`;
+        const count = (attempts.get(key) || 0) + 1;
+        attempts.set(key, count);
+        if (count > 5) {
+            return res.status(429).json({ success: false, error: { code: 'RATE_LIMIT', message: 'Too many login attempts' } });
+        }
+        return next();
+    });
+    return { middleware, reset: () => attempts.clear() };
+});
+
 vi.mock('../../middleware/rateLimit', () => ({
     rateLimiters: {
-        login: (req: any, res: any, next: any) => next(),
+        login: mockLoginLimiter.middleware,
         ai: (req: any, res: any, next: any) => next(),
         default: (req: any, res: any, next: any) => next(),
     },
@@ -51,6 +66,7 @@ describe('authRoutes', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockLoginLimiter.reset();
         app = createApp();
     });
 
@@ -123,6 +139,26 @@ describe('authRoutes', () => {
 
             expect(res.status).toBe(401);
             expect(res.body.success).toBe(false);
+        });
+
+        it('returns the standard 429 envelope on the sixth attempt for the same login', async () => {
+            mockDolibarrService.login.mockRejectedValue(new Error('Invalid credentials'));
+
+            for (let attempt = 0; attempt < 5; attempt++) {
+                await request(app)
+                    .post('/api/login')
+                    .send({ login: 'rate-limited-user', password: 'wrongpassword' });
+            }
+
+            const res = await request(app)
+                .post('/api/login')
+                .send({ login: 'rate-limited-user', password: 'wrongpassword' });
+
+            expect(res.status).toBe(429);
+            expect(res.body).toMatchObject({
+                success: false,
+                error: { code: 'RATE_LIMIT' },
+            });
         });
     });
 

@@ -13,28 +13,36 @@ const log = createLogger('Auth');
 const router = Router();
 
 const SESSION_COOKIE_NAME = 'apiKey';
-const LOGIN_COOKIE_MAX_AGE_MS = parseInt(process.env.AUTH_COOKIE_MAX_AGE_MS || `${7 * 24 * 60 * 60 * 1000}`, 10);
+const DEFAULT_LOGIN_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const configuredCookieMaxAge = Number(process.env.AUTH_COOKIE_MAX_AGE_MS);
+const LOGIN_COOKIE_MAX_AGE_MS = Number.isSafeInteger(configuredCookieMaxAge) && configuredCookieMaxAge > 0
+    ? configuredCookieMaxAge
+    : DEFAULT_LOGIN_COOKIE_MAX_AGE_MS;
 
 const LoginSchema = z.object({
-    login: z.string().trim().min(1).max(255),
+    login: z.string().trim().min(1).max(255).optional(),
+    email: z.string().trim().email().max(255).optional(),
     password: z.string().min(1).max(1024),
-    email: z.string().email().max(255).optional(),
+}).refine(({ login, email }) => login !== undefined || email !== undefined, {
+    message: 'Login or email is required',
+    path: ['login'],
 });
 
 router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req, res) => {
     try {
-        const { login, password } = req.body;
+        const { login, email, password } = req.body;
+        const identifier = login ?? email!;
 
-        const result = await dolibarrService.login(login, password);
+        const result = await dolibarrService.login(identifier, password);
 
         let userData: any = null;
         try {
             userData = await dolibarrService.getUserByKey(result.token);
         } catch {
-            log.warn(`Could not fetch user data for ${login}, proceeding without profile`);
+            log.warn(`Could not fetch user data for ${identifier}, proceeding without profile`);
         }
 
-        const sessionToken = createProtoSession(login, result.token, userData);
+        const sessionToken = createProtoSession(identifier, result.token, userData);
 
         res.cookie(SESSION_COOKIE_NAME, sessionToken, {
             httpOnly: true,

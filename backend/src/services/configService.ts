@@ -17,7 +17,14 @@ interface PersistedConfig {
     runtimeConfig?: Record<string, string>;
 }
 
-const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
+const CONFIG_PATH = path.resolve(process.cwd(), 'data', 'config.json');
+
+function assertSafeConfigPath(): void {
+    const fileName = path.basename(CONFIG_PATH).toLowerCase();
+    if (fileName === '.env' || fileName.endsWith('.env')) {
+        throw new Error('Runtime configuration cannot target .env');
+    }
+}
 
 const KNOWN_PROVIDERS = new Set(['local', 'google', 'glm', 'minimax']);
 
@@ -68,6 +75,7 @@ class ConfigService {
     private runtimeConfig: Record<string, string>;
 
     constructor() {
+        assertSafeConfigPath();
         const persisted = this.loadFromDisk();
         this.moduleConfigs = persisted?.moduleConfigs ?? defaultModules();
         this.customPrompts = persisted?.customPrompts ?? defaultPrompts();
@@ -108,6 +116,7 @@ class ConfigService {
      */
     private flush(): void {
         try {
+            assertSafeConfigPath();
             const persisted: PersistedConfig = {
                 moduleConfigs: this.moduleConfigs,
                 customPrompts: this.customPrompts,
