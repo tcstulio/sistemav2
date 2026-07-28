@@ -20,7 +20,7 @@ export type ColorShade = 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 90
 // Pre-defined color class mappings for common use cases
 // These ensure Tailwind generates the classes at build time
 
-interface ThemeClasses {
+export interface ThemeClasses {
     // Backgrounds
     bg50: string;
     bg100: string;
@@ -32,29 +32,39 @@ interface ThemeClasses {
     bgDark900: string;
     bgDark800: string;
     // Text colors
+    text400: string;
     text500: string;
     text600: string;
     text700: string;
     // Borders
     border200: string;
     border300: string;
+    border400: string;
     border500: string;
     // Dark mode borders
     borderDark700: string;
     borderDark800: string;
-    // Rings/Focus
+    // Rings/Focus/Outline
     ring500: string;
+    ring600: string;
+    outline500: string;
     ringOffset: string;
     // Hover states
     hoverBg100: string;
     hoverBg600: string;
     hoverText700: string;
+    // Toggle (#1322) — peer-checked:bg-* (unified mirror of TOGGLE_CHECKED_BG_CLASSES)
+    toggleOn: string;
     // Combined states (for buttons, cards, etc.)
+    solidButton: string;
     primaryButton: string;
     secondaryButton: string;
     ghostButton: string;
+    iconColor: string;
     activeCard: string;
     inactiveCard: string;
+    selectedCard: string;
+    tabFill: string;
     badge: string;
     link: string;
 }
@@ -90,6 +100,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
         link: 'text-indigo-600 hover:text-indigo-700 dark:text-indigo-400',
+        text400: 'text-indigo-400',
+        border400: 'border-indigo-400',
+        ring600: 'ring-indigo-600',
+        outline500: 'outline-indigo-500',
+        toggleOn: 'peer-checked:bg-indigo-600',
+        solidButton: 'bg-indigo-600 text-white',
+        iconColor: 'text-indigo-600 dark:text-indigo-400',
+        selectedCard: 'border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20',
+        tabFill: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-300',
     },
     blue: {
         bg50: 'bg-blue-50',
@@ -120,6 +139,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
         link: 'text-blue-600 hover:text-blue-700 dark:text-blue-400',
+        text400: 'text-blue-400',
+        border400: 'border-blue-400',
+        ring600: 'ring-blue-600',
+        outline500: 'outline-blue-500',
+        toggleOn: 'peer-checked:bg-blue-600',
+        solidButton: 'bg-blue-600 text-white',
+        iconColor: 'text-blue-600 dark:text-blue-400',
+        selectedCard: 'border-blue-400 bg-blue-50 dark:bg-blue-900/20',
+        tabFill: 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300',
     },
     green: {
         bg50: 'bg-green-50',
@@ -150,6 +178,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
         link: 'text-green-600 hover:text-green-700 dark:text-green-400',
+        text400: 'text-green-400',
+        border400: 'border-green-400',
+        ring600: 'ring-green-600',
+        outline500: 'outline-green-500',
+        toggleOn: 'peer-checked:bg-green-600',
+        solidButton: 'bg-green-600 text-white',
+        iconColor: 'text-green-600 dark:text-green-400',
+        selectedCard: 'border-green-400 bg-green-50 dark:bg-green-900/20',
+        tabFill: 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300',
     },
     emerald: {
         bg50: 'bg-emerald-50',
@@ -180,6 +217,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
         link: 'text-emerald-600 hover:text-emerald-700 dark:text-emerald-400',
+        text400: 'text-emerald-400',
+        border400: 'border-emerald-400',
+        ring600: 'ring-emerald-600',
+        outline500: 'outline-emerald-500',
+        toggleOn: 'peer-checked:bg-emerald-600',
+        solidButton: 'bg-emerald-600 text-white',
+        iconColor: 'text-emerald-600 dark:text-emerald-400',
+        selectedCard: 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20',
+        tabFill: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300',
     },
     teal: {
         bg50: 'bg-teal-50',
@@ -210,6 +256,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300',
         link: 'text-teal-600 hover:text-teal-700 dark:text-teal-400',
+        text400: 'text-teal-400',
+        border400: 'border-teal-400',
+        ring600: 'ring-teal-600',
+        outline500: 'outline-teal-500',
+        toggleOn: 'peer-checked:bg-teal-600',
+        solidButton: 'bg-teal-600 text-white',
+        iconColor: 'text-teal-600 dark:text-teal-400',
+        selectedCard: 'border-teal-400 bg-teal-50 dark:bg-teal-900/20',
+        tabFill: 'bg-teal-50 text-teal-700 dark:bg-teal-900/20 dark:text-teal-300',
     },
     cyan: {
         bg50: 'bg-cyan-50',
@@ -240,6 +295,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300',
         link: 'text-cyan-600 hover:text-cyan-700 dark:text-cyan-400',
+        text400: 'text-cyan-400',
+        border400: 'border-cyan-400',
+        ring600: 'ring-cyan-600',
+        outline500: 'outline-cyan-500',
+        toggleOn: 'peer-checked:bg-cyan-600',
+        solidButton: 'bg-cyan-600 text-white',
+        iconColor: 'text-cyan-600 dark:text-cyan-400',
+        selectedCard: 'border-cyan-400 bg-cyan-50 dark:bg-cyan-900/20',
+        tabFill: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-900/20 dark:text-cyan-300',
     },
     sky: {
         bg50: 'bg-sky-50',
@@ -270,6 +334,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
         link: 'text-sky-600 hover:text-sky-700 dark:text-sky-400',
+        text400: 'text-sky-400',
+        border400: 'border-sky-400',
+        ring600: 'ring-sky-600',
+        outline500: 'outline-sky-500',
+        toggleOn: 'peer-checked:bg-sky-600',
+        solidButton: 'bg-sky-600 text-white',
+        iconColor: 'text-sky-600 dark:text-sky-400',
+        selectedCard: 'border-sky-400 bg-sky-50 dark:bg-sky-900/20',
+        tabFill: 'bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-300',
     },
     violet: {
         bg50: 'bg-violet-50',
@@ -300,6 +373,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
         link: 'text-violet-600 hover:text-violet-700 dark:text-violet-400',
+        text400: 'text-violet-400',
+        border400: 'border-violet-400',
+        ring600: 'ring-violet-600',
+        outline500: 'outline-violet-500',
+        toggleOn: 'peer-checked:bg-violet-600',
+        solidButton: 'bg-violet-600 text-white',
+        iconColor: 'text-violet-600 dark:text-violet-400',
+        selectedCard: 'border-violet-400 bg-violet-50 dark:bg-violet-900/20',
+        tabFill: 'bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-300',
     },
     purple: {
         bg50: 'bg-purple-50',
@@ -330,6 +412,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
         link: 'text-purple-600 hover:text-purple-700 dark:text-purple-400',
+        text400: 'text-purple-400',
+        border400: 'border-purple-400',
+        ring600: 'ring-purple-600',
+        outline500: 'outline-purple-500',
+        toggleOn: 'peer-checked:bg-purple-600',
+        solidButton: 'bg-purple-600 text-white',
+        iconColor: 'text-purple-600 dark:text-purple-400',
+        selectedCard: 'border-purple-400 bg-purple-50 dark:bg-purple-900/20',
+        tabFill: 'bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-300',
     },
     fuchsia: {
         bg50: 'bg-fuchsia-50',
@@ -360,6 +451,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/30 dark:text-fuchsia-300',
         link: 'text-fuchsia-600 hover:text-fuchsia-700 dark:text-fuchsia-400',
+        text400: 'text-fuchsia-400',
+        border400: 'border-fuchsia-400',
+        ring600: 'ring-fuchsia-600',
+        outline500: 'outline-fuchsia-500',
+        toggleOn: 'peer-checked:bg-fuchsia-600',
+        solidButton: 'bg-fuchsia-600 text-white',
+        iconColor: 'text-fuchsia-600 dark:text-fuchsia-400',
+        selectedCard: 'border-fuchsia-400 bg-fuchsia-50 dark:bg-fuchsia-900/20',
+        tabFill: 'bg-fuchsia-50 text-fuchsia-700 dark:bg-fuchsia-900/20 dark:text-fuchsia-300',
     },
     pink: {
         bg50: 'bg-pink-50',
@@ -390,6 +490,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300',
         link: 'text-pink-600 hover:text-pink-700 dark:text-pink-400',
+        text400: 'text-pink-400',
+        border400: 'border-pink-400',
+        ring600: 'ring-pink-600',
+        outline500: 'outline-pink-500',
+        toggleOn: 'peer-checked:bg-pink-600',
+        solidButton: 'bg-pink-600 text-white',
+        iconColor: 'text-pink-600 dark:text-pink-400',
+        selectedCard: 'border-pink-400 bg-pink-50 dark:bg-pink-900/20',
+        tabFill: 'bg-pink-50 text-pink-700 dark:bg-pink-900/20 dark:text-pink-300',
     },
     rose: {
         bg50: 'bg-rose-50',
@@ -420,6 +529,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
         link: 'text-rose-600 hover:text-rose-700 dark:text-rose-400',
+        text400: 'text-rose-400',
+        border400: 'border-rose-400',
+        ring600: 'ring-rose-600',
+        outline500: 'outline-rose-500',
+        toggleOn: 'peer-checked:bg-rose-600',
+        solidButton: 'bg-rose-600 text-white',
+        iconColor: 'text-rose-600 dark:text-rose-400',
+        selectedCard: 'border-rose-400 bg-rose-50 dark:bg-rose-900/20',
+        tabFill: 'bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-300',
     },
     red: {
         bg50: 'bg-red-50',
@@ -450,6 +568,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
         link: 'text-red-600 hover:text-red-700 dark:text-red-400',
+        text400: 'text-red-400',
+        border400: 'border-red-400',
+        ring600: 'ring-red-600',
+        outline500: 'outline-red-500',
+        toggleOn: 'peer-checked:bg-red-600',
+        solidButton: 'bg-red-600 text-white',
+        iconColor: 'text-red-600 dark:text-red-400',
+        selectedCard: 'border-red-400 bg-red-50 dark:bg-red-900/20',
+        tabFill: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300',
     },
     orange: {
         bg50: 'bg-orange-50',
@@ -480,6 +607,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
         link: 'text-orange-600 hover:text-orange-700 dark:text-orange-400',
+        text400: 'text-orange-400',
+        border400: 'border-orange-400',
+        ring600: 'ring-orange-600',
+        outline500: 'outline-orange-500',
+        toggleOn: 'peer-checked:bg-orange-600',
+        solidButton: 'bg-orange-600 text-white',
+        iconColor: 'text-orange-600 dark:text-orange-400',
+        selectedCard: 'border-orange-400 bg-orange-50 dark:bg-orange-900/20',
+        tabFill: 'bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-300',
     },
     amber: {
         bg50: 'bg-amber-50',
@@ -510,6 +646,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
         link: 'text-amber-600 hover:text-amber-700 dark:text-amber-400',
+        text400: 'text-amber-400',
+        border400: 'border-amber-400',
+        ring600: 'ring-amber-600',
+        outline500: 'outline-amber-500',
+        toggleOn: 'peer-checked:bg-amber-600',
+        solidButton: 'bg-amber-600 text-white',
+        iconColor: 'text-amber-600 dark:text-amber-400',
+        selectedCard: 'border-amber-400 bg-amber-50 dark:bg-amber-900/20',
+        tabFill: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300',
     },
     yellow: {
         bg50: 'bg-yellow-50',
@@ -540,6 +685,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
         link: 'text-yellow-600 hover:text-yellow-700 dark:text-yellow-400',
+        text400: 'text-yellow-400',
+        border400: 'border-yellow-400',
+        ring600: 'ring-yellow-600',
+        outline500: 'outline-yellow-500',
+        toggleOn: 'peer-checked:bg-yellow-600',
+        solidButton: 'bg-yellow-600 text-white',
+        iconColor: 'text-yellow-600 dark:text-yellow-400',
+        selectedCard: 'border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20',
+        tabFill: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300',
     },
     lime: {
         bg50: 'bg-lime-50',
@@ -570,6 +724,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-300',
         link: 'text-lime-600 hover:text-lime-700 dark:text-lime-400',
+        text400: 'text-lime-400',
+        border400: 'border-lime-400',
+        ring600: 'ring-lime-600',
+        outline500: 'outline-lime-500',
+        toggleOn: 'peer-checked:bg-lime-600',
+        solidButton: 'bg-lime-600 text-white',
+        iconColor: 'text-lime-600 dark:text-lime-400',
+        selectedCard: 'border-lime-400 bg-lime-50 dark:bg-lime-900/20',
+        tabFill: 'bg-lime-50 text-lime-700 dark:bg-lime-900/20 dark:text-lime-300',
     },
     slate: {
         bg50: 'bg-slate-50',
@@ -600,6 +763,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300',
         link: 'text-slate-600 hover:text-slate-700 dark:text-slate-400',
+        text400: 'text-slate-400',
+        border400: 'border-slate-400',
+        ring600: 'ring-slate-600',
+        outline500: 'outline-slate-500',
+        toggleOn: 'peer-checked:bg-slate-600',
+        solidButton: 'bg-slate-600 text-white',
+        iconColor: 'text-slate-600 dark:text-slate-400',
+        selectedCard: 'border-slate-400 bg-slate-50 dark:bg-slate-900/20',
+        tabFill: 'bg-slate-50 text-slate-700 dark:bg-slate-900/20 dark:text-slate-300',
     },
     gray: {
         bg50: 'bg-gray-50',
@@ -630,6 +802,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300',
         link: 'text-gray-600 hover:text-gray-700 dark:text-gray-400',
+        text400: 'text-gray-400',
+        border400: 'border-gray-400',
+        ring600: 'ring-gray-600',
+        outline500: 'outline-gray-500',
+        toggleOn: 'peer-checked:bg-gray-600',
+        solidButton: 'bg-gray-600 text-white',
+        iconColor: 'text-gray-600 dark:text-gray-400',
+        selectedCard: 'border-gray-400 bg-gray-50 dark:bg-gray-900/20',
+        tabFill: 'bg-gray-50 text-gray-700 dark:bg-gray-900/20 dark:text-gray-300',
     },
     zinc: {
         bg50: 'bg-zinc-50',
@@ -660,6 +841,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-300',
         link: 'text-zinc-600 hover:text-zinc-700 dark:text-zinc-400',
+        text400: 'text-zinc-400',
+        border400: 'border-zinc-400',
+        ring600: 'ring-zinc-600',
+        outline500: 'outline-zinc-500',
+        toggleOn: 'peer-checked:bg-zinc-600',
+        solidButton: 'bg-zinc-600 text-white',
+        iconColor: 'text-zinc-600 dark:text-zinc-400',
+        selectedCard: 'border-zinc-400 bg-zinc-50 dark:bg-zinc-900/20',
+        tabFill: 'bg-zinc-50 text-zinc-700 dark:bg-zinc-900/20 dark:text-zinc-300',
     },
     neutral: {
         bg50: 'bg-neutral-50',
@@ -690,6 +880,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-neutral-100 text-neutral-700 dark:bg-neutral-900/30 dark:text-neutral-300',
         link: 'text-neutral-600 hover:text-neutral-700 dark:text-neutral-400',
+        text400: 'text-neutral-400',
+        border400: 'border-neutral-400',
+        ring600: 'ring-neutral-600',
+        outline500: 'outline-neutral-500',
+        toggleOn: 'peer-checked:bg-neutral-600',
+        solidButton: 'bg-neutral-600 text-white',
+        iconColor: 'text-neutral-600 dark:text-neutral-400',
+        selectedCard: 'border-neutral-400 bg-neutral-50 dark:bg-neutral-900/20',
+        tabFill: 'bg-neutral-50 text-neutral-700 dark:bg-neutral-900/20 dark:text-neutral-300',
     },
     stone: {
         bg50: 'bg-stone-50',
@@ -720,6 +919,15 @@ const themeClassMap: Record<ThemeColor, ThemeClasses> = {
         inactiveCard: 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md',
         badge: 'bg-stone-100 text-stone-700 dark:bg-stone-900/30 dark:text-stone-300',
         link: 'text-stone-600 hover:text-stone-700 dark:text-stone-400',
+        text400: 'text-stone-400',
+        border400: 'border-stone-400',
+        ring600: 'ring-stone-600',
+        outline500: 'outline-stone-500',
+        toggleOn: 'peer-checked:bg-stone-600',
+        solidButton: 'bg-stone-600 text-white',
+        iconColor: 'text-stone-600 dark:text-stone-400',
+        selectedCard: 'border-stone-400 bg-stone-50 dark:bg-stone-900/20',
+        tabFill: 'bg-stone-50 text-stone-700 dark:bg-stone-900/20 dark:text-stone-300',
     },
 };
 
@@ -805,12 +1013,105 @@ export function getTabClasses(color: ThemeColor | string, isActive: boolean): st
     return TAB_ACTIVE_CLASSES[validColor];
 }
 
+/**
+ * Toggle (peer-checked) background classes per theme color (#1322).
+ *
+ * Tailwind v4's JIT scanner cannot detect `peer-checked:bg-${color}-600`, so
+ * every color must be listed literally for the class to be emitted at build
+ * time. Used by the switch/toggle UI across the admin editors and Settings.
+ */
+export const TOGGLE_CHECKED_BG_CLASSES: Record<ThemeColor, string> = {
+    slate: 'peer-checked:bg-slate-600',
+    gray: 'peer-checked:bg-gray-600',
+    zinc: 'peer-checked:bg-zinc-600',
+    neutral: 'peer-checked:bg-neutral-600',
+    stone: 'peer-checked:bg-stone-600',
+    red: 'peer-checked:bg-red-600',
+    orange: 'peer-checked:bg-orange-600',
+    amber: 'peer-checked:bg-amber-600',
+    yellow: 'peer-checked:bg-yellow-600',
+    lime: 'peer-checked:bg-lime-600',
+    green: 'peer-checked:bg-green-600',
+    emerald: 'peer-checked:bg-emerald-600',
+    teal: 'peer-checked:bg-teal-600',
+    cyan: 'peer-checked:bg-cyan-600',
+    sky: 'peer-checked:bg-sky-600',
+    blue: 'peer-checked:bg-blue-600',
+    indigo: 'peer-checked:bg-indigo-600',
+    violet: 'peer-checked:bg-violet-600',
+    purple: 'peer-checked:bg-purple-600',
+    fuchsia: 'peer-checked:bg-fuchsia-600',
+    pink: 'peer-checked:bg-pink-600',
+    rose: 'peer-checked:bg-rose-600',
+};
+
+/**
+ * Outline color classes per theme color (#1322).
+ *
+ * Completes the ring/border/outline/text family of static maps so every
+ * color-keyed focus/border utility has a literal entry the Tailwind v4 scanner
+ * can detect (`outline-${color}-500` is not detectable when interpolated).
+ */
+export const OUTLINE_COLOR_CLASSES: Record<ThemeColor, string> = {
+    slate: 'outline-slate-500',
+    gray: 'outline-gray-500',
+    zinc: 'outline-zinc-500',
+    neutral: 'outline-neutral-500',
+    stone: 'outline-stone-500',
+    red: 'outline-red-500',
+    orange: 'outline-orange-500',
+    amber: 'outline-amber-500',
+    yellow: 'outline-yellow-500',
+    lime: 'outline-lime-500',
+    green: 'outline-green-500',
+    emerald: 'outline-emerald-500',
+    teal: 'outline-teal-500',
+    cyan: 'outline-cyan-500',
+    sky: 'outline-sky-500',
+    blue: 'outline-blue-500',
+    indigo: 'outline-indigo-500',
+    violet: 'outline-violet-500',
+    purple: 'outline-purple-500',
+    fuchsia: 'outline-fuchsia-500',
+    pink: 'outline-pink-500',
+    rose: 'outline-rose-500',
+};
+
+/**
+ * Returns the `peer-checked:bg-*` class for a toggle switch given its theme
+ * color. Unknown colors fall back to indigo (same convention as the other
+ * helpers). Never returns an empty string.
+ *
+ * @param color - The theme color (any string; unknown values fall back to indigo)
+ * @returns The literal `peer-checked:bg-<color>-600` class
+ */
+export function getToggleCheckedBg(color: ThemeColor | string): string {
+    const validColor = (color in TOGGLE_CHECKED_BG_CLASSES) ? color as ThemeColor : 'indigo';
+    return TOGGLE_CHECKED_BG_CLASSES[validColor];
+}
+
+/**
+ * Returns the `outline-*` class for a given theme color. Unknown colors fall
+ * back to indigo. Never returns an empty string.
+ *
+ * @param color - The theme color (any string; unknown values fall back to indigo)
+ * @returns The literal `outline-<color>-500` class
+ */
+export function getOutlineColor(color: ThemeColor | string): string {
+    const validColor = (color in OUTLINE_COLOR_CLASSES) ? color as ThemeColor : 'indigo';
+    return OUTLINE_COLOR_CLASSES[validColor];
+}
+
 // Default export for convenience
 export default {
     getThemeClasses,
     getThemeClass,
     getCardClasses,
     getTabClasses,
+    getToggleCheckedBg,
+    getOutlineColor,
     TAB_ACTIVE_CLASSES,
     TAB_INACTIVE_CLASSES,
+    TOGGLE_CHECKED_BG_CLASSES,
+    OUTLINE_COLOR_CLASSES,
 };
