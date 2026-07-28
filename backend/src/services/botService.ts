@@ -445,16 +445,27 @@ class BotService {
             // Best-effort: se a visão não estiver configurada/sem saldo, o modelo responde sem a imagem.
             let incomingImages: string[] = [];
             if (message.type === 'image' && message.hasMedia) {
+                let imageLoaded = false;
                 try {
                     const media = await messageService.getMessageMedia(sessionId, message.id);
                     if (media && media.data) {
                         const b64 = Buffer.isBuffer(media.data) ? media.data.toString('base64') : String(media.data);
                         incomingImages = [`data:${media.contentType || 'image/jpeg'};base64,${b64}`];
-                        if (!body || body.length < 2) body = '[imagem enviada]'; // sem legenda → corpo mínimo p/ passar o filtro e o buffer
+                        imageLoaded = true;
                         log.info('Image message detected → passando para a visão.');
                     }
                 } catch (e: any) {
                     log.warn(`Falha ao buscar imagem recebida: ${e.message}`);
+                }
+                // Uma imagem NUNCA pode ser descartada em silêncio pela guarda de corpo vazio abaixo.
+                // Sem legenda: dá um corpo mínimo p/ SEMPRE chegar ao generateReply. Se o download
+                // falhou (sessão instável do WhatsApp, decrypt), avisa que não conseguiu carregar —
+                // o dono via o bot "não responder à imagem"; agora ao menos reconhece (e a gente
+                // descobre que é o download que falha, não a visão).
+                if (!body || body.length < 2) {
+                    body = imageLoaded
+                        ? '[imagem enviada]'
+                        : '[o usuário enviou uma imagem, mas não consegui carregá-la para análise — peça para reenviar]';
                 }
             }
 
