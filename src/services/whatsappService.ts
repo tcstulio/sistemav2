@@ -60,7 +60,7 @@ export const WhatsAppService = {
     startSession: async (sessionId: string = 'default', name?: string): Promise<any> => {
         try {
             const response = await axios.post(`${config.WHATSAPP_API_URL}/start`, { sessionId, name }, { headers: getHeaders() });
-            return response.data;
+            return unwrapWa<any>(response);
         } catch (e) {
             handleApiError(`Failed to start session ${sessionId}`, e);
         }
@@ -180,7 +180,7 @@ export const WhatsAppService = {
     sendMessage: async (conversationId: string, text: string, sessionId: string = 'default'): Promise<WhatsAppMessage> => {
         try {
             const response = await axios.post(`${config.WHATSAPP_API_URL}/send`, { chatId: conversationId, text, sessionId }, { headers: getHeaders() });
-            const data = response.data;
+            const data = unwrapWa<any>(response);
             // Normalize ID: WWebJS returns an object { fromMe, remote, id, _serialized }
             const msgId = (typeof data.id === 'object' && data.id._serialized) ? data.id._serialized : (data.id || `temp_${Date.now()}`);
 
