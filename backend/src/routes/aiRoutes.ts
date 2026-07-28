@@ -458,7 +458,7 @@ ${question ? `Pergunta: ${question}` : 'Faça um resumo dos pontos principais do
         undefined,
         'chat'
     );
-    return ok(res, { result: result.text });
+    return ok(res, { result: result.text, path: pdfPath });
 }));
 
 // Draft Collection Email

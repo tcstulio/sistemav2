@@ -28,11 +28,13 @@
  *  ao envelope `{success,data}` do helper `ok()`.
  */
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
 import { getProgressStream, type ProgressEvent } from '../agent/progressStream';
+import { analyzePdf } from '../services/analyzePdf';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('ChatRoutes');
@@ -192,6 +194,43 @@ router.post(
         const stream = getProgressStream();
         stream.setVisibility(jobId, req.body.hidden);
         return ok(res, { jobId, hidden: req.body.hidden });
+    }),
+);
+
+/**
+ * POST /chat/analyze-pdf
+ *
+ * #1547 — Devolve ao agente o conteúdo legível de um PDF (base64):
+ *   - se o PDF tem camada de texto (pdf-parse), retorna o texto extraído (rápido);
+ *   - se é digitalizado (sem texto), renderiza as páginas via pdftoppm/sharp e faz
+ *     OCR com a visão (glm-4.6v), concatenando 'Página N: ...'.
+ *
+ * Diferente de /ai/analyze/pdf (que extrai E gera uma resposta do LLM), este
+ * endpoint devolve SÓ o texto extraído — o agente consome o conteúdo e decide
+ * como usá-lo no seu próprio fluxo.
+ *
+ * Resposta: `{ text, path, pagesOcr? }` onde `path` é 'pdf_parse' | 'ocr_vision' | 'empty'.
+ */
+const ChatAnalyzePdfSchema = z.object({
+    pdf: z.string(),
+    question: z.string().optional(),
+});
+
+router.post(
+    '/analyze-pdf',
+    asyncHandler(async (req: Request, res: Response) => {
+        const parsed = ChatAnalyzePdfSchema.safeParse(req.body);
+        if (!parsed.success || !parsed.data.pdf) {
+            throw new AppError(400, 'BAD_REQUEST', 'Campo `pdf` (base64) é obrigatório.');
+        }
+        const pdfBuffer = Buffer.from(parsed.data.pdf, 'base64');
+        if (!pdfBuffer.length) {
+            throw new AppError(400, 'BAD_REQUEST', 'PDF vazio após decodificar base64.');
+        }
+        // #1547: o service decide o caminho (pdf_parse vs ocr_vision) e loga qual usou.
+        const result = await analyzePdf(pdfBuffer);
+        log.debug(`/chat/analyze-pdf processado via ${result.path}`);
+        return ok(res, result);
     }),
 );
 
