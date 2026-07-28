@@ -450,6 +450,30 @@ export const CsvFormatSchema = z.object({
     hasHeader: z.boolean().optional()
 }).passthrough();
 
+/**
+ * Body dos endpoints `/api/banking/import/*` (#1330) — valida o shape do
+ * payload opcional que acompanha o upload. O arquivo vem em `req.file`
+ * (multipart/form-data) e o body traz dicas como `format` (string JSON
+ * serializável) e/ou colunas explícitas (`dateColumn`, `amountColumn`,
+ * `descriptionColumn`, `delimiter`, `hasHeader`).
+ *
+ * - `format: z.string().nullable().optional()` aceita string, null ou
+ *   ausente. O handler interpreta `null` e string vazia como inválido
+ *   (400 INVALID_JSON) porque o cliente sinalizou a intenção de usar
+ *   `format` mas o mandou sem valor útil.
+ * - Demais campos são `string().optional()` (vêm como string do form-data).
+ * - `.passthrough()` preserva campos extras (ex.: metadados de cliente)
+ *   sem quebrar a validação.
+ */
+export const BankingImportBodySchema = z.object({
+    format: z.string().nullable().optional(),
+    dateColumn: z.string().optional(),
+    amountColumn: z.string().optional(),
+    descriptionColumn: z.string().optional(),
+    delimiter: z.string().max(1).optional(),
+    hasHeader: z.string().optional()
+}).passthrough();
+
 // =============================================
 // Inter Route Schemas (issue #1542)
 // =============================================
@@ -534,6 +558,7 @@ export default {
     BalanceCalculateSchema,
     ExportBodySchema,
     CsvFormatSchema,
+    BankingImportBodySchema,
     InterPixCobrancaSchema,
     InterPixCobrancaVencimentoSchema,
     InterPixEnviarSchema,

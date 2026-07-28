@@ -19,6 +19,7 @@ import {
     BalanceCalculateSchema,
     ExportBodySchema,
     CsvFormatSchema,
+    BankingImportBodySchema,
 } from '../middleware/validation';
 import { rateLimiters } from '../middleware/rateLimit';
 
@@ -91,6 +92,7 @@ router.post(
     '/import/ofx',
     rateLimiters.bankingPost,
     requireUserApiKey,
+    validateBody(BankingImportBodySchema),
     upload.single('file'),
     asyncHandler(async (req: Request, res: Response) => {
         if (!req.file) {
@@ -131,6 +133,7 @@ router.post(
     '/import/csv',
     rateLimiters.bankingPost,
     requireUserApiKey,
+    validateBody(BankingImportBodySchema),
     upload.single('file'),
     asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
         if (!req.file) {
@@ -189,6 +192,7 @@ router.post(
     '/import/auto',
     rateLimiters.bankingPost,
     requireUserApiKey,
+    validateBody(BankingImportBodySchema),
     upload.single('file'),
     asyncHandler(async (req: Request, res: Response) => {
         if (!req.file) {

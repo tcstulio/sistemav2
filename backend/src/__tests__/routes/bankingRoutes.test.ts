@@ -414,6 +414,23 @@ describe('bankingRoutes', () => {
             expect(res.status).toBe(400);
         });
 
+        // #1330 — AC: "Teste de regressão: format: null ou format: undefined
+        // retorna 400 (não crash)". Para /export, o ExportBodySchema exige
+        // `format: z.string().min(1)`, então `format: null` cai no 400 do
+        // validateBody (VALIDATION_ERROR). O ponto crítico é que o handler
+        // NÃO chega ao `JSON.parse(req.body.format)` (que crasharia em um
+        // valor não-string) e responde com 400 estruturado.
+        it('returns 400 when format is null (no crash on non-string format)', async () => {
+            const res = await request(app)
+                .post('/api/banking/export')
+                .set('userApiKey', VALID_CNPJ_KEY)
+                .send({ format: null, bankCode: '001', accountId: 'acc-1' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error).toBeDefined();
+        });
+
         it('returns 400 when bankCode is missing', async () => {
             const res = await request(app)
                 .post('/api/banking/export')

@@ -311,6 +311,32 @@ describe('bankingRoutes integration — CSV JSON.parse crash guard (#1542 / #133
 
             expect(blocked.status).toBe(429);
         });
+
+        // #1330 — AC: "11ª requisição em 15min em QUALQUER rota POST retorna
+        // 429". Este teste exercita o bucket COMPARTILHADO entre rotas POST
+        // (todas usam `bankingPost`): 10 chamadas em /balance/validate e a
+        // 11ª em /analyze/categorize já é bloqueada. Isso garante que
+        // chamadas distribuídas em várias rotas não conseguem contornar o
+        // limite.
+        it('11ª requisição em rota POST DIFERENTE também retorna 429 (bucket compartilhado)', async () => {
+            // 10 reqs em /balance/calculate (todas dentro do limite).
+            for (let i = 0; i < 10; i++) {
+                const ok = await request(app)
+                    .post('/api/banking/balance/calculate')
+                    .set('userApiKey', VALID_CNPJ_KEY)
+                    .send({ initialBalance: 1000, transactions: [] });
+                expect(ok.status, `req ${i + 1}`).toBe(200);
+            }
+
+            // 11ª em uma rota POST DIFERENTE deve cair no mesmo bucket e
+            // ser bloqueada com 429.
+            const blocked = await request(app)
+                .post('/api/banking/analyze/categorize')
+                .set('userApiKey', VALID_CNPJ_KEY)
+                .send({ transactions: [] });
+
+            expect(blocked.status).toBe(429);
+        });
     });
 
     // =====================================================
