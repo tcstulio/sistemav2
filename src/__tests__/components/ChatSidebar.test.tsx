@@ -1,13 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { ChatSidebar } from '../../components/chat/ChatSidebar';
-
-vi.mock('react-router-dom', () => ({
-    useNavigate: () => vi.fn(),
-    useParams: () => ({ id: undefined }),
-    useLocation: () => ({ pathname: '/chat' }),
-}));
+import type { DolibarrUser, Project, AgendaEvent } from '../../types';
+import type { DolibarrHookResult } from '../../hooks/dolibarr';
 
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: () => ({
@@ -24,15 +21,19 @@ vi.mock('../../hooks/dolibarr', () => ({
 
 import { useUsers, useProjects, useEvents } from '../../hooks/dolibarr';
 
-const renderSidebar = (onSelect = vi.fn()) =>
-    render(<ChatSidebar onSelect={onSelect} />);
+const renderSidebar = (onSelect = vi.fn(), initialEntry = '/chat') =>
+    render(
+        <MemoryRouter initialEntries={[initialEntry]}>
+            <ChatSidebar onSelect={onSelect} />
+        </MemoryRouter>
+    );
 
 describe('ChatSidebar — descoberta de nova conversa (#601)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(useEvents).mockReturnValue({ data: [] } as any);
-        vi.mocked(useUsers).mockReturnValue({ data: [] } as any);
-        vi.mocked(useProjects).mockReturnValue({ data: [] } as any);
+        vi.mocked(useEvents).mockReturnValue({ data: [] } as unknown as DolibarrHookResult<AgendaEvent>);
+        vi.mocked(useUsers).mockReturnValue({ data: [] } as unknown as DolibarrHookResult<DolibarrUser>);
+        vi.mocked(useProjects).mockReturnValue({ data: [] } as unknown as DolibarrHookResult<Project>);
     });
 
     it('botão Nova conversa está visível na sidebar', () => {
@@ -51,9 +52,9 @@ describe('ChatSidebar — descoberta de nova conversa (#601)', () => {
                 { id: 'u2', statut: '1', firstname: 'Ana', lastname: 'Lima', login: 'ana' },
                 { id: 'u3', statut: '1', firstname: 'Bob', lastname: 'Silva', login: 'bob' },
             ],
-        } as any);
+        } as unknown as DolibarrHookResult<DolibarrUser>);
         // Sem eventos: activeUserIds é vazio — sem o clique em Nova só mostraria estado vazio
-        vi.mocked(useEvents).mockReturnValue({ data: [] } as any);
+        vi.mocked(useEvents).mockReturnValue({ data: [] } as unknown as DolibarrHookResult<AgendaEvent>);
 
         const user = userEvent.setup();
         renderSidebar();
@@ -67,6 +68,6 @@ describe('ChatSidebar — descoberta de nova conversa (#601)', () => {
     it('sem conversas recentes e sem nova conversa ativa mostra apenas o estado vazio padrão', () => {
         renderSidebar();
         // Não exibe usuários quando não há histórico e não clicou em Nova
-        expect(screen.queryByRole('button', { name: /ana/i })).toBeNull();
+        expect(screen.queryByRole('link', { name: /ana/i })).toBeNull();
     });
 });
