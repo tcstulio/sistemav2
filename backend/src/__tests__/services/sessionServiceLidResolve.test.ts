@@ -42,3 +42,45 @@ describe('resolveRealSender — @lid resolve pro número REAL (contact.id)', () 
         expect(await svc.resolveRealSender(msg)).toBe('59936436445425@lid');
     });
 });
+
+// #1723 — id do payload do message_create: p/ @lid, msg.id._serialized vem UNDEFINED e o id real
+// fica em $1. Sem fallback, o bot chamava getMessageMedia(undefined) → mídia nunca baixava.
+describe('message_create payload id — @lid usa $1 quando _serialized é undefined', () => {
+    it('id vem de msg.id.$1 quando _serialized é undefined (destrava mídia recebida)', async () => {
+        const { botService } = await import('../../services/botService');
+        (botService.processMessage as any).mockReset();
+        (botService.processMessage as any).mockResolvedValue(undefined);
+        vi.spyOn(svc, 'resolveRealSender').mockResolvedValue('5511986781025@c.us');
+        vi.spyOn(svc, 'resolveSenderName').mockResolvedValue('Tulio');
+        const handlers: Record<string, any> = {};
+        const mockClient: any = { on: (ev: string, fn: any) => { handlers[ev] = fn; } };
+        svc.setupEvents(mockClient, 'sess1');
+        const msg: any = {
+            from: '59936436445425@lid', to: 'me', body: '', fromMe: false,
+            timestamp: 1700000000, hasMedia: true, type: 'image',
+            id: { $1: 'false_59936436445425@lid_REALID' }, // @lid: sem _serialized
+            _data: {},
+        };
+        await handlers['message_create'](msg);
+        const payload = (botService.processMessage as any).mock.calls.at(-1)[0];
+        expect(payload.id).toBe('false_59936436445425@lid_REALID'); // usou o $1 (antes: undefined)
+    });
+
+    it('id normal (@c.us) segue vindo de _serialized', async () => {
+        const { botService } = await import('../../services/botService');
+        (botService.processMessage as any).mockReset();
+        (botService.processMessage as any).mockResolvedValue(undefined);
+        vi.spyOn(svc, 'resolveRealSender').mockResolvedValue('5511@c.us');
+        vi.spyOn(svc, 'resolveSenderName').mockResolvedValue('X');
+        const handlers: Record<string, any> = {};
+        const mockClient: any = { on: (ev: string, fn: any) => { handlers[ev] = fn; } };
+        svc.setupEvents(mockClient, 'sess2');
+        const msg: any = {
+            from: '5511@c.us', to: 'me', body: 'oi', fromMe: false, timestamp: 1700000000,
+            hasMedia: false, type: 'chat', id: { _serialized: 'false_5511@c.us_ABC' }, _data: {},
+        };
+        await handlers['message_create'](msg);
+        const payload = (botService.processMessage as any).mock.calls.at(-1)[0];
+        expect(payload.id).toBe('false_5511@c.us_ABC');
+    });
+});

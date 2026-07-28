@@ -495,7 +495,11 @@ export class SessionService {
                 fromMe: msg.fromMe,
                 timestamp: Math.min(msg.timestamp, Math.floor(Date.now() / 1000)),
                 hasMedia: msg.hasMedia,
-                id: msg.id._serialized,
+                // @lid: p/ mensagens no formato novo do WhatsApp Web, `_serialized` vem UNDEFINED
+                // e o id real fica em `$1` (o mesmo do getMessages, que usa `_serialized || $1`).
+                // Sem este fallback o payload chegava com id vazio → dedup/buffer com id '' e o
+                // download de mídia recebida chamava getMessageMedia(undefined) → nunca baixava.
+                id: msg.id._serialized || (msg.id as any).$1,
                 type: msg.type,
                 // @ts-ignore
                 mimetype: (msg as any)._data?.mimetype
@@ -511,7 +515,7 @@ export class SessionService {
         client.on('message_ack', (msg, ack) => {
             socketService.emit('whatsapp_ack', {
                 sessionId,
-                messageId: msg.id._serialized,
+                messageId: msg.id._serialized || (msg.id as any).$1, // @lid: _serialized pode vir undefined
                 ack,
                 status: ack >= 3 ? 'read' : ack >= 2 ? 'delivered' : 'sent'
             });
