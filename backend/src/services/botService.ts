@@ -9,7 +9,7 @@ import { approvalService } from './approvalService';
 import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
 import { logger } from '../utils/logger';
-import { extractPdfText } from '../utils/pdfText';
+import { extractPdfText, extractPdfPageImages } from '../utils/pdfText';
 import { FEATURES } from '../config/features';
 import { isFinancialCommandsEnabled, isCrmContextInjectionEnabled, isWhatsappEmployeeElevationEnabled } from '../config/featureSwitches';
 import { whatsappIdentityService, SenderIdentity } from './whatsappIdentityService';
@@ -474,6 +474,7 @@ class BotService {
             // (o dono quer que o agente "receba PDFs", ex.: boletos). Nunca descarta em silêncio.
             if (message.type === 'document' && message.hasMedia) {
                 let pdfText = '';
+                let pdfImages: string[] = [];
                 let docLoaded = false;
                 try {
                     const media = await messageService.getMessageMedia(sessionId, message.id);
@@ -483,7 +484,14 @@ class BotService {
                         if (mime.includes('pdf')) {
                             const buf = Buffer.isBuffer(media.data) ? media.data : Buffer.from(media.data);
                             pdfText = (await extractPdfText(buf)).trim();
-                            if (pdfText) log.info('PDF recebido → texto extraído p/ o contexto.');
+                            if (pdfText) {
+                                log.info('PDF recebido → texto extraído p/ o contexto.');
+                            } else {
+                                // PDF SEM camada de texto (digitalizado/scan) → renderiza as páginas
+                                // como imagem e manda p/ a VISÃO (OCR). Boletos escaneados etc.
+                                pdfImages = (await extractPdfPageImages(buf, 3)) || [];
+                                if (pdfImages.length) log.info(`PDF sem texto → ${pdfImages.length} página(s) renderizada(s) p/ a visão.`);
+                            }
                         }
                     }
                 } catch (e: any) {
@@ -492,9 +500,12 @@ class BotService {
                 if (pdfText) {
                     const legenda = (body && body.length >= 2) ? `\nLegenda do usuário: ${body}` : '';
                     body = `[Documento PDF recebido]${legenda}\n\nConteúdo extraído do PDF (responda com base nele):\n${pdfText}`;
+                } else if (pdfImages.length) {
+                    incomingImages = pdfImages; // a visão descreve/faz OCR de cada página
+                    if (!body || body.length < 2) body = '[documento PDF digitalizado — as páginas foram anexadas como imagens; analise o conteúdo]';
                 } else if (!body || body.length < 2) {
                     body = docLoaded
-                        ? '[o usuário enviou um documento, mas não consegui extrair o texto (pode ser um PDF só de imagem/digitalização, ou outro formato) — peça para descrever ou reenviar]'
+                        ? '[o usuário enviou um documento, mas não consegui extrair o texto nem renderizá-lo (talvez outro formato) — peça para descrever ou reenviar]'
                         : '[o usuário enviou um documento, mas não consegui carregá-lo — peça para reenviar]';
                 }
             }

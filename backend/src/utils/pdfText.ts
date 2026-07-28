@@ -28,3 +28,29 @@ export async function extractPdfText(buffer: Buffer, maxChars = 15000): Promise<
         try { if (parser?.destroy) await parser.destroy(); } catch { /* ignore */ }
     }
 }
+
+/**
+ * Renderiza as primeiras `maxPages` páginas de um PDF como imagens PNG (data URLs), via
+ * `getScreenshot` do pdf-parse v2 (usa pdfjs internamente, sem node-canvas). Usado quando o
+ * PDF NÃO tem camada de texto (digitalizado/scan) → as imagens vão para a VISÃO (OCR).
+ * `{ first, last }` limita a renderização (não renderiza PDF gigante inteiro). Sempre array
+ * (vazio em qualquer falha). Cada item: `data:image/png;base64,...`.
+ */
+export async function extractPdfPageImages(buffer: Buffer, maxPages = 3): Promise<string[]> {
+    let parser: any = null;
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { PDFParse } = require('pdf-parse');
+        parser = new PDFParse({ data: buffer });
+        const r = await parser.getScreenshot({ first: 1, last: Math.max(1, maxPages) });
+        const pages: any[] = Array.isArray(r?.pages) ? r.pages : [];
+        return pages
+            .map((p: any) => p?.dataUrl)
+            .filter((u: any): u is string => typeof u === 'string' && u.startsWith('data:image'));
+    } catch (e: any) {
+        log.warn(`Falha ao renderizar PDF para imagem: ${e?.message}`);
+        return [];
+    } finally {
+        try { if (parser?.destroy) await parser.destroy(); } catch { /* ignore */ }
+    }
+}

@@ -381,8 +381,12 @@ export class MessageService {
     /** Diagnóstico best-effort do download de mídia (o pino vai p/ stdout, não p/ arquivo legível). */
     private mediaDebug(messageId: string, steps: string[]): void {
         try {
+            const file = 'logs/media-debug.log';
+            // Cap de tamanho: só loga FALHAS de download (raro agora que a mídia funciona), mas sem
+            // teto o arquivo cresceria indefinidamente. Se passar de ~256KB, recomeça do zero.
+            try { if (fs.existsSync(file) && fs.statSync(file).size > 256 * 1024) fs.writeFileSync(file, ''); } catch { /* ignore */ }
             const line = `${new Date().toISOString()} ${messageId} :: ${steps.join(' | ')}\n`;
-            fs.appendFileSync('logs/media-debug.log', line);
+            fs.appendFileSync(file, line);
         } catch { /* best-effort */ }
     }
 
