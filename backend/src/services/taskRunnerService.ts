@@ -3477,8 +3477,18 @@ class TaskRunnerService {
                 ? `\n**ATENÇÃO:** Arquivos mencionados na issue que NÃO foram modificados: ${missingFiles.join(', ')}. Verifique se a implementação está completa.`
                 : '';
 
-            const diffContent = diff.length > 50000
-                ? diff.substring(0, 50000) + '\n\n[... diff truncado após 50KB ...]'
+            // #judge-diff: era 50KB → PRs multi-arquivo truncavam MID-FILE, o juiz não via metade dos
+            // arquivos e sub-avaliava ("diff truncado, não consigo verificar" → 8/10, preso abaixo do
+            // piso 9 mesmo com código bom). O modelo do juiz (glm-5.2=200k tokens / MiniMax-M3=1M)
+            // comporta MUITO mais que 50KB. Sobe pra 200KB e, se ainda truncar, lista TODOS os arquivos
+            // alterados (do `changedFiles` já computado) p/ o juiz saber o ESCOPO COMPLETO e não punir
+            // por não-conseguir-verificar algo que ele sabe que existe.
+            const JUDGE_DIFF_CAP = 200_000;
+            const diffContent = diff.length > JUDGE_DIFF_CAP
+                ? diff.substring(0, JUDGE_DIFF_CAP)
+                    + `\n\n[... diff truncado após ${Math.round(JUDGE_DIFF_CAP / 1000)}KB (de ${Math.round(diff.length / 1000)}KB). `
+                    + `Lista COMPLETA de arquivos alterados no PR (inclusive os além do corte): ${changedFiles.join(', ')}. `
+                    + `NÃO penalize a nota por não conseguir ver o diff de um arquivo que consta nesta lista — assuma que a mudança existe. ...]`
                 : diff;
 
             const judgePrompt = `You are a strict senior code reviewer (LLM Judge) for a production system.
