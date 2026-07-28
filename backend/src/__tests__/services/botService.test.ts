@@ -409,6 +409,30 @@ describe('BotService', () => {
             expect(aiService.generateReply).toHaveBeenCalledTimes(1); // processou apesar do body vazio
         });
 
+        it('imagem sem legenda + DOWNLOAD FALHA: bot NÃO descarta em silêncio → responde (não fica mudo)', async () => {
+            // ORÁCULO DO FIX (dono: "enviei imagem e não recebi nada"): quando o getMessageMedia
+            // falha (sessão instável), o body ficava vazio e a guarda de "msg curta" DESCARTAVA a
+            // imagem em silêncio (return, não throw → nem a rede de segurança #1719 pegava). Agora
+            // um image+hasMedia SEMPRE ganha corpo mínimo e chega ao generateReply.
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (messageService.getMessageMedia as any).mockResolvedValue(null); // download falhou
+            (aiService.generateReply as any).mockResolvedValue('recebi sua imagem, mas não consegui abri-la; pode reenviar?');
+            await botService.processMessage(createMessage({ type: 'image', hasMedia: true, body: '', id: 'imgfail' }));
+            expect(aiService.generateReply).toHaveBeenCalledTimes(1);   // NÃO descartada
+            const imgArg = (aiService.generateReply as any).mock.calls[0][2];
+            expect(imgArg).toBeUndefined();                             // sem imagem (download falhou) → sem visão
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);   // respondeu (não mudo)
+        });
+
+        it('imagem sem legenda + getMessageMedia LANÇA: ainda responde (não descarta)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (messageService.getMessageMedia as any).mockRejectedValue(new Error('decrypt fail'));
+            (aiService.generateReply as any).mockResolvedValue('recebi sua imagem, mas não consegui abri-la');
+            await botService.processMessage(createMessage({ type: 'image', hasMedia: true, body: '', id: 'imgthrow' }));
+            expect(aiService.generateReply).toHaveBeenCalledTimes(1);
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+        });
+
         it('handles /status command', async () => {
             (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
 
