@@ -14,6 +14,11 @@ vi.mock('../../services/legacy/messageService', () => ({
 const mockAxios = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock('axios', () => ({ default: mockAxios, ...mockAxios }));
 
+// pdfText: extração de PDF recebido. Mock p/ oráculos determinísticos (o require lazy do
+// pdf-parse não é alcançável por spy — mockar o módulo inteiro é o caminho, ver memória).
+const mockPdf = vi.hoisted(() => ({ extractPdfText: vi.fn() }));
+vi.mock('../../utils/pdfText', () => mockPdf);
+
 vi.mock('../../services/aiService', () => ({
     aiService: {
         generateReply: vi.fn(),
@@ -429,6 +434,40 @@ describe('BotService', () => {
             (messageService.getMessageMedia as any).mockRejectedValue(new Error('decrypt fail'));
             (aiService.generateReply as any).mockResolvedValue('recebi sua imagem, mas não consegui abri-la');
             await botService.processMessage(createMessage({ type: 'image', hasMedia: true, body: '', id: 'imgthrow' }));
+            expect(aiService.generateReply).toHaveBeenCalledTimes(1);
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+        });
+
+        // ===== PDF/documento recebido (dono: "quero que o agente receba imagens e pdf") =====
+        it('PDF recebido: extrai o texto e injeta no contexto do LLM', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (messageService.getMessageMedia as any).mockResolvedValue({ data: Buffer.from('%PDF-...'), contentType: 'application/pdf' });
+            mockPdf.extractPdfText.mockResolvedValue('Beneficiário CARVALHO S Vencimento 16/07/2026 Valor 1500,00');
+            (aiService.generateReply as any).mockResolvedValue('O boleto vence em 16/07/2026, valor R$1.500,00.');
+            await botService.processMessage(createMessage({ type: 'document', hasMedia: true, mimetype: 'application/pdf', body: '', id: 'pdf1' }));
+            expect(mockPdf.extractPdfText).toHaveBeenCalledTimes(1);
+            const history = (aiService.generateReply as any).mock.calls[0][0];
+            const lastUser = history[history.length - 1];
+            expect(String(lastUser.parts)).toContain('Vencimento 16/07/2026'); // texto do PDF no contexto
+            expect(String(lastUser.parts)).toContain('Conteúdo extraído do PDF');
+        });
+
+        it('PDF sem texto extraível (só-imagem) → NÃO descarta, avisa que não leu', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (messageService.getMessageMedia as any).mockResolvedValue({ data: Buffer.from('%PDF-'), contentType: 'application/pdf' });
+            mockPdf.extractPdfText.mockResolvedValue(''); // scan/imagem → sem texto
+            (aiService.generateReply as any).mockResolvedValue('recebi seu documento, mas não consegui ler o texto');
+            await botService.processMessage(createMessage({ type: 'document', hasMedia: true, mimetype: 'application/pdf', body: '', id: 'pdf2' }));
+            expect(aiService.generateReply).toHaveBeenCalledTimes(1); // não descartado
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);  // respondeu
+        });
+
+        it('documento com download falho → NÃO descarta (não fica mudo)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (messageService.getMessageMedia as any).mockResolvedValue(null); // download falhou
+            (aiService.generateReply as any).mockResolvedValue('não consegui carregar seu documento, pode reenviar?');
+            await botService.processMessage(createMessage({ type: 'document', hasMedia: true, mimetype: 'application/pdf', body: '', id: 'pdf3' }));
+            expect(mockPdf.extractPdfText).not.toHaveBeenCalled(); // sem dados → nem tenta parsear
             expect(aiService.generateReply).toHaveBeenCalledTimes(1);
             expect(messageService.sendText).toHaveBeenCalledTimes(1);
         });

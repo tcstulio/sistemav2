@@ -9,6 +9,7 @@ import { approvalService } from './approvalService';
 import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
 import { logger } from '../utils/logger';
+import { extractPdfText } from '../utils/pdfText';
 import { FEATURES } from '../config/features';
 import { isFinancialCommandsEnabled, isCrmContextInjectionEnabled, isWhatsappEmployeeElevationEnabled } from '../config/featureSwitches';
 import { whatsappIdentityService, SenderIdentity } from './whatsappIdentityService';
@@ -466,6 +467,35 @@ class BotService {
                     body = imageLoaded
                         ? '[imagem enviada]'
                         : '[o usuário enviou uma imagem, mas não consegui carregá-la para análise — peça para reenviar]';
+                }
+            }
+
+            // DOCUMENTO recebido (PDF) → baixa e EXTRAI O TEXTO p/ injetar no contexto do LLM
+            // (o dono quer que o agente "receba PDFs", ex.: boletos). Nunca descarta em silêncio.
+            if (message.type === 'document' && message.hasMedia) {
+                let pdfText = '';
+                let docLoaded = false;
+                try {
+                    const media = await messageService.getMessageMedia(sessionId, message.id);
+                    const mime = String(media?.contentType || message.mimetype || '').toLowerCase();
+                    if (media && media.data) {
+                        docLoaded = true;
+                        if (mime.includes('pdf')) {
+                            const buf = Buffer.isBuffer(media.data) ? media.data : Buffer.from(media.data);
+                            pdfText = (await extractPdfText(buf)).trim();
+                            if (pdfText) log.info('PDF recebido → texto extraído p/ o contexto.');
+                        }
+                    }
+                } catch (e: any) {
+                    log.warn(`Falha ao ler documento recebido: ${e.message}`);
+                }
+                if (pdfText) {
+                    const legenda = (body && body.length >= 2) ? `\nLegenda do usuário: ${body}` : '';
+                    body = `[Documento PDF recebido]${legenda}\n\nConteúdo extraído do PDF (responda com base nele):\n${pdfText}`;
+                } else if (!body || body.length < 2) {
+                    body = docLoaded
+                        ? '[o usuário enviou um documento, mas não consegui extrair o texto (pode ser um PDF só de imagem/digitalização, ou outro formato) — peça para descrever ou reenviar]'
+                        : '[o usuário enviou um documento, mas não consegui carregá-lo — peça para reenviar]';
                 }
             }
 
