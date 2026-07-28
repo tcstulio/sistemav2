@@ -10,6 +10,8 @@ import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { validateBody } from '../middleware/validation';
+import { asyncHandler } from '../middleware/errorHandler';
 import { created, fail, ok } from '../utils/apiResponse';
 import { createLogger } from '../utils/logger';
 
@@ -112,23 +114,14 @@ const documentUpdateSchema = documentCreateSchema
 
 // ===== Endpoints =====
 
-function validationDetails(error: z.ZodError): Array<{ field: string; message: string }> {
-    return error.issues.map((issue) => ({
-        field: issue.path.join('.'),
-        message: issue.message,
-    }));
-}
+/**
+ * POST /api/documents
+ * Cria um documento. A validação roda no middleware `validateBody`; aqui fica
+ * apenas a checagem de autorização do `skipApproval` (somente admin).
+ */
+router.post('/', validateBody(documentCreateSchema), (req: Request, res: Response) => {
+    const data = req.body as z.infer<typeof documentCreateSchema>;
 
-function handleDocumentMutation(req: Request, res: Response, update: boolean): Response {
-    const parsed = update
-        ? documentUpdateSchema.safeParse(req.body)
-        : documentCreateSchema.safeParse(req.body);
-
-    if (!parsed.success) {
-        return fail(res, 'VALIDATION_ERROR', 'Dados inválidos', 400, validationDetails(parsed.error));
-    }
-
-    const data = parsed.data;
     if (data.skipApproval === true) {
         const allowed = isAdmin(req);
         auditSkipApproval(req, {
@@ -142,82 +135,91 @@ function handleDocumentMutation(req: Request, res: Response, update: boolean): R
         }
     }
 
-    if (update) {
-        return ok(res, { id: req.params.id, ...data });
+    return created(res, data);
+});
+
+/**
+ * PUT /api/documents/:id
+ * Atualiza um documento. Validação em `validateBody`; `skipApproval` exige admin.
+ */
+router.put('/:id', validateBody(documentUpdateSchema), (req: Request, res: Response) => {
+    const data = req.body as z.infer<typeof documentUpdateSchema>;
+
+    if (data.skipApproval === true) {
+        const allowed = isAdmin(req);
+        auditSkipApproval(req, {
+            documentType: data.documentType || 'unknown',
+            entityType: data.entityType || 'unknown',
+            entityId: data.entityId || req.params.id || 'unknown',
+        }, allowed);
+
+        if (!allowed) {
+            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
+        }
     }
 
-    return created(res, data);
-}
-
-router.post('/', (req: Request, res: Response) => handleDocumentMutation(req, res, false));
-router.put('/:id', (req: Request, res: Response) => handleDocumentMutation(req, res, true));
+    return ok(res, { id: req.params.id, ...data });
+});
 
 /**
  * POST /api/documents/send
  * Envia documento via WhatsApp (passa pelo sistema de aprovação)
  */
-router.post('/send', async (req: Request, res: Response) => {
-    try {
-        const data = SendDocumentSchema.parse(req.body);
-        const user = getRequestUser(req);
+router.post('/send', validateBody(SendDocumentSchema), asyncHandler(async (req: Request, res: Response) => {
+    const data = req.body as z.infer<typeof SendDocumentSchema>;
+    const user = getRequestUser(req);
 
-        if (data.skipApproval) {
-            const allowed = isAdmin(req);
-            auditSkipApproval(req, {
-                documentType: data.documentType,
-                entityType: data.documentType === 'boleto' ? 'bank-slip' : data.documentType,
-                entityId: data.documentId,
-            }, allowed);
-
-            if (!allowed) {
-                return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
-            }
-        }
-
-        // Se thirdPartyId foi fornecido, buscar telefone
-        let phone = data.phone;
-        if (data.thirdPartyId && !data.phone) {
-            const customerPhone = await documentService.getCustomerPhone(data.thirdPartyId);
-            if (!customerPhone) {
-                return fail(res, 'BAD_REQUEST', 'Telefone do cliente não encontrado', 400);
-            }
-            phone = customerPhone;
-        }
-
-        const result = await documentService.sendDocument({
+    if (data.skipApproval) {
+        const allowed = isAdmin(req);
+        auditSkipApproval(req, {
             documentType: data.documentType,
-            documentId: data.documentId,
-            banco: data.banco,
-            phone,
-            sessionId: data.sessionId,
-            message: data.message,
-            requestedBy: String(user.login || user.id || 'unknown'),
-            skipApproval: data.skipApproval,
-        });
+            entityType: data.documentType === 'boleto' ? 'bank-slip' : data.documentType,
+            entityId: data.documentId,
+        }, allowed);
 
-        if (result.approvalRequired) {
-            return res.status(202).json({
-                success: true,
-                data: {
-                    message: 'Documento adicionado à fila de aprovação',
-                    actionId: result.actionId,
-                    approvalRequired: true,
-                },
-            });
+        if (!allowed) {
+            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
         }
-
-        return ok(res, {
-            message: 'Documento enviado com sucesso',
-            messageId: result.messageId,
-            approvalRequired: false,
-        });
-    } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return fail(res, 'VALIDATION_ERROR', 'Dados inválidos', 400, validationDetails(error));
-        }
-        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
-});
+
+    // Se thirdPartyId foi fornecido, buscar telefone
+    let phone = data.phone;
+    if (data.thirdPartyId && !data.phone) {
+        const customerPhone = await documentService.getCustomerPhone(data.thirdPartyId);
+        if (!customerPhone) {
+            return fail(res, 'BAD_REQUEST', 'Telefone do cliente não encontrado', 400);
+        }
+        phone = customerPhone;
+    }
+
+    const result = await documentService.sendDocument({
+        documentType: data.documentType,
+        documentId: data.documentId,
+        banco: data.banco,
+        phone,
+        sessionId: data.sessionId,
+        message: data.message,
+        requestedBy: String(user.login || user.id || 'unknown'),
+        skipApproval: data.skipApproval,
+    });
+
+    if (result.approvalRequired) {
+        return res.status(202).json({
+            success: true,
+            data: {
+                message: 'Documento adicionado à fila de aprovação',
+                actionId: result.actionId,
+                approvalRequired: true,
+            },
+        });
+    }
+
+    return ok(res, {
+        message: 'Documento enviado com sucesso',
+        messageId: result.messageId,
+        approvalRequired: false,
+    });
+}));
 
 /**
  * GET /api/documents/boleto/:banco/:nossoNumero/preview

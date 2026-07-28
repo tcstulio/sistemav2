@@ -37,12 +37,27 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 import approvalRoutes from '../../routes/approvalRoutes';
+// Sem o errorHandler global, as rotas que propagam erro via `next(...)` (e o
+// middleware `validateBody`/`validateQuery`) respondem só com status (sem
+// envelope), quebrando as asserções em `res.body.error.code/...`.
+import { errorHandler } from '../../middleware/errorHandler';
 
 function createApp() {
     const app = express();
     app.use(express.json());
     app.use('/api/approvals', approvalRoutes);
+    app.use(errorHandler);
     return app;
+}
+
+/** Simula a decisão de `requireDolibarrAdmin` negando acesso a um usuário comum. */
+function denyAdminOnce() {
+    mockRequireDolibarrAdmin.mockImplementationOnce((_req: any, res: any) =>
+        res.status(403).json({
+            success: false,
+            error: { code: 'ADMIN_ACCESS_DENIED', message: 'Access Denied: You must be an Administrator to perform this action.' },
+        })
+    );
 }
 
 describe('approvalRoutes', () => {
@@ -63,8 +78,24 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.count).toBeDefined();
-            expect(res.body.actions).toBeDefined();
+            expect(res.body.meta.count).toBeDefined();
+            expect(res.body.data).toBeDefined();
+        });
+
+        it('returns 400 when type query param is invalid', async () => {
+            const res = await request(app).get('/api/approvals/pending?type=invalid_type');
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockApprovalService.getPendingActions).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when banco query param is invalid', async () => {
+            const res = await request(app).get('/api/approvals/pending?banco=bradesco');
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
         it('returns 500 when service throws', async () => {
@@ -86,7 +117,22 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.history).toBeDefined();
+            expect(res.body.data).toBeDefined();
+        });
+
+        it('returns 400 when date query param is invalid', async () => {
+            const res = await request(app).get('/api/approvals/history?startDate=01/01/2024');
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockApprovalService.getActionHistory).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when status query param is invalid', async () => {
+            const res = await request(app).get('/api/approvals/history?status=unknown');
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
         it('returns 500 when service throws', async () => {
@@ -104,7 +150,7 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.stats).toBeDefined();
+            expect(res.body.data).toBeDefined();
         });
 
         it('returns 500 when service throws', async () => {
@@ -128,7 +174,7 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.action).toBeDefined();
+            expect(res.body.data).toBeDefined();
         });
 
         it('returns 404 when action is not found', async () => {
@@ -167,7 +213,7 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(201);
             expect(res.body.success).toBe(true);
-            expect(res.body.action).toBeDefined();
+            expect(res.body.data).toBeDefined();
         });
 
         it('returns 400 when type is missing', async () => {
@@ -204,6 +250,32 @@ describe('approvalRoutes', () => {
             expect(res.status).toBe(400);
         });
 
+        it('returns 400 when payload is not an object (rejects arbitrary data)', async () => {
+            const res = await request(app)
+                .post('/api/approvals')
+                .send({
+                    type: 'pagar_boleto',
+                    payload: 'not-an-object',
+                    description: 'Test'
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockApprovalService.createPendingAction).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when payload is null', async () => {
+            const res = await request(app)
+                .post('/api/approvals')
+                .send({
+                    type: 'pagar_boleto',
+                    payload: null,
+                    description: 'Test'
+                });
+
+            expect(res.status).toBe(400);
+        });
+
         it('returns 500 when service throws', async () => {
             mockApprovalService.createPendingAction.mockRejectedValue(new Error('Creation failed'));
 
@@ -220,7 +292,7 @@ describe('approvalRoutes', () => {
     });
 
     describe('POST /api/approvals/:id/approve', () => {
-        it('returns 200 when action is approved', async () => {
+        it('returns 200 when an admin approves the action', async () => {
             mockApprovalService.approveAction.mockResolvedValue({
                 success: true,
                 result: { executed: true }
@@ -231,7 +303,8 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data).toBeDefined();
+            expect(mockApprovalService.approveAction).toHaveBeenCalledWith('action-123', expect.any(String));
         });
 
         it('returns 400 when approval returns failure', async () => {
@@ -244,6 +317,18 @@ describe('approvalRoutes', () => {
                 .post('/api/approvals/action-123/approve');
 
             expect(res.status).toBe(400);
+        });
+
+        it('returns 403 when a non-admin user tries to approve', async () => {
+            denyAdminOnce();
+
+            const res = await request(app)
+                .post('/api/approvals/action-123/approve');
+
+            expect(res.status).toBe(403);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('ADMIN_ACCESS_DENIED');
+            expect(mockApprovalService.approveAction).not.toHaveBeenCalled();
         });
 
         it('returns 500 when service throws', async () => {
@@ -295,6 +380,17 @@ describe('approvalRoutes', () => {
             expect(res.status).toBe(400);
         });
 
+        it('returns 403 when a non-admin user tries to reject', async () => {
+            denyAdminOnce();
+
+            const res = await request(app)
+                .post('/api/approvals/action-123/reject')
+                .send({ reason: 'Test' });
+
+            expect(res.status).toBe(403);
+            expect(mockApprovalService.rejectAction).not.toHaveBeenCalled();
+        });
+
         it('returns 500 when service throws', async () => {
             mockApprovalService.rejectAction.mockRejectedValue(new Error('Rejection failed'));
 
@@ -303,6 +399,68 @@ describe('approvalRoutes', () => {
                 .send({ reason: 'Test' });
 
             expect(res.status).toBe(500);
+        });
+    });
+
+    describe('POST /api/approvals/bulk', () => {
+        it('returns 200 and approves each id for an admin', async () => {
+            mockApprovalService.approveAction
+                .mockResolvedValueOnce({ success: true, result: { ok: true } })
+                .mockResolvedValueOnce({ success: true, result: { ok: true } });
+
+            const res = await request(app)
+                .post('/api/approvals/bulk')
+                .send({ ids: ['action-1', 'action-2'] });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.approved).toBe(2);
+            expect(res.body.data.total).toBe(2);
+            expect(res.body.data.results).toHaveLength(2);
+            expect(mockApprovalService.approveAction).toHaveBeenCalledTimes(2);
+        });
+
+        it('reports partial failures without aborting the batch', async () => {
+            mockApprovalService.approveAction
+                .mockResolvedValueOnce({ success: false, error: 'already executed' })
+                .mockResolvedValueOnce({ success: true, result: { ok: true } });
+
+            const res = await request(app)
+                .post('/api/approvals/bulk')
+                .send({ ids: ['a', 'b'] });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.approved).toBe(1);
+            expect(res.body.data.total).toBe(2);
+        });
+
+        it('returns 400 when ids is empty', async () => {
+            const res = await request(app)
+                .post('/api/approvals/bulk')
+                .send({ ids: [] });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockApprovalService.approveAction).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when ids is missing', async () => {
+            const res = await request(app)
+                .post('/api/approvals/bulk')
+                .send({});
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 403 when a non-admin user tries bulk approval', async () => {
+            denyAdminOnce();
+
+            const res = await request(app)
+                .post('/api/approvals/bulk')
+                .send({ ids: ['a'] });
+
+            expect(res.status).toBe(403);
+            expect(mockApprovalService.approveAction).not.toHaveBeenCalled();
         });
     });
 });
