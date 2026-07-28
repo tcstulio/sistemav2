@@ -472,6 +472,25 @@ describe('getLastModified (real IndexedDB via fake-indexeddb) [#1039]', () => {
         expect(getAllSpy).toHaveBeenCalled();
     });
 
+    it('preserves the multi-field fallback when records lack date_modification (semantic guard #1039)', async () => {
+        // Records with NO date_modification are NOT present in the
+        // date_modification index, so the fast path's reverse cursor would
+        // report 0. The semantic guard must defer to the scan and return the
+        // max of the fallback fields (date_creation here) instead of 0 —
+        // otherwise backgroundSyncService would SKIP this module entirely.
+        await dbService.open();
+        await dbService.saveAll('customers', [
+            { id: '1', date_creation: 500 },
+            { id: '2', date_creation: 900 },
+        ]);
+        const getAllSpy = vi.spyOn(FDBObjectStore.prototype, 'getAll');
+
+        const result = await dbService.getLastModified('customers');
+
+        expect(result).toBe(900); // NOT 0 — watermark preserved
+        expect(getAllSpy).toHaveBeenCalled(); // scan fallback engaged
+    });
+
     it('preserves existing data and adds the index when upgrading from an old schema', async () => {
         // Pre-seed a v1 DB (a store WITHOUT the date_modification index).
         await new Promise<void>((resolve, reject) => {

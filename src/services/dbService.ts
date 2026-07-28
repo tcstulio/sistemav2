@@ -472,72 +472,91 @@ export const dbService = {
 
     // Get the latest modification timestamp from a store.
     //
-    // Fast path (#1039): when querying the indexed `date_modification` field we
-    // open a reverse key cursor over the `date_modification` index and read only
-    // the first (== maximum) key. This is O(log n + k) and avoids materializing
-    // every record into memory (the previous O(n) behaviour).
+    // #1039 — two paths, kept SEMANTICALLY EQUIVALENT:
     //
-    // Fallback path: for non-indexed date fields, or for databases created
-    // before the v31 migration added the index, we fall back to a full scan
-    // preserving the original multi-field (`tms`/`datec`/`date_creation`)
-    // resolution logic.
+    // 1. Fast path (default `dateField === 'date_modification'` and the v31
+    //    index exists): open a reverse key cursor on the `date_modification`
+    //    index and read only the first (== greatest) key in O(log n + k),
+    //    without materializing any record. This is the common case because the
+    //    mappers always store `date_modification = toTimestamp(tms)`.
+    //
+    // 2. Scan path: iterate every record and resolve the timestamp through the
+    //    historical fallback chain `dateField || tms || datec || date_creation`.
+    //    Used for non-default date fields and for DBs created before v31.
+    //
+    // Semantic guard: the index only contains records that actually carry a
+    // `date_modification` value. When the index reports no watermark (candidate
+    // === 0) we transparently defer to the scan path so that a non-empty store
+    // whose records only expose `tms`/`date_creation` (no `date_modification`)
+    // still returns the correct maximum instead of 0. Returning 0 there would
+    // otherwise make `backgroundSyncService` SKIP the module entirely (see the
+    // `lastModified === 0 && itemCount > 0` branch), so preserving the
+    // pre-#1039 contract is required for this sync-critical watermark.
     getLastModified: async (storeName: string, dateField: string = 'date_modification'): Promise<number> => {
         try {
             const db = await dbService.open();
 
-            return new Promise<number>((resolve, reject) => {
+            return new Promise<number>((resolve) => {
                 const transaction = db.transaction(storeName, 'readonly');
                 const store = transaction.objectStore(storeName);
+
+                // Shared O(n) scan that reproduces the original multi-field
+                // resolution exactly (`dateField || tms || datec || date_creation`).
+                const scanFallback = () => {
+                    log.debug(`getLastModified: full scan for ${storeName} (field=${dateField})`);
+                    const scanReq = store.getAll();
+                    scanReq.onsuccess = () => {
+                        const items = scanReq.result || [];
+                        if (items.length === 0) {
+                            resolve(0);
+                            return;
+                        }
+                        let maxTs = 0;
+                        items.forEach(item => {
+                            const ts = item[dateField] || item.tms || item.datec || item.date_creation || 0;
+                            const val = Number(ts);
+                            if (!isNaN(val) && val > maxTs) {
+                                maxTs = val;
+                            }
+                        });
+                        resolve(maxTs);
+                    };
+                    scanReq.onerror = () => {
+                        log.error(`getLastModified: getAll error for ${storeName}`, scanReq.error);
+                        resolve(0);
+                    };
+                };
 
                 const canUseIndex = dateField === DATE_MODIFICATION_INDEX
                     && store.indexNames.contains(DATE_MODIFICATION_INDEX);
 
-                if (canUseIndex) {
-                    log.debug(`getLastModified: using date_modification index cursor for ${storeName}`);
-                    const index = store.index(DATE_MODIFICATION_INDEX);
-                    // openKeyCursor only reads keys (not values) -> most efficient.
-                    // 'prev' positions the cursor at the greatest key, which is the
-                    // maximum date_modification value.
-                    const indexReq = index.openKeyCursor(null, 'prev');
-                    indexReq.onsuccess = () => {
-                        const cursor = indexReq.result;
-                        if (cursor) {
-                            const val = Number(cursor.key);
-                            resolve(isNaN(val) ? 0 : val);
-                        } else {
-                            resolve(0); // empty store
-                        }
-                    };
-                    indexReq.onerror = () => {
-                        log.error(`getLastModified: index cursor error for ${storeName}`, indexReq.error);
-                        reject(indexReq.error);
-                    };
+                if (!canUseIndex) {
+                    scanFallback();
                     return;
                 }
 
-                // Fallback: scan every record to compute the max timestamp.
-                log.debug(`getLastModified: using full scan for ${storeName} (field=${dateField})`);
-                const scanReq = store.getAll();
-                scanReq.onsuccess = () => {
-                    const items = scanReq.result || [];
-                    if (!items || items.length === 0) {
-                        resolve(0);
+                // Fast path: reverse key cursor over the date_modification index.
+                // openKeyCursor only reads keys (not values) -> most efficient.
+                log.debug(`getLastModified: using date_modification index cursor for ${storeName}`);
+                const indexReq = store.index(DATE_MODIFICATION_INDEX).openKeyCursor(null, 'prev');
+                indexReq.onsuccess = () => {
+                    const cursor = indexReq.result;
+                    const candidate = !cursor || isNaN(Number(cursor.key)) ? 0 : Number(cursor.key);
+
+                    if (candidate > 0) {
+                        // Common case: records carry date_modification (= tms).
+                        resolve(candidate);
                         return;
                     }
-                    let maxTs = 0;
-                    items.forEach(item => {
-                        // Check multiple possible timestamp fields
-                        const ts = item[dateField] || item.tms || item.datec || item.date_creation || 0;
-                        const val = Number(ts);
-                        if (!isNaN(val) && val > maxTs) {
-                            maxTs = val;
-                        }
-                    });
-                    resolve(maxTs);
+                    // candidate === 0: empty store OR records lack
+                    // date_modification. Defer to the scan to preserve the
+                    // original multi-field semantics (see the guard above).
+                    scanFallback();
                 };
-                scanReq.onerror = () => {
-                    log.error(`getLastModified: getAll error for ${storeName}`, scanReq.error);
-                    resolve(0);
+                indexReq.onerror = () => {
+                    log.error(`getLastModified: index cursor error for ${storeName}`, indexReq.error);
+                    // Index failure must never break sync — fall back to scan.
+                    scanFallback();
                 };
             });
         } catch (e) {
