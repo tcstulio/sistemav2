@@ -3,7 +3,10 @@ import { logger } from '../utils/logger';
 const log = logger.child('IndexedDB');
 
 export const DB_NAME = 'CoolGrooveDB';
-export const DB_VERSION = 30; // #821: Bumped version to include salaries store
+export const DB_VERSION = 31; // #1039: Bumped version to add date_modification index
+
+// Name of the index added in v31 to speed up getLastModified() (#1039)
+export const DATE_MODIFICATION_INDEX = 'date_modification';
 
 // ... (existing code)
 
@@ -145,10 +148,35 @@ export const dbService = {
                     log.info("Upgrading to v30 - Adding salaries store...");
                 }
 
+                // v31 - Add a `date_modification` index to every store so that
+                // getLastModified() can use a reverse key cursor (O(log n + k))
+                // instead of materializing the whole store in memory (O(n)) (#1039).
+                if (oldVersion < 31) {
+                    log.info("Upgrading to v31 - Adding date_modification index to stores (#1039)...");
+                }
+
+                // The versionchange transaction is required to mutate stores/
+                // indexes that already exist on disk.
+                const versionChangeTx = event.target.transaction;
+
                 STORES.forEach(storeName => {
+                    let store: IDBObjectStore;
                     if (!db.objectStoreNames.contains(storeName)) {
                         // Using 'id' as keyPath is standard for our types
-                        db.createObjectStore(storeName, { keyPath: 'id' });
+                        store = db.createObjectStore(storeName, { keyPath: 'id' });
+                    } else {
+                        store = versionChangeTx.objectStore(storeName);
+                    }
+
+                    // Idempotent: only create the index if it is missing, so
+                    // re-running the upgrade (or partial upgrades) never throws
+                    // a ConstraintError for a duplicate index name (#1039).
+                    if (store && !store.indexNames.contains(DATE_MODIFICATION_INDEX)) {
+                        store.createIndex(
+                            DATE_MODIFICATION_INDEX,
+                            DATE_MODIFICATION_INDEX,
+                            { unique: false }
+                        );
                     }
                 });
             };
@@ -442,22 +470,95 @@ export const dbService = {
         }
     },
 
-    // NEW: Get the latest modification timestamp from a store
+    // Get the latest modification timestamp from a store.
+    //
+    // #1039 — two paths, kept SEMANTICALLY EQUIVALENT:
+    //
+    // 1. Fast path (default `dateField === 'date_modification'` and the v31
+    //    index exists): open a reverse key cursor on the `date_modification`
+    //    index and read only the first (== greatest) key in O(log n + k),
+    //    without materializing any record. This is the common case because the
+    //    mappers always store `date_modification = toTimestamp(tms)`.
+    //
+    // 2. Scan path: iterate every record and resolve the timestamp through the
+    //    historical fallback chain `dateField || tms || datec || date_creation`.
+    //    Used for non-default date fields and for DBs created before v31.
+    //
+    // Semantic guard: the index only contains records that actually carry a
+    // `date_modification` value. When the index reports no watermark (candidate
+    // === 0) we transparently defer to the scan path so that a non-empty store
+    // whose records only expose `tms`/`date_creation` (no `date_modification`)
+    // still returns the correct maximum instead of 0. Returning 0 there would
+    // otherwise make `backgroundSyncService` SKIP the module entirely (see the
+    // `lastModified === 0 && itemCount > 0` branch), so preserving the
+    // pre-#1039 contract is required for this sync-critical watermark.
     getLastModified: async (storeName: string, dateField: string = 'date_modification'): Promise<number> => {
         try {
-            const items = await dbService.getAll<any>(storeName);
-            if (!items || items.length === 0) return 0;
+            const db = await dbService.open();
 
-            let maxTs = 0;
-            items.forEach(item => {
-                // Check multiple possible timestamp fields
-                const ts = item[dateField] || item.tms || item.datec || item.date_creation || 0;
-                const val = Number(ts);
-                if (!isNaN(val) && val > maxTs) {
-                    maxTs = val;
+            return new Promise<number>((resolve) => {
+                const transaction = db.transaction(storeName, 'readonly');
+                const store = transaction.objectStore(storeName);
+
+                // Shared O(n) scan that reproduces the original multi-field
+                // resolution exactly (`dateField || tms || datec || date_creation`).
+                const scanFallback = () => {
+                    log.debug(`getLastModified: full scan for ${storeName} (field=${dateField})`);
+                    const scanReq = store.getAll();
+                    scanReq.onsuccess = () => {
+                        const items = scanReq.result || [];
+                        if (items.length === 0) {
+                            resolve(0);
+                            return;
+                        }
+                        let maxTs = 0;
+                        items.forEach(item => {
+                            const ts = item[dateField] || item.tms || item.datec || item.date_creation || 0;
+                            const val = Number(ts);
+                            if (!isNaN(val) && val > maxTs) {
+                                maxTs = val;
+                            }
+                        });
+                        resolve(maxTs);
+                    };
+                    scanReq.onerror = () => {
+                        log.error(`getLastModified: getAll error for ${storeName}`, scanReq.error);
+                        resolve(0);
+                    };
+                };
+
+                const canUseIndex = dateField === DATE_MODIFICATION_INDEX
+                    && store.indexNames.contains(DATE_MODIFICATION_INDEX);
+
+                if (!canUseIndex) {
+                    scanFallback();
+                    return;
                 }
+
+                // Fast path: reverse key cursor over the date_modification index.
+                // openKeyCursor only reads keys (not values) -> most efficient.
+                log.debug(`getLastModified: using date_modification index cursor for ${storeName}`);
+                const indexReq = store.index(DATE_MODIFICATION_INDEX).openKeyCursor(null, 'prev');
+                indexReq.onsuccess = () => {
+                    const cursor = indexReq.result;
+                    const candidate = !cursor || isNaN(Number(cursor.key)) ? 0 : Number(cursor.key);
+
+                    if (candidate > 0) {
+                        // Common case: records carry date_modification (= tms).
+                        resolve(candidate);
+                        return;
+                    }
+                    // candidate === 0: empty store OR records lack
+                    // date_modification. Defer to the scan to preserve the
+                    // original multi-field semantics (see the guard above).
+                    scanFallback();
+                };
+                indexReq.onerror = () => {
+                    log.error(`getLastModified: index cursor error for ${storeName}`, indexReq.error);
+                    // Index failure must never break sync — fall back to scan.
+                    scanFallback();
+                };
             });
-            return maxTs;
         } catch (e) {
             log.error(`Failed to get last modified for ${storeName}`, e);
             return 0;
