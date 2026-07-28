@@ -185,14 +185,22 @@ export const AiService = {
     resolvePrefill: async (token: string): Promise<{ kind: string; data: Record<string, any> } | null> => {
         try {
             const response = await axios.get(`${API_URL}/prefill`, { params: { token }, ...getAuthHeaders() });
-            const d = response.data;
-            if (!d?.data) return null;
-            return { kind: d.kind || 'unknown', data: d.data };
+            // O backend responde no envelope padrão `ok()`: { success, data: { kind, data, expiresAt } }.
+            // O payload REAL está em response.data.data — ler response.data.kind (nível errado) devolvia
+            // kind='unknown', e o CustomerList só abre o modal p/ kind==='create_customer' → NUNCA abria.
+            const payload = response.data?.data;
+            if (!payload?.data) return null;
+            return { kind: payload.kind || 'unknown', data: payload.data };
         } catch (error: any) {
             // #1521 — surfa a mensagem REAL do backend (ex.: "Link inválido ou expirado. Peça ao agente
             // para gerar um novo.") em vez do genérico "IA indisponível". O 404-de-link-antigo já é
             // tratado pelo redirect de rota; aqui cobrimos o token expirado/inválido numa rota válida.
-            const msg = error?.response?.data?.error || 'Não foi possível abrir este link. Peça um novo ao agente.';
+            // O envelope de erro é `{ error: { code, message } }` (OBJETO). Extrai a STRING — passar o
+            // objeto ao toast quebrava o React ("Objects are not valid as a React child") e derrubava a
+            // tela inteira em vez de só avisar do link expirado.
+            const errData = error?.response?.data?.error;
+            const msg = (typeof errData === 'string' ? errData : errData?.message)
+                || 'Não foi possível abrir este link. Peça um novo ao agente.';
             log.error(`Resolver rascunho: ${msg}`);
             toast.error(msg);
             return null;
