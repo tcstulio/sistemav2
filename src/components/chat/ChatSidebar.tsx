@@ -2,7 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { useUsers, useProjects, useEvents } from '../../hooks/dolibarr';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { Search, Briefcase, MessageSquare, Clock, Plus } from 'lucide-react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
+import type { DolibarrUser, Project, AgendaEvent } from '../../types';
 
 interface ChatSidebarProps {
     onSelect: (type: 'user' | 'project' | 'topic', id: string, name: string) => void;
@@ -10,9 +11,6 @@ interface ChatSidebarProps {
 
 export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
     const { currentUser, config } = useDolibarr();
-    const navigate = useNavigate();
-    const { id: activeId } = useParams();
-    const location = useLocation();
     const [searchTerm, setSearchTerm] = useState('');
     const [showNewConversation, setShowNewConversation] = useState(false);
 
@@ -27,7 +25,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
         const projectIds = new Set<string>();
 
         if (events && currentUser) {
-            events.forEach((e: any) => {
+            events.forEach((e: AgendaEvent) => {
                 const myId = String(currentUser.id);
 
                 // Identify DM counterparts
@@ -51,42 +49,33 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
     // Filtered lists
     const filteredUsers = useMemo(() => {
         if (!users) return [];
-        let list = users.filter((u: any) => String(u.statut) === '1' && String(u.id) !== String(currentUser?.id));
+        const list = users.filter((u: DolibarrUser) => String(u.statut) === '1' && String(u.id) !== String(currentUser?.id));
 
         if (!searchTerm && !showNewConversation) {
             // Show only recent conversations
-            return list.filter((u: any) => activeUserIds.has(String(u.id)));
+            return list.filter((u: DolibarrUser) => activeUserIds.has(String(u.id)));
         } else {
             // Global Search
-            return list.filter((u: any) =>
-                (u.firstname + ' ' + u.lastname).toLowerCase().includes(searchTerm.toLowerCase()) ||
+            return list.filter((u: DolibarrUser) =>
+                ((u.firstname ?? '') + ' ' + (u.lastname ?? '')).toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (u.login || '').toLowerCase().includes(searchTerm.toLowerCase())
             );
         }
-    }, [users, searchTerm, currentUser, activeUserIds]);
+    }, [users, searchTerm, currentUser, activeUserIds, showNewConversation]);
 
     const filteredProjects = useMemo(() => {
         if (!projects) return [];
 
         if (!searchTerm && !showNewConversation) {
             // Recent: Show ANY project with chat history, regardless of status
-            return projects.filter((p: any) => activeProjectIds.has(String(p.id)));
+            return projects.filter((p: Project) => activeProjectIds.has(String(p.id)));
         } else {
             // Search: Show only OPEN projects matching term
             return projects
-                .filter((p: any) => String(p.statut) === '1') // Open projects
-                .filter((p: any) => p.ref.toLowerCase().includes(searchTerm.toLowerCase()) || p.title.toLowerCase().includes(searchTerm.toLowerCase()));
+                .filter((p: Project) => String(p.statut) === '1') // Open projects
+                .filter((p: Project) => p.ref.toLowerCase().includes(searchTerm.toLowerCase()) || p.title.toLowerCase().includes(searchTerm.toLowerCase()));
         }
-    }, [projects, searchTerm, activeProjectIds]);
-
-    const handleItemClick = (type: 'user' | 'project', item: any) => {
-        const id = String(item.id);
-        const name = type === 'user' ? (item.firstname || item.login) : item.ref;
-
-        onSelect(type, id, name);
-        setShowNewConversation(false);
-        navigate(`/chat/${type}/${id}`);
-    };
+    }, [projects, searchTerm, activeProjectIds, showNewConversation]);
 
     const handleNewConversationClick = () => {
         setShowNewConversation(true);
@@ -154,14 +143,20 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
                                 )}
                             </div>
                         )}
-                        {filteredUsers.map((user: any) => (
-                            <button
-                                key={user.id}
-                                onClick={() => handleItemClick('user', user)}
-                                className={`w-full text-left flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${location.pathname.includes(`/chat/user/${user.id}`)
-                                    ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
-                                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
-                                    }`}
+                        {filteredUsers.map((user: DolibarrUser) => (
+                            <NavLink
+                                key={String(user.id)}
+                                to={`/chat/user/${user.id}`}
+                                onClick={() => {
+                                    onSelect('user', String(user.id), user.firstname || user.login);
+                                    setShowNewConversation(false);
+                                }}
+                                className={({ isActive }) =>
+                                    `w-full text-left flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${isActive
+                                        ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
+                                        : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                                    }`
+                                }
                             >
                                 <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-800 flex items-center justify-center text-indigo-600 dark:text-indigo-300 font-medium text-xs">
                                     {(user.firstname?.[0] || user.login?.[0] || '?').toUpperCase()}
@@ -174,7 +169,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
                                         {user.job || 'Usuário do Sistema'}
                                     </div>
                                 </div>
-                            </button>
+                            </NavLink>
                         ))}
                     </div>
                 </div>
@@ -201,14 +196,20 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
                                 )}
                             </div>
                         )}
-                        {filteredProjects.map((project: any) => (
-                            <button
-                                key={project.id}
-                                onClick={() => handleItemClick('project', project)}
-                                className={`w-full text-left flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${location.pathname.includes(`/chat/project/${project.id}`)
-                                    ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
-                                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
-                                    }`}
+                        {filteredProjects.map((project: Project) => (
+                            <NavLink
+                                key={String(project.id)}
+                                to={`/chat/project/${project.id}`}
+                                onClick={() => {
+                                    onSelect('project', String(project.id), project.ref);
+                                    setShowNewConversation(false);
+                                }}
+                                className={({ isActive }) =>
+                                    `w-full text-left flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${isActive
+                                        ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                                        : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                                    }`
+                                }
                             >
                                 <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-800 flex items-center justify-center text-emerald-600 dark:text-emerald-300">
                                     <Briefcase size={14} />
@@ -221,7 +222,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
                                         {project.title}
                                     </div>
                                 </div>
-                            </button>
+                            </NavLink>
                         ))}
                     </div>
                 </div>
