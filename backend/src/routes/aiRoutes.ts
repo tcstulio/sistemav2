@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { aiService } from '../services/aiService';
-import { extractPdfText } from '../utils/pdfText';
+import { analyzePdf } from '../services/analyzePdf';
 import type { ChatMessage } from '../services/aiService';
 import { dolibarrService } from '../services/dolibarr';
 import { chatSessionService } from '../services/chatSessionService';
@@ -439,8 +439,11 @@ const AnalyzePdfSchema = z.object({
 router.post('/analyze/pdf', asyncHandler(async (req, res) => {
     const { pdf, question } = AnalyzePdfSchema.parse(req.body);
     const pdfBuffer = Buffer.from(pdf, 'base64');
-    // pdf-parse v2 é CLASSE (PDFParse), não função — o `require('pdf-parse')(buffer)` antigo quebrava.
-    const text = await extractPdfText(pdfBuffer);
+    // #1547: fallback de OCR — PDF escaneado (sem camada de texto) é renderizado em PNG e
+    // transcrito via visão (describeImage). O caminho usado (pdf_parse vs ocr_vision) é logado
+    // dentro de analyzePdf. Aqui só consumimos o texto final.
+    const { text, path: pdfPath } = await analyzePdf(pdfBuffer);
+    log.debug(`/analyze/pdf processado via ${pdfPath}`);
 
     const prompt = `Analise o conteúdo deste documento PDF e responda à pergunta do usuário.
 
