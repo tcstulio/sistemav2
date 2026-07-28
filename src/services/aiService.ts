@@ -102,7 +102,7 @@ export interface ChatJobProgress {
 async function checkJobHeartbeat(jobId: string): Promise<{ alive: boolean; lastHeartbeatMs?: number; progressPct?: number }> {
     try {
         const st = await axios.get(`${AI_JOBS_URL}/${jobId}/status`, getAuthHeaders());
-        const data: any = st.data;
+        const data: any = st.data?.data ?? st.data; // desembrulha envelope ok() se houver (defensivo)
         if (data?.alive) {
             const hbMs = data.lastHeartbeat ? new Date(data.lastHeartbeat).getTime() : Date.now();
             return { alive: true, lastHeartbeatMs: hbMs, progressPct: data.progressPct };
@@ -136,7 +136,10 @@ async function pollChatJob(jobId: string, onProgress?: (p: ChatJobProgress) => v
         let job: any;
         try {
             const st = await axios.get(`${API_URL}/jobs/${jobId}`, getAuthHeaders());
-            job = st.data;
+            // Envelope ok(): { success, data: { status, reply, ... } }. Desembrulha p/ ler
+            // job.status/job.reply/job.alive (senão job.status=undefined → nunca vê 'done' → timeout).
+            // Fallback p/ resposta não-embrulhada (compat).
+            job = st.data?.data ?? st.data;
             consecutive5xx = 0;
         } catch (pollErr: any) {
             const status = pollErr?.response?.status;
@@ -557,7 +560,11 @@ export const AiService = {
                 sessionId
             }, getAuthHeaders());
 
-            const jobId = start.data?.jobId;
+            // Envelope ok(): { success, data: { jobId, ... } }. Lê o nível certo (start.data.data),
+            // com fallback p/ resposta não-embrulhada (compat). Ler start.data.jobId (nível errado)
+            // devolvia undefined → "Falha ao enfileirar" → "Erro de conexão" (mesmo bug de envelope
+            // do #1707/#1730 numa peça não migrada).
+            const jobId = start.data?.data?.jobId ?? start.data?.jobId;
             if (!jobId) throw new Error('Falha ao enfileirar o job do assistente.');
             onJobStarted?.(jobId); // #953: componente persiste o jobId p/ retomar após F5
 
