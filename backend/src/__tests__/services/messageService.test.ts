@@ -358,3 +358,53 @@ describe('MessageService metadata (#1658)', () => {
         }
     });
 });
+describe('MessageService.getMessageMedia (@lid fallback #1721)', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    const media = { data: Buffer.from('IMG').toString('base64'), mimetype: 'image/png' };
+
+    it('caminho primário: getMessageById resolve → baixa a mídia', async () => {
+        (sessionService.getClient as any).mockReturnValue({
+            getMessageById: vi.fn().mockResolvedValue({ hasMedia: true, downloadMedia: vi.fn().mockResolvedValue(media) }),
+        });
+        const r = await messageService.getMessageMedia('s', 'false_5511@c.us_ABC');
+        expect(r?.contentType).toBe('image/png');
+        expect(Buffer.isBuffer(r?.data)).toBe(true);
+    });
+
+    it('FALLBACK @lid: getMessageById devolve null → acha pela conversa e baixa (mata o "Media not found")', async () => {
+        // ORÁCULO DO FIX: id @lid não resolve por getMessageById; o bot dava "não consegui carregar".
+        const id = 'false_59936436445425@lid_3EB0C8C834FDB4AC3BE1AC';
+        const found = { id: { _serialized: id }, hasMedia: true, downloadMedia: vi.fn().mockResolvedValue(media) };
+        const other = { id: { _serialized: 'false_59936436445425@lid_OUTRO' }, hasMedia: true, downloadMedia: vi.fn() };
+        const getChatById = vi.fn().mockResolvedValue({ fetchMessages: vi.fn().mockResolvedValue([other, found]) });
+        (sessionService.getClient as any).mockReturnValue({
+            getMessageById: vi.fn().mockResolvedValue(null), // @lid não resolve
+            getChatById,
+        });
+        const r = await messageService.getMessageMedia('s', id);
+        expect(getChatById).toHaveBeenCalledWith('59936436445425@lid'); // parseou o chatId certo
+        expect(r?.contentType).toBe('image/png');
+        expect(found.downloadMedia).toHaveBeenCalled();
+    });
+
+    it('FALLBACK @lid: getMessageById LANÇA → ainda cai na conversa', async () => {
+        const id = 'false_59936436445425@lid_XYZ';
+        const found = { id: { _serialized: id }, hasMedia: true, downloadMedia: vi.fn().mockResolvedValue(media) };
+        (sessionService.getClient as any).mockReturnValue({
+            getMessageById: vi.fn().mockRejectedValue(new Error('lid unresolved')),
+            getChatById: vi.fn().mockResolvedValue({ fetchMessages: vi.fn().mockResolvedValue([found]) }),
+        });
+        const r = await messageService.getMessageMedia('s', id);
+        expect(r?.contentType).toBe('image/png');
+    });
+
+    it('não acha em lugar nenhum → null (não quebra)', async () => {
+        (sessionService.getClient as any).mockReturnValue({
+            getMessageById: vi.fn().mockResolvedValue(null),
+            getChatById: vi.fn().mockResolvedValue({ fetchMessages: vi.fn().mockResolvedValue([]) }),
+        });
+        const r = await messageService.getMessageMedia('s', 'false_5511@lid_NOPE');
+        expect(r).toBeNull();
+    });
+});
