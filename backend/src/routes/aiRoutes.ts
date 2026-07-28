@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { aiService } from '../services/aiService';
+import { extractPdfText } from '../utils/pdfText';
 import type { ChatMessage } from '../services/aiService';
 import { dolibarrService } from '../services/dolibarr';
 import { chatSessionService } from '../services/chatSessionService';
@@ -438,9 +439,8 @@ const AnalyzePdfSchema = z.object({
 router.post('/analyze/pdf', asyncHandler(async (req, res) => {
     const { pdf, question } = AnalyzePdfSchema.parse(req.body);
     const pdfBuffer = Buffer.from(pdf, 'base64');
-    const pdfParse = require('pdf-parse');
-    const data = await pdfParse(pdfBuffer);
-    const text = data.text.substring(0, 15000);
+    // pdf-parse v2 é CLASSE (PDFParse), não função — o `require('pdf-parse')(buffer)` antigo quebrava.
+    const text = await extractPdfText(pdfBuffer);
 
     const prompt = `Analise o conteúdo deste documento PDF e responda à pergunta do usuário.
 
