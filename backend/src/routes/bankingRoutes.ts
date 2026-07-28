@@ -92,8 +92,11 @@ router.post(
     '/import/ofx',
     rateLimiters.bankingPost,
     requireUserApiKey,
-    validateBody(BankingImportBodySchema),
+    // `upload.single` ANTES de `validateBody`: em multipart/form-data o
+    // `express.json()` não popula `req.body` — são os text-fields do upload
+    // que o preenchem. Validar antes do multer = validar body vazio (no-op).
     upload.single('file'),
+    validateBody(BankingImportBodySchema),
     asyncHandler(async (req: Request, res: Response) => {
         if (!req.file) {
             return apiResponse.fail(res, 'NO_FILE', 'Nenhum arquivo enviado', 400);
@@ -133,8 +136,12 @@ router.post(
     '/import/csv',
     rateLimiters.bankingPost,
     requireUserApiKey,
-    validateBody(BankingImportBodySchema),
+    // `upload.single` ANTES de `validateBody` (ver nota em /import/ofx):
+    // garante que os text-fields multipart estejam em `req.body` quando o
+    // Zod rodar — sem isso `format`/`delimiter`/`hasHeader` nunca passam
+    // pela validação.
     upload.single('file'),
+    validateBody(BankingImportBodySchema),
     asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
         if (!req.file) {
             return apiResponse.fail(res, 'NO_FILE', 'Nenhum arquivo enviado', 400);
@@ -192,8 +199,9 @@ router.post(
     '/import/auto',
     rateLimiters.bankingPost,
     requireUserApiKey,
-    validateBody(BankingImportBodySchema),
+    // `upload.single` ANTES de `validateBody` (ver nota em /import/ofx).
     upload.single('file'),
+    validateBody(BankingImportBodySchema),
     asyncHandler(async (req: Request, res: Response) => {
         if (!req.file) {
             return apiResponse.fail(res, 'NO_FILE', 'Nenhum arquivo enviado', 400);

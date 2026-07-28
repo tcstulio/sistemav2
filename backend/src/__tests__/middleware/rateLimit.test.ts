@@ -304,6 +304,19 @@ describe('rateLimiters (#1540 infrastructure)', () => {
             expect(err.message).toMatch(/banking/i);
             expect(err.details).toMatchObject({ retryAfter: 15 * 60, limit: 10 });
         });
+
+        // #1330 — o bucket DEVE ser chaveado por CLIENTE REAL (clientIpKey),
+        // igual a todos os outros presets. Sem isso, atrás do túnel Cloudflare
+        // o IP do túnel (idêntico p/ todos) vira a chave e um único cliente
+        // estoura o limite de TODOS os usuários de banking. Verifica-se que
+        // (1) há keyGenerator e (2) ele prefere CF-Connecting-IP sobre req.ip.
+        it('keys by real client IP via clientIpKey (CF-Connecting-IP), not the tunnel IP', () => {
+            const opts = rateLimitCalls[7];
+            expect(typeof opts.keyGenerator).toBe('function');
+            const req = { headers: { 'cf-connecting-ip': '203.0.113.42' }, ip: '10.0.0.1' };
+            const key = opts.keyGenerator(req, {} as any);
+            expect(key).toBe('203.0.113.42');
+        });
     });
 
     describe('handler contract (all presets) — errorHandler integration', () => {

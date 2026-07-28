@@ -209,11 +209,20 @@ const sync: RequestHandler = rateLimit({
 // conciliação/import rodam em rajadas curtas (operador abre 5 OFXs
 // seguidos, dispara export, etc.) e a janela curta geraria falsos 429.
 // AC: a 11ª chamada em 15min retorna 429.
+//
+// `keyGenerator: clientIpKey` é OBRIGATÓRIO aqui pelo mesmo motivo de
+// todos os outros presets: atrás do túnel Cloudflare `req.ip` é o IP do
+// túnel (o MESMO para todos os clientes). Sem isso o bucket vira global
+// — um único operador estourando 10 POSTs bloqueia banking de TODOS os
+// usuários (429 injusto). `clientIpKey` usa o IP real do cliente
+// (CF-Connecting-IP); em testes (sem CF) cai em `req.ip`, mantendo o
+// comportamento esperado pelo AC (bucket compartilhado por IP).
 const bankingPost: RequestHandler = rateLimit({
     windowMs: FIFTEEN_MIN_MS,
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: clientIpKey,
     handler: rateLimitHandler(
         FIFTEEN_MIN_MS,
         10,
