@@ -325,7 +325,22 @@ export class MessageService {
     async getMessageMedia(sessionId: string, messageId: string) {
         const client = this.getClient(sessionId);
         try {
-            const msg = await client.getMessageById(messageId);
+            // getMessageById costuma FALHAR para ids @lid (formato novo do WhatsApp Web) → retorna
+            // null/lança, e o download de mídia recebida (imagem/áudio) dava "Media not found".
+            let msg: any = await Promise.resolve(client.getMessageById(messageId)).catch(() => null);
+            // Fallback @lid: acha a mensagem PELA CONVERSA (fetchMessages já funciona p/ @lid — é o
+            // que o getMessages usa) e casa pelo id serializado. É o que destrava a visão/áudio.
+            if (!msg || !msg.hasMedia) {
+                const chatId = this.chatIdFromMessageId(messageId);
+                if (chatId) {
+                    const chat = await Promise.resolve(client.getChatById(chatId)).catch(() => null);
+                    if (chat) {
+                        const msgs: any[] = await Promise.resolve(chat.fetchMessages({ limit: 50 })).catch(() => []);
+                        const found = msgs.find((m: any) => (m?.id?._serialized || m?.id?.$1) === messageId);
+                        if (found) msg = found;
+                    }
+                }
+            }
             if (msg && msg.hasMedia) {
                 const media = await msg.downloadMedia();
                 if (media) {
@@ -339,6 +354,12 @@ export class MessageService {
             log.error('Error fetching media', e);
         }
         return null;
+    }
+
+    /** Extrai o chatId de um message id serializado. Ex.: "false_59936@lid_3EB0..." → "59936@lid". */
+    private chatIdFromMessageId(messageId: string): string | null {
+        const m = String(messageId).match(/^(?:true|false)_(.+?@(?:lid|c\.us|g\.us|s\.whatsapp\.net|broadcast))_/);
+        return m ? m[1] : null;
     }
 }
 
