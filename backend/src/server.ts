@@ -109,6 +109,13 @@ const globalLimiter = rateLimit({
     message: { error: 'Too many requests. Please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
+    // Isenta o RESOLVE de deeplink (GET /api/ai/prefill) do limite global. É uma ação crítica de
+    // UM clique (abrir o form pré-preenchido pelo agente), já protegida por login + token HMAC
+    // assinado — logo, rate-limitá-la não agrega segurança. Sem isto, quando o orçamento por-IP
+    // de 500/15min esgota (agravado por clientes atrás do túnel que compartilham 1 IP), o resolve
+    // toma 429 e o MODAL do deeplink não abre (falha “silenciosa” — o dono via só a lista). O
+    // aiLimiter já pula GETs; este é o único limiter que pegava o /prefill.
+    skip: (req) => req.method === 'GET' && req.path === '/api/ai/prefill',
 });
 
 // /health rate limiter (#1415) — endpoint é PÚBLICO e isento de auth (atrás de túnel Cloudflare
