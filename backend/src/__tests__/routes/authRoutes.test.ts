@@ -81,7 +81,7 @@ describe('authRoutes', () => {
 
             const res = await request(app)
                 .post('/api/login')
-                .send({ login: 'admin', password: 'password123' });
+                .send({ email: 'admin@example.com', password: 'password123' });
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual({ success: true, data: { user: { id: 1, login: 'admin', admin: '1' } } });
@@ -96,7 +96,7 @@ describe('authRoutes', () => {
             expect(cookie).toMatch(/Max-Age=\d+/);
         });
 
-        it('returns 400 when login field is missing', async () => {
+        it('returns 400 when email field is missing', async () => {
             const res = await request(app)
                 .post('/api/login')
                 .send({ password: 'password123' });
@@ -108,16 +108,16 @@ describe('authRoutes', () => {
         it('returns 400 when password field is missing', async () => {
             const res = await request(app)
                 .post('/api/login')
-                .send({ login: 'admin' });
+                .send({ email: 'admin@example.com' });
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
-        it('returns 400 when both login and password are empty strings', async () => {
+        it('returns 400 when both email and password are empty strings', async () => {
             const res = await request(app)
                 .post('/api/login')
-                .send({ login: '', password: '' });
+                .send({ email: '', password: '' });
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
@@ -128,7 +128,7 @@ describe('authRoutes', () => {
 
             const res = await request(app)
                 .post('/api/login')
-                .send({ login: 'admin', password: 'wrongpassword' });
+                .send({ email: 'admin@example.com', password: 'wrongpassword' });
 
             expect(res.status).toBe(401);
             expect(res.body.success).toBe(false);
@@ -140,24 +140,24 @@ describe('authRoutes', () => {
 
             const res = await request(app)
                 .post('/api/login')
-                .send({ login: 'admin', password: 'password123' });
+                .send({ email: 'admin@example.com', password: 'password123' });
 
             expect(res.status).toBe(401);
             expect(res.body.success).toBe(false);
         });
 
-        it('returns the standard 429 envelope on the sixth attempt for the same login', async () => {
+        it('returns the standard 429 envelope on the sixth attempt for the same email', async () => {
             mockDolibarrService.login.mockRejectedValue(new Error('Invalid credentials'));
 
             for (let attempt = 0; attempt < 5; attempt++) {
                 await request(app)
                     .post('/api/login')
-                    .send({ login: 'rate-limited-user', password: 'wrongpassword' });
+                    .send({ email: 'rate-limited@example.com', password: 'wrongpassword' });
             }
 
             const res = await request(app)
                 .post('/api/login')
-                .send({ login: 'rate-limited-user', password: 'wrongpassword' });
+                .send({ email: 'rate-limited@example.com', password: 'wrongpassword' });
 
             expect(res.status).toBe(429);
             expect(res.body).toMatchObject({

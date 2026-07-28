@@ -437,14 +437,23 @@ describe('adminRoutes', () => {
             expect(mockConfigService.resetModulesToGlobal).toHaveBeenCalledTimes(1);
         });
 
-        it('persiste via configService.setConfig e NÃO toca em .env', async () => {
+        it('persiste via configService.setConfig como fonte ÚNICA de verdade (não escreve em .env nem muta config.*)', async () => {
             const res = await request(app)
                 .post('/api/admin/config/llm')
                 .send({ provider: 'google', key: 'secret-key' });
 
             expect(res.status).toBe(200);
+            // configService é a fonte de verdade ÚNICA para runtimeConfig + config global
+            expect(mockConfigService.setConfig).toHaveBeenCalledWith('llmProvider', 'google');
             expect(mockConfigService.setConfig).toHaveBeenCalledWith('googleApiKey', 'secret-key');
-            expect(mockConfigService.setConfig.mock.calls.flat().join(' ')).not.toContain('.env');
+            // Nenhum setConfig foi chamado com path/nome relacionado a .env
+            for (const call of mockConfigService.setConfig.mock.calls) {
+                const [key, value] = call;
+                expect(String(key).toLowerCase()).not.toContain('.env');
+                expect(String(value).toLowerCase()).not.toContain('.env');
+            }
+            // Sanity: a configService mockada registrou ALGUMA escrita (não-bypass)
+            expect(mockConfigService.setConfig.mock.calls.length).toBeGreaterThanOrEqual(2);
         });
     });
 

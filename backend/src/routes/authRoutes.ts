@@ -19,19 +19,20 @@ const LOGIN_COOKIE_MAX_AGE_MS = Number.isSafeInteger(configuredCookieMaxAge) && 
     ? configuredCookieMaxAge
     : DEFAULT_LOGIN_COOKIE_MAX_AGE_MS;
 
+// Issue #1541: schema restrito a email+senha. A API do Dolibarr aceita ambos
+// (login OU email) como identificador no parâmetro `login`, então aqui
+// validamos como email e encaminhamos como login para o Dolibarr —
+// transparente. Manter `login` no body expandiria superfície de ataque
+// (enumeração de usernames) e diverge do requisito da issue.
 const LoginSchema = z.object({
-    login: z.string().trim().min(1).max(255).optional(),
-    email: z.string().trim().email().max(255).optional(),
+    email: z.string().trim().email().max(255),
     password: z.string().min(1).max(1024),
-}).refine(({ login, email }) => login !== undefined || email !== undefined, {
-    message: 'Login or email is required',
-    path: ['login'],
 });
 
 router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req, res) => {
     try {
-        const { login, email, password } = req.body;
-        const identifier = login ?? email!;
+        const { email, password } = req.body;
+        const identifier = email;
 
         const result = await dolibarrService.login(identifier, password);
 

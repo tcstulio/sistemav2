@@ -353,6 +353,11 @@ router.post('/config/llm', validateBody(LlmConfigSchema), async (req, res) => {
         }
 
         aiService.setConfig(provider, url, key, modelName);
+        // Fonte de verdade ÚNICA para runtimeConfig + objeto `config` global:
+        // `configService.setConfig()` (1) blinda nome de arquivo .env, (2) blinda
+        // nome de chave contendo `.env`, (3) persiste atômico em config/runtime.json,
+        // (4) reflete no `config` global via RUNTIME_TO_GLOBAL_KEY. NÃO mutamos
+        // `config.*` diretamente em nenhum ponto deste handler.
         configService.setConfig('llmProvider', provider);
         const configKeys = ({
             local: { url: 'localLlmUrl', key: undefined, model: 'localModelName' },
@@ -364,23 +369,7 @@ router.post('/config/llm', validateBody(LlmConfigSchema), async (req, res) => {
         if (key && configKeys.key) configService.setConfig(configKeys.key, key);
         if (modelName) configService.setConfig(configKeys.model, modelName);
 
-        config.llmProvider = provider;
         configService.resetModulesToGlobal();
-        if (url) {
-            if (provider === 'glm') config.zaiBaseUrl = url;
-            else if (provider === 'minimax') config.minimaxBaseUrl = url;
-            else config.localLlmUrl = url;
-        }
-        if (key) {
-            if (provider === 'glm') config.zaiApiKey = key;
-            else if (provider === 'minimax') config.minimaxApiKey = key;
-            else config.googleApiKey = key;
-        }
-        if (modelName) {
-            if (provider === 'glm') config.zaiModel = modelName;
-            else if (provider === 'minimax') config.minimaxModel = modelName;
-            else config.localModelName = modelName;
-        }
 
         res.json({ status: 'success', message: `LLM Provider switched to ${provider} (Model: ${modelName || 'default'}).` });
     } catch (e: any) {
