@@ -498,4 +498,36 @@ describe('ChatInterface — tipos sem any (#1572)', () => {
         renderChat();
         expect(screen.getByText('Conteúdo via content')).toBeInTheDocument();
     });
+
+    it('replyingTo armazena a ChatMessage completa: a citação preserva o conteúdo exato (#1026)', async () => {
+        vi.clearAllMocks();
+        const user = userEvent.setup({ pointerEventsCheck: 0 });
+        const htmlContent = '<b>Mensagem</b> com <i>HTML</i> exato';
+        vi.mocked(Operations.createEvent).mockResolvedValue({} as any);
+        vi.mocked(useEvents).mockReturnValue({
+            data: [
+                { id: 'r1', elementtype: 'project', fk_element: '1', fk_user_author: 'u7', user_author_name: 'Zeca', description: htmlContent, date_start: 1700000005 },
+            ],
+            isLoading: false,
+            refetch: mockRefetch,
+        } as any);
+        const { container } = renderChat();
+
+        const replyBtn = container.querySelector('button[title="Responder"]') as HTMLButtonElement;
+        await user.click(replyBtn);
+
+        // O banner de resposta reflete o conteúdo completo da ChatMessage armazenada.
+        expect(screen.getByText(/Respondendo a Zeca/)).toBeInTheDocument();
+        expect(screen.getByText(/Mensagem com HTML exato\.\.\./)).toBeInTheDocument();
+
+        await user.type(screen.getByTestId('message-input'), 'Ok');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            const call = vi.mocked(Operations.createEvent).mock.calls[0][1] as { description: string };
+            // A citação preserva o HTML original do content da mensagem respondida.
+            expect(call.description).toContain(htmlContent);
+            expect(call.description).toContain('Zeca');
+        });
+    });
 });

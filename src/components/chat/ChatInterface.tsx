@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 import { notifyError } from '../../utils/notifyError';
 import { SafeHtml, stripHtml } from '../../utils/sanitizeHtml';
 import { useConfirm } from '../../hooks/useConfirm';
-import { ChatMessage, ChatReply, agendaEventToChatMessage } from './types';
+import { ChatMessage, agendaEventToChatMessage } from './types';
 
 interface ChatInterfaceProps {
     elementId: string;
@@ -45,7 +45,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const [isSending, setIsSending] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [showSearch, setShowSearch] = useState(false);
-    const [replyingTo, setReplyingTo] = useState<ChatReply | null>(null);
+    const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
     const [showTaskWizard, setShowTaskWizard] = useState(false);
     const [wizardInitialData, setWizardInitialData] = useState<{ label: string; description: string }[] | undefined>(undefined);
     const [isUploading, setIsUploading] = useState(false);
@@ -422,13 +422,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                     {/* Action Bar */}
                                     <div className={`absolute top-0 right-[-8px] lg:opacity-0 lg:group-hover:opacity-100 opacity-100 transition-opacity translate-x-full pr-2 flex flex-col gap-2`}>
                                         <button
-                                            onClick={() => setReplyingTo({
-                                                messageId: msg.id,
-                                                content: msg.content,
-                                                senderId: msg.senderId,
-                                                senderName: msg.senderName,
-                                                createdAt: msg.createdAt,
-                                            })}
+                                            onClick={() => setReplyingTo(msg)}
                                             className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:bg-gray-600 rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:shadow-md transition-all sm:p-1.5"
                                             title="Responder"
                                         >
