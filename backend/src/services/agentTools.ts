@@ -35,6 +35,7 @@ import { writeIdempotencyKey, getIdempotentWrite, rememberWrite } from '../utils
 import { notificationService } from './notificationService';
 import { getReportScreenshot } from '../agent/tools/getReportScreenshot';
 import { getReportHtml } from '../agent/tools/getReportHtml';
+import { delegateTool } from '../agent/tools/delegate';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -70,7 +71,7 @@ export class AskUserInterrupt extends Error {
 
 type ToolCallListener = (tool: string, args: Record<string, any>, result: string, durationMs: number) => void;
 
-interface ToolContext {
+export interface ToolContext {
     listener: ToolCallListener | null;
     userId?: string;
     userLogin?: string;
@@ -97,11 +98,19 @@ interface ToolContext {
      */
     profileLoadFailed?: boolean;
     /**
-     * Mídia gerada DURANTE o turno (por generate_speech/image/video/get_document_pdf) para o
+     * Mídia gerada DURANTE O turno (por generate_speech/image/video/get_document_pdf) para o
      * chamador (ex.: botService no WhatsApp) enviar NATIVAMENTE (nota de voz / anexo) além do link
      * no texto. O caller cria o array []; as tools empurram; o caller envia após a resposta.
      */
     pendingMedia?: { kind: 'audio' | 'image' | 'video' | 'file'; url?: string; dataUri?: string; filename?: string; caption?: string }[];
+    /**
+     * #964/#1036 — Profundidade de aninhamento do agente. O agente PAI roda em `depth` 0
+     * (ausente ⇒ 0). A tool `delegate` lê este campo, soma 1 e injeta como `parentDepth` no
+     * sub-agente; `runSubAgent` por sua vez roda o loop filho num ToolContext com
+     * `depth: parentDepth`. Assim a profundidade encadeia corretamente entre níveis e o teto
+     * de recursão (MAX_SUBAGENT_DEPTH) pode ser aplicado. Ausente = agente de topo.
+     */
+    depth?: number;
 }
 
 const toolContextStore = new AsyncLocalStorage<ToolContext>();
@@ -2364,6 +2373,14 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             } catch (e: any) {
                 return `Erro ao ler git log: ${e.message}`;
             }
+        }
+
+        // #1036 — delegação de sub-tarefa a um sub-agente isolado. Devolve apenas o resumo
+        // (string curta) gerado por runSubAgent. O currentDepth é lido do ToolContext
+        // (AsyncLocalStorage do agente corrente — 0 no agente pai do topo), permitindo
+        // delegação aninhada com teto (MAX_SUBAGENT_DEPTH).
+        case 'delegate': {
+            return delegateTool.execute(args);
         }
 
         // AÇÕES HITL (prepare_create_*/prepare_edit_*/prepare_batch_create) caem no dispatch genérico.
