@@ -22,9 +22,17 @@ interface ChatInterfaceProps {
     title?: string;
     height?: string;
     onBack?: () => void;
+    /** Disparado após o envio bem-sucedido de uma mensagem. */
+    onSend?: (message: ChatMessage) => void;
+    /** Disparado quando o usuário inicia uma resposta a uma mensagem. */
+    onReply?: (reply: ChatReply) => void;
+    /** Disparado após a edição bem-sucedida de uma mensagem. */
+    onEdit?: (message: ChatMessage) => void;
+    /** Disparado após a exclusão bem-sucedida de uma mensagem. */
+    onDelete?: (message: ChatMessage) => void;
 }
 
-export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, elementType, title = "Comentários", height = "100%", onBack }) => {
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, elementType, title = "Comentários", height = "100%", onBack, onSend, onReply, onEdit, onDelete }) => {
     const { config, currentUser, refreshData } = useDolibarr();
     const { data: events, isLoading, refetch } = useEvents(config);
     const navigate = useNavigate();
@@ -45,7 +53,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const [isSending, setIsSending] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [showSearch, setShowSearch] = useState(false);
-    const [replyingTo, setReplyingTo] = useState<ChatReply | null>(null);
+    const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
     const [showTaskWizard, setShowTaskWizard] = useState(false);
     const [wizardInitialData, setWizardInitialData] = useState<{ label: string; description: string }[] | undefined>(undefined);
     const [isUploading, setIsUploading] = useState(false);
@@ -144,6 +152,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
         try {
             await Operations.deleteEvent(config, String(msg.id));
             await refetch();
+            onDelete?.(msg);
         } catch (err) {
             notifyError('Excluir mensagem', err);
         } finally {
@@ -153,7 +162,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                 return next;
             });
         }
-    }, [config, confirm, refetch]);
+    }, [config, confirm, refetch, onDelete]);
 
     const handleStartEdit = useCallback((msg: ChatMessage) => {
         setEditingMsgId(String(msg.id));
@@ -172,12 +181,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             setEditingMsgId(null);
             setEditingText('');
             await refetch();
+            onEdit?.(msg);
         } catch (err) {
             notifyError('Editar mensagem', err);
         } finally {
             setIsSavingEdit(false);
         }
-    }, [config, editingText, elementType, refetch]);
+    }, [config, editingText, elementType, refetch, onEdit]);
 
     const handleCancelEdit = useCallback(() => {
         setEditingMsgId(null);
@@ -289,6 +299,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             // Refetch imediato + refetch adiado: o Dolibarr pode ter latência de indexação
             await refetch();
             setTimeout(() => refetch(), 2500);
+            onSend?.(optimisticMsg);
         } catch (error) {
             console.error('[ChatInterface] Falha ao enviar mensagem:', error);
             // Preserva o texto digitado para o usuário tentar novamente; remove o bubble otimista
@@ -422,13 +433,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                     {/* Action Bar */}
                                     <div className={`absolute top-0 right-[-8px] lg:opacity-0 lg:group-hover:opacity-100 opacity-100 transition-opacity translate-x-full pr-2 flex flex-col gap-2`}>
                                         <button
-                                            onClick={() => setReplyingTo({
-                                                messageId: msg.id,
-                                                content: msg.content,
-                                                senderId: msg.senderId,
-                                                senderName: msg.senderName,
-                                                createdAt: msg.createdAt,
-                                            })}
+                                            onClick={() => {
+                                                setReplyingTo(msg);
+                                                onReply?.({
+                                                    messageId: msg.id,
+                                                    content: msg.content,
+                                                    senderId: msg.senderId,
+                                                    senderName: msg.senderName,
+                                                    createdAt: msg.createdAt,
+                                                });
+                                            }}
                                             className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:bg-gray-600 rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:shadow-md transition-all sm:p-1.5"
                                             title="Responder"
                                         >

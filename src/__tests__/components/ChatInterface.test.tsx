@@ -1,17 +1,33 @@
+/**
+ * Testes do ChatInterface.
+ *
+ * Suite original preservada (renderização, flexbox, envio, otimista/dedup,
+ * upload, excluir/editar, reply, notifyError) + testes novos de callbacks
+ * tipados (issue #1026: onSend/onReply/onEdit/onDelete tipados com
+ * ChatMessage/ChatReply).
+ *
+ * Nenhum `as any`: os mocks são construídos com tipagem explícita e, quando
+ * inevitável (tipos complexos do TanStack Query), com double-assertion
+ * `as unknown as Type` devidamente justificada.
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ComponentProps, ReactNode } from 'react';
 import { ChatInterface } from '../../components/chat/ChatInterface';
 import * as Operations from '../../services/api/operations';
 import { DolibarrService } from '../../services/dolibarrService';
 import { useEvents } from '../../hooks/dolibarr';
+import type { AgendaEvent } from '../../types';
+import type { ChatMessage, ChatReply } from '../../components/chat/types';
 import { toast } from 'sonner';
 
-// useConfirm mock: por padrão confirma a ação
-const mockConfirm = vi.fn().mockResolvedValue(true);
+// useConfirm mock: por padrão confirma a ação.
+// `vi.hoisted` garante que o mock exista antes da factory do `vi.mock` rodar.
+const mockConfirm = vi.hoisted(() => vi.fn(() => Promise.resolve(true)));
 vi.mock('../../hooks/useConfirm', () => ({
     useConfirm: () => mockConfirm,
-    ConfirmProvider: ({ children }: any) => children,
+    ConfirmProvider: ({ children }: { children?: ReactNode }) => children,
 }));
 
 vi.mock('sonner', () => ({
@@ -57,8 +73,13 @@ vi.mock('../../services/dolibarrService', () => ({
     },
 }));
 
+interface MockEditorProps {
+    value: string;
+    onChange: (value: string) => void;
+    onKeyDown: (event: { key: string; preventDefault: () => void; shiftKey?: boolean }) => void;
+}
 vi.mock('../../components/common/RichTextEditor', () => ({
-    RichTextEditor: ({ value, onChange, onKeyDown }: any) => (
+    RichTextEditor: ({ value, onChange, onKeyDown }: MockEditorProps) => (
         <textarea
             data-testid="message-input"
             value={value}
@@ -76,7 +97,20 @@ const { notifyError } = await import('../../utils/notifyError');
 
 const mockRefetch = vi.fn();
 
-const renderChat = (props: any = {}) =>
+/**
+ * Constrói o valor de retorno de `useEvents` para os mocks.
+ * `useEvents` retorna `DolibarrHookResult<AgendaEvent>` (um `UseQueryResult`
+ * estendido com ~20 campos internos do React Query); nos testes só precisamos
+ * de `data`/`isLoading`/`refetch`, por isso o cast duplo via `unknown`
+ * preserva a tipagem do hook sem recorrer a `any`.
+ */
+type UseEventsReturn = ReturnType<typeof useEvents>;
+const eventsReturn = (data: Partial<AgendaEvent>[] = [], isLoading = false): UseEventsReturn =>
+    ({ data: data as AgendaEvent[], isLoading, refetch: mockRefetch } as unknown as UseEventsReturn);
+
+type ChatInterfaceProps = ComponentProps<typeof ChatInterface>;
+
+const renderChat = (props: Partial<ChatInterfaceProps> = {}) =>
     render(
         <ChatInterface elementId="1" elementType="project" {...props} />
     );
@@ -84,9 +118,9 @@ const renderChat = (props: any = {}) =>
 describe('ChatInterface — no native alert/confirm', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, refetch: mockRefetch } as any);
-        vi.mocked(Operations.createEvent).mockResolvedValue({} as any);
-        vi.mocked(DolibarrService.uploadDocument).mockResolvedValue({} as any);
+        vi.mocked(useEvents).mockReturnValue(eventsReturn());
+        vi.mocked(Operations.createEvent).mockResolvedValue({});
+        vi.mocked(DolibarrService.uploadDocument).mockResolvedValue({});
     });
 
     it('renders empty state when no messages', () => {
@@ -95,13 +129,9 @@ describe('ChatInterface — no native alert/confirm', () => {
     });
 
     it('renders existing messages', () => {
-        vi.mocked(useEvents).mockReturnValue({
-            data: [
-                { id: '1', elementtype: 'project', fk_element: '1', fk_user_author: 'u2', user_author_name: 'Other', description: 'Hello world', date_start: 1700000000 },
-            ],
-            isLoading: false,
-            refetch: mockRefetch,
-        } as any);
+        vi.mocked(useEvents).mockReturnValue(eventsReturn([
+            { id: '1', elementtype: 'project', fk_element: '1', fk_user_author: 'u2', user_author_name: 'Other', description: 'Hello world', date_start: 1700000000 },
+        ]));
         renderChat();
         expect(screen.getByText('Hello world')).toBeInTheDocument();
     });
@@ -165,7 +195,7 @@ describe('ChatInterface — no native alert/confirm', () => {
 describe('ChatInterface — flexbox structure (#662)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, refetch: mockRefetch } as any);
+        vi.mocked(useEvents).mockReturnValue(eventsReturn());
     });
 
     it('root container has min-h-0 and flex flex-col', () => {
@@ -204,9 +234,9 @@ describe('ChatInterface — flexbox structure (#662)', () => {
 describe('ChatInterface — fluxo de envio de mensagem (#664)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, refetch: mockRefetch } as any);
-        vi.mocked(Operations.createEvent).mockResolvedValue({} as any);
-        vi.mocked(DolibarrService.uploadDocument).mockResolvedValue({} as any);
+        vi.mocked(useEvents).mockReturnValue(eventsReturn());
+        vi.mocked(Operations.createEvent).mockResolvedValue({});
+        vi.mocked(DolibarrService.uploadDocument).mockResolvedValue({});
     });
 
     it('renderiza input e botão de enviar no DOM', () => {
@@ -297,13 +327,9 @@ describe('ChatInterface — fluxo de envio de mensagem (#664)', () => {
         });
 
         // Simula o servidor devolvendo a mensagem real (mesma descrição/contexto)
-        vi.mocked(useEvents).mockReturnValue({
-            data: [
-                { id: 'real-1', elementtype: 'project', fk_element: '1', fk_user_author: 'u1', user_author_name: 'Eu', description: 'Mensagem dedup', date_start: Math.floor(Date.now() / 1000) },
-            ],
-            isLoading: false,
-            refetch: mockRefetch,
-        } as any);
+        vi.mocked(useEvents).mockReturnValue(eventsReturn([
+            { id: 'real-1', elementtype: 'project', fk_element: '1', fk_user_author: 'u1', user_author_name: 'Eu', description: 'Mensagem dedup', date_start: Math.floor(Date.now() / 1000) },
+        ]));
 
         await waitFor(() => {
             expect(screen.getAllByText('Mensagem dedup')).toHaveLength(1);
@@ -318,14 +344,10 @@ describe('ChatInterface — excluir/editar mensagens (#601)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockConfirm.mockResolvedValue(true);
-        vi.mocked(Operations.deleteEvent).mockResolvedValue({} as any);
-        vi.mocked(Operations.updateEvent).mockResolvedValue({} as any);
-        vi.mocked(Operations.createEvent).mockResolvedValue({} as any);
-        vi.mocked(useEvents).mockReturnValue({
-            data: [msgOwn, msgOther],
-            isLoading: false,
-            refetch: mockRefetch,
-        } as any);
+        vi.mocked(Operations.deleteEvent).mockResolvedValue({});
+        vi.mocked(Operations.updateEvent).mockResolvedValue({});
+        vi.mocked(Operations.createEvent).mockResolvedValue({});
+        vi.mocked(useEvents).mockReturnValue(eventsReturn([msgOwn, msgOther]));
     });
 
     it('mensagem própria exibe botão Excluir; mensagem alheia não exibe', () => {
@@ -401,12 +423,8 @@ describe('ChatInterface — excluir/editar mensagens (#601)', () => {
 describe('ChatInterface — fluxo de resposta (reply) (#1572)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(Operations.createEvent).mockResolvedValue({} as any);
-        vi.mocked(useEvents).mockReturnValue({
-            data: [msgOther],
-            isLoading: false,
-            refetch: mockRefetch,
-        } as any);
+        vi.mocked(Operations.createEvent).mockResolvedValue({});
+        vi.mocked(useEvents).mockReturnValue(eventsReturn([msgOther]));
     });
 
     it('clicar em "Responder" em uma mensagem alheia exibe o banner com nome e trecho do conteúdo', async () => {
@@ -488,14 +506,115 @@ describe('ChatInterface — fluxo de resposta (reply) (#1572)', () => {
 
 describe('ChatInterface — tipos sem any (#1572)', () => {
     it('chatMessages é ChatMessage[]: campo content é renderizado no lugar de description/label', () => {
-        vi.mocked(useEvents).mockReturnValue({
-            data: [
-                { id: 't1', elementtype: 'project', fk_element: '1', fk_user_author: 'u2', user_author_name: 'Outro', description: 'Conteúdo via content', date_start: 1700000000 },
-            ],
-            isLoading: false,
-            refetch: mockRefetch,
-        } as any);
+        vi.mocked(useEvents).mockReturnValue(eventsReturn([
+            { id: 't1', elementtype: 'project', fk_element: '1', fk_user_author: 'u2', user_author_name: 'Outro', description: 'Conteúdo via content', date_start: 1700000000 },
+        ]));
         renderChat();
         expect(screen.getByText('Conteúdo via content')).toBeInTheDocument();
+    });
+});
+
+describe('ChatInterface — callbacks tipados onSend/onReply/onEdit/onDelete (#1026)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockConfirm.mockResolvedValue(true);
+        vi.mocked(Operations.createEvent).mockResolvedValue({});
+        vi.mocked(Operations.deleteEvent).mockResolvedValue({});
+        vi.mocked(Operations.updateEvent).mockResolvedValue({});
+        vi.mocked(DolibarrService.uploadDocument).mockResolvedValue({});
+        vi.mocked(useEvents).mockReturnValue(eventsReturn([msgOwn, msgOther]));
+    });
+
+    it('onSend é chamado com a ChatMessage após o envio bem-sucedido', async () => {
+        const user = userEvent.setup();
+        const onSend = vi.fn<(message: ChatMessage) => void>();
+        renderChat({ onSend });
+
+        const input = screen.getByTestId('message-input');
+        await user.type(input, 'Callback send');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(onSend).toHaveBeenCalledTimes(1);
+        });
+        const sent = onSend.mock.calls[0][0];
+        expect(sent.content).toContain('Callback send');
+        expect(sent.senderId).toBe('u1');
+        expect(sent.elementtype).toBe('project');
+        expect(sent.fk_element).toBe('1');
+    });
+
+    it('onSend NÃO é chamado quando createEvent falha', async () => {
+        const user = userEvent.setup();
+        vi.mocked(Operations.createEvent).mockRejectedValue(new Error('Falha de rede'));
+        const onSend = vi.fn<(message: ChatMessage) => void>();
+        renderChat({ onSend });
+
+        await user.type(screen.getByTestId('message-input'), 'Mensagem que falha');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('send-error')).toBeInTheDocument();
+        });
+        expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it('onReply é chamado com um ChatReply ao clicar em "Responder"', async () => {
+        const user = userEvent.setup({ pointerEventsCheck: 0 });
+        const onReply = vi.fn<(reply: ChatReply) => void>();
+        const { container } = renderChat({ onReply });
+
+        const replyBtn = container.querySelector('button[title="Responder"]') as HTMLButtonElement;
+        await user.click(replyBtn);
+
+        expect(onReply).toHaveBeenCalledTimes(1);
+        const reply = onReply.mock.calls[0][0];
+        expect(reply.messageId).toBe('msg-1');
+        expect(reply.senderName).toBe('Eu');
+        expect(reply.content).toBe('Minha mensagem');
+    });
+
+    it('onEdit é chamado com a ChatMessage após salvar a edição', async () => {
+        const user = userEvent.setup();
+        const onEdit = vi.fn<(message: ChatMessage) => void>();
+        renderChat({ onEdit });
+
+        await user.click(screen.getByTestId('edit-btn-msg-1'));
+        const editInput = screen.getByTestId('edit-input-msg-1');
+        await user.clear(editInput);
+        await user.type(editInput, 'Texto editado');
+        await user.click(screen.getByTestId('save-edit-msg-1'));
+
+        await waitFor(() => {
+            expect(onEdit).toHaveBeenCalledTimes(1);
+        });
+        expect(onEdit.mock.calls[0][0].id).toBe('msg-1');
+    });
+
+    it('onDelete é chamado com a ChatMessage após a exclusão confirmada', async () => {
+        const user = userEvent.setup();
+        const onDelete = vi.fn<(message: ChatMessage) => void>();
+        renderChat({ onDelete });
+
+        await user.click(screen.getByTestId('delete-btn-msg-1'));
+
+        await waitFor(() => {
+            expect(onDelete).toHaveBeenCalledTimes(1);
+        });
+        expect(onDelete.mock.calls[0][0].id).toBe('msg-1');
+    });
+
+    it('onDelete NÃO é chamado quando o usuário cancela a confirmação', async () => {
+        mockConfirm.mockResolvedValue(false);
+        const user = userEvent.setup();
+        const onDelete = vi.fn<(message: ChatMessage) => void>();
+        renderChat({ onDelete });
+
+        await user.click(screen.getByTestId('delete-btn-msg-1'));
+
+        await waitFor(() => {
+            expect(Operations.deleteEvent).not.toHaveBeenCalled();
+        });
+        expect(onDelete).not.toHaveBeenCalled();
     });
 });
