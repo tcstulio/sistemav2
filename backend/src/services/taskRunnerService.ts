@@ -1084,7 +1084,27 @@ class TaskRunnerService {
         }
     }
 
+    // #debounce-save: o save() era atomicWriteSync SÍNCRONO a CADA recordEvent → com o robô gerando
+    // muitos eventos (e N runs paralelos), os writes de MB repetidos bloqueavam o event loop e contendiam
+    // no I/O → requests travavam (POST /redo → HTTP 000) e o robô ficava lento em tudo. Agora coalesce:
+    // marca dirty + agenda UM flush em ~500ms. Perda máx. em crash/restart = ~500ms de estado (o robô já
+    // é resiliente: restart-requeue no load + re-sync do GitHub). Pontos críticos podem chamar saveNow().
+    private saveTimer: ReturnType<typeof setTimeout> | null = null;
+    private saveDirty = false;
+
     private save() {
+        this.saveDirty = true;
+        if (this.saveTimer) return;
+        this.saveTimer = setTimeout(() => {
+            this.saveTimer = null;
+            if (this.saveDirty) this.saveNow();
+        }, 500);
+    }
+
+    /** Flush SÍNCRONO imediato (coalesce pendente incluso). Usar em shutdown ou pontos que não podem perder estado. */
+    private saveNow() {
+        this.saveDirty = false;
+        if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
         try {
             atomicWriteSync(STORE_PATH, this.store);
         } catch (e) {
