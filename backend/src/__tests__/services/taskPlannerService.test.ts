@@ -20,6 +20,8 @@ vi.mock('../../services/taskRunnerService', () => ({
     taskRunnerService: {
         getTask: vi.fn(),
         getAllTasks: vi.fn(() => []),
+        redoTask: vi.fn(async () => ({})), // #1455: o planner re-despacha bloqueador parado
+        isExecInFlight: vi.fn(() => false), // #flip PR-B: default "não em voo" → o deadlock-kick segue firando
     },
 }));
 
@@ -277,5 +279,135 @@ describe('taskPlannerService — throttle de concorrência (#1117 / Epic #1113)'
         expect(typeof d.reason).toBe('string');
         expect(typeof d.alreadyResolved).toBe('boolean');
         expect(Array.isArray(d.blockedBy)).toBe(true);
+    });
+});
+
+describe('taskPlannerService — auto-deadlock: bloqueador PARADO (#1455)', () => {
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        // #flip PR-B: clearAllMocks NÃO reseta o mockReturnValue — restaura o default "não em voo" p/ isolar
+        // os testes (senão o mockReturnValue(true) de um teste vaza p/ os seguintes e suprime o deadlock-kick).
+        vi.mocked((taskRunnerService as any).isExecInFlight).mockReturnValue(false);
+        invalidatePlannerCache();
+        resetPlannerThrottle();
+        const { execFile } = await import('child_process');
+        // gh pr list → 1 PR aberto na branch fix-1353; gh pr diff → toca src/services/foo.ts
+        vi.mocked(execFile as any).mockImplementation((cmd: string, args: string[], opts: any, cb: any) => {
+            if (typeof opts === 'function') cb = opts;
+            if (args[1] === 'list') cb(null, { stdout: JSON.stringify([{ number: 1458, title: 'feat(#1353)', headRefName: 'fix-1353' }]), stderr: '' });
+            else if (args[1] === 'diff') cb(null, { stdout: 'src/services/foo.ts\n', stderr: '' });
+            else cb(null, { stdout: '', stderr: '' });
+        });
+    });
+
+    const taskTouchingFoo = () => makeTask({ issueNumber: 9999, body: 'Alterar src/services/foo.ts' });
+
+    it('bloqueador PARADO (pending) → re-despacha via redoTask usando a ISSUE 1353 (não o PR 1458) + wait + incrementa o teto', async () => {
+        const blocker = makeTask({ issueNumber: 1353, status: 'pending' });
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(blocker);
+
+        const d = await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        // o BUG do #1455 era getTask(prNum): aqui garantimos que resolve pela BRANCH fix-1353 → ISSUE 1353
+        expect(taskRunnerService.getTask).toHaveBeenCalledWith(1353);
+        expect(taskRunnerService.getTask).not.toHaveBeenCalledWith(1458);
+        expect((taskRunnerService as any).redoTask).toHaveBeenCalledWith(1353, expect.any(String));
+        expect(blocker.deadlockKicks).toBe(1); // teto incrementado (0→1)
+        expect(d.action).toBe('wait');
+    });
+
+    it('branch com SUFIXO (fix-1353-2) → resolve a ISSUE 1353, NÃO a 2 (regex do prefixo, não dos dígitos do fim)', async () => {
+        const { execFile } = await import('child_process');
+        vi.mocked(execFile as any).mockImplementation((cmd: string, args: string[], opts: any, cb: any) => {
+            if (typeof opts === 'function') cb = opts;
+            if (args[1] === 'list') cb(null, { stdout: JSON.stringify([{ number: 1470, title: 'feat(#1353)', headRefName: 'fix-1353-2' }]), stderr: '' });
+            else if (args[1] === 'diff') cb(null, { stdout: 'src/services/foo.ts\n', stderr: '' });
+            else cb(null, { stdout: '', stderr: '' });
+        });
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'pending' }));
+
+        await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        expect(taskRunnerService.getTask).toHaveBeenCalledWith(1353);
+        expect(taskRunnerService.getTask).not.toHaveBeenCalledWith(2); // o bug do regex ancorado no fim casaria a issue 2
+        expect((taskRunnerService as any).redoTask).toHaveBeenCalledWith(1353, expect.any(String));
+    });
+
+    it('bloqueador ATIVO (running) → NÃO re-despacha (esperar evita conflito) + wait', async () => {
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'running' }));
+
+        const d = await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        expect((taskRunnerService as any).redoTask).not.toHaveBeenCalled();
+        expect(d.action).toBe('wait');
+    });
+
+    it('bloqueador parado mas TETO de kicks atingido (deadlockKicks=2) → NÃO re-despacha (não loopa)', async () => {
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'pending', deadlockKicks: 2 }));
+
+        await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        expect((taskRunnerService as any).redoTask).not.toHaveBeenCalled();
+    });
+
+    it('#flip PR-B: bloqueador parado mas COM exec em voo → NÃO re-despacha (skip, evita 2º redo da mesma issue)', async () => {
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'pending' }));
+        vi.mocked((taskRunnerService as any).isExecInFlight).mockReturnValue(true); // dispatch já em voo
+
+        await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        // ORÁCULO G6: com o bloqueador já em voo, o quebra-deadlock NÃO dispara um 2º redo da mesma issue.
+        // (Sem kick, cai no ramo "nenhum bloqueador re-despachável" → LLM decide; o que importa é o não-kick.)
+        expect((taskRunnerService as any).redoTask).not.toHaveBeenCalled(); // NUNCA 2 execs da mesma issue
+    });
+});
+
+describe('taskPlannerService — não esperar no PRÓPRIO PR (#1460 rescue-gap)', () => {
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        vi.mocked((taskRunnerService as any).isExecInFlight).mockReturnValue(false); // #flip PR-B: default "não em voo"
+        invalidatePlannerCache();
+        resetPlannerThrottle();
+    });
+
+    it('o PR da PRÓPRIA task (branch fix-9999) NÃO é conflito → não espera em si mesma nem se re-despacha', async () => {
+        const { execFile } = await import('child_process');
+        // gh pr list → só o PR da PRÓPRIA task (branch fix-9999); gh pr diff → toca o MESMO arquivo do body.
+        vi.mocked(execFile as any).mockImplementation((cmd: string, args: string[], opts: any, cb: any) => {
+            if (typeof opts === 'function') cb = opts;
+            if (args[1] === 'list') cb(null, { stdout: JSON.stringify([{ number: 1468, title: 'feat(#9999)', headRefName: 'fix-9999' }]), stderr: '' });
+            else if (args[1] === 'diff') cb(null, { stdout: 'src/services/foo.ts\n', stderr: '' });
+            else cb(null, { stdout: '', stderr: '' });
+        });
+        // Se o próprio PR NÃO fosse filtrado, o owner-resolve chamaria getTask(9999) e faria self-kick.
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 9999, status: 'pending' }));
+
+        const d = await taskPlannerService.analyzeTask(makeTask({ issueNumber: 9999, body: 'Alterar src/services/foo.ts' }));
+
+        expect(d.action).not.toBe('wait');                                  // não espera em si mesma
+        expect((taskRunnerService as any).redoTask).not.toHaveBeenCalled(); // não faz self-kick (self-deadlock)
+        expect(d.blockedBy).toEqual([]);                                    // o próprio PR não é bloqueador
+    });
+
+    it('cirúrgico: próprio PR + PR de OUTRA task → filtra só o próprio; o de outra SEGUE bloqueando (#1455 intacto)', async () => {
+        const { execFile } = await import('child_process');
+        vi.mocked(execFile as any).mockImplementation((cmd: string, args: string[], opts: any, cb: any) => {
+            if (typeof opts === 'function') cb = opts;
+            if (args[1] === 'list') cb(null, { stdout: JSON.stringify([
+                { number: 1468, title: 'feat(#9999)', headRefName: 'fix-9999' }, // o PRÓPRIO
+                { number: 1458, title: 'feat(#1353)', headRefName: 'fix-1353' }, // de OUTRA task
+            ]), stderr: '' });
+            else if (args[1] === 'diff') cb(null, { stdout: 'src/services/foo.ts\n', stderr: '' });
+            else cb(null, { stdout: '', stderr: '' });
+        });
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'pending' }));
+
+        const d = await taskPlannerService.analyzeTask(makeTask({ issueNumber: 9999, body: 'Alterar src/services/foo.ts' }));
+
+        // o PR de OUTRA task (fix-1353) ainda dispara o deadlock-kick do #1455; o próprio (fix-9999) foi filtrado
+        expect((taskRunnerService as any).redoTask).toHaveBeenCalledWith(1353, expect.any(String));
+        expect((taskRunnerService as any).getTask).not.toHaveBeenCalledWith(9999); // próprio nunca vira "bloqueador"
+        expect(d.blockedBy).toEqual([1458]);                                       // só o de outra task
+        expect(d.action).toBe('wait');
     });
 });

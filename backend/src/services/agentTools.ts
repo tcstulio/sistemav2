@@ -1,12 +1,20 @@
 // Registro UNIFICADO de ferramentas do agente.
 // Antes, GoogleProvider e LocalProvider tinham switches separados (Gemini: 32 tools;
-// GLM/Ollama: 5 "Lite"). Agora ambos usam TOOLS_PROMPT + executeTool daqui — então
-// qualquer provider tem o mesmo conjunto completo de ferramentas.
+// GLM/Ollama: 5 "Lite"). Agora ambos usam getToolsPrompt + executeTool daqui — então
+// qualquer provider tem o mesmo conjunto completo de ferramentas (filtrado por papel).
+//
+// #1498: as 13 ferramentas de dev/robô (issues, tarefas opencode, leitura de código,
+// logs/git) são restritas ao papel de administrador. Defesa em DUAS camadas:
+//   (1) `getToolsPrompt({ isAdmin })` remove do prompt a menção a essas ferramentas para
+//       não-admin (evita o modelo tentar chamá-las);
+//   (2) `executeTool` recusa a execução se a tool estiver em DEV_TOOLS e o ctx não for
+//       admin — fecha o bypass via injeção direta da chamada.
 import { AsyncLocalStorage } from 'async_hooks';
 import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
 import { isValidExternalUrl } from '../utils/urlValidation';
 import { resolveUserMobile } from '../utils/userMobile';
+import { resolveEventPeriod } from '../utils/eventPeriod';
 import { logger } from '../utils/logger';
 import { signDeeplink } from '../utils/deeplinkToken';
 import { minimaxService } from './minimaxService';
@@ -23,12 +31,35 @@ import { getWhatsappAllowlist, whatsappDestinationAllowed, socidOf } from '../ut
 import { findSimilarIssue } from '../utils/issueDedup';
 import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
 import { classifyTool } from '../config/actionCatalog';
+import { writeIdempotencyKey, getIdempotentWrite, rememberWrite } from '../utils/writeIdempotency';
 import { notificationService } from './notificationService';
+import { getReportScreenshot } from '../agent/tools/getReportScreenshot';
+import { getReportHtml } from '../agent/tools/getReportHtml';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 
 const log = logger.child('AgentTools');
+
+// #1498: conjunto das 13 ferramentas de dev/robô restritas ao papel de administrador.
+// Renderizadas no prompt só quando `getToolsPrompt({ isAdmin: true })`, e defendidas em
+// `executeTool` como defesa em profundidade (um não-admin que injetar a tool direto não
+// consegue executar — recusa educada sem side effects).
+export const DEV_TOOLS: ReadonlySet<string> = new Set<string>([
+    'create_github_issue',
+    'list_github_issues',
+    'create_bug_report',
+    'create_opencode_task',
+    'list_opencode_tasks',
+    'start_opencode_task',
+    'opencode_task_feedback',
+    'merge_opencode_task',
+    'read_project_file',
+    'search_code',
+    'project_structure',
+    'read_logs',
+    'git_recent',
+]);
 
 export class AskUserInterrupt extends Error {
     constructor(public readonly question: string) {
@@ -51,6 +82,26 @@ interface ToolContext {
      * mensagens externas), onde o agente deve ser estritamente somente-leitura.
      */
     readOnly?: boolean;
+    /**
+     * Identificador ESTÁVEL do "turno" lógico (ex.: msg.id do WhatsApp). Quando presente, toda
+     * escrita real é idempotente por (turnId, ator, tool, args) — executa no máximo 1× mesmo que a
+     * cadeia do agente seja re-invocada (retry externo, re-emissão de evento, fallback de provider).
+     * Ausente (ex.: webapp hoje) ⇒ guarda inativa, comportamento inalterado.
+     */
+    turnId?: string;
+    /**
+     * true quando o perfil de permissões DEVERIA existir (usuário logado no webapp) mas FALHOU a
+     * carregar (Dolibarr instável, id não resolvido). Distingue-se de "sem perfil por ser contexto
+     * público/não-identificado" (esse é tratado pela trava readOnly). Com a flag ligada, executeTool
+     * NEGA escrita real fail-closed a não-admin (não dá p/ checar permissão sem o perfil). Ver #1514.
+     */
+    profileLoadFailed?: boolean;
+    /**
+     * Mídia gerada DURANTE o turno (por generate_speech/image/video/get_document_pdf) para o
+     * chamador (ex.: botService no WhatsApp) enviar NATIVAMENTE (nota de voz / anexo) além do link
+     * no texto. O caller cria o array []; as tools empurram; o caller envia após a resposta.
+     */
+    pendingMedia?: { kind: 'audio' | 'image' | 'video' | 'file'; url?: string; dataUri?: string; filename?: string; caption?: string }[];
 }
 
 const toolContextStore = new AsyncLocalStorage<ToolContext>();
@@ -75,7 +126,37 @@ export function getToolContext(): ToolContext {
     return toolContextStore.getStore() || DEFAULT_TOOL_CONTEXT;
 }
 
-export const TOOLS_PROMPT = `
+/**
+ * #1493: type_codes REAIS do dicionário de agenda CoolGroove. Os baunilha do Dolibarr
+ * (AC_RDV / AC_TEL / AC_EMAIL / AC_OTH) NÃO existem na base (0 eventos AC_RDV foram criados
+ * quando o prompt instruía o LLM a usá-los como default) — substituí-los pelos códigos REAIS
+ * abaixo faz o agente criar o evento com o tipo correto.
+ *
+ * Cada entrada é `[code, semântica_pt_br]`. A semântica vira texto no prompt via
+ * `${COOLGROOVE_EVENT_TYPE_CODES_PROSE}` — fonte única, renderizada abaixo
+ * para que o LLM veja "ta_vt (visita técnica), …, montagem_agenda (montagem)".
+ */
+export const COOLGROOVE_EVENT_TYPE_CODES: ReadonlyArray<readonly [string, string]> = [
+    ['ta_vt', 'visita técnica'],
+    ['ta_duvidas', 'prospecto / dúvidas'],
+    ['Contratado', 'evento confirmado, aberto ao público'],
+    ['Contratado_externa', 'evento externo — equipe vai ao local'],
+    ['Contratado_fechadoaopublico', 'evento fechado'],
+    ['agenda_ensaios', 'ensaio'],
+    ['montagem_agenda', 'montagem'],
+];
+
+/** Prose do dicionário para dentro do prompt — `code (semantica), code (semantica), …`. */
+const COOLGROOVE_EVENT_TYPE_CODES_PROSE = COOLGROOVE_EVENT_TYPE_CODES
+    .map(([code, sem]) => `${code} (${sem})`)
+    .join(', ');
+
+/**
+ * Prompt-base com TODAS as ferramentas (inclusive as 13 DEV_TOOLS). Identical byte-a-byte ao
+ * `TOOLS_PROMPT` antigo — usado como fonte tanto de `getToolsPrompt({ isAdmin: true })` quanto
+ * do filtro para não-admin (#1498).
+ */
+const TOOLS_PROMPT_FULL = `
         FERRAMENTAS DISPONÍVEIS:
         Você pode buscar dados em tempo real se necessário. Para usar uma ferramenta, responda APENAS com um JSON no seguinte formato:
         { "tool": "nome_da_ferramenta", "args": { ... } }
@@ -108,7 +189,7 @@ export const TOOLS_PROMPT = `
         16. list_warehouses() - Lista estoques/armazéns.
         17. list_tasks(projectId: string) - Lista tarefas de um projeto.
         18. list_user_tasks(userId?: string) - Lista as tarefas atribuídas a um usuário. Omita userId para listar as tarefas do PRÓPRIO usuário logado ("minhas tarefas").
-        19. list_events(limit: number) - Lista eventos da agenda.
+        19. list_events(limit?, period?, date_start?, date_end?) - Lista eventos da agenda. Para "dessa semana/mês/hoje" PREFIRA period (calculado pelo servidor): 'today'|'tomorrow'|'this_week'|'next_week'|'this_month'|'next_month'. Ou date_start/date_end em YYYY-MM-DD para intervalo específico. Sem filtro = mais recentes.
         20. list_contacts(search: string) - Lista contatos (pessoas de contato).
         21. list_categories(type: string) - Lista categorias (customer, product, etc).
         22. list_suppliers(search: string) - Lista fornecedores.
@@ -122,8 +203,7 @@ export const TOOLS_PROMPT = `
         30. list_manufacturing_orders(status: 'draft'|'validated'|'inprogress') - Lista ordens de produção.
         31. list_candidates(search: string) - Lista candidatos (RH/Recrutamento).
         32. list_job_positions() - Lista vagas de emprego abertas.
-        33. search_web(query: string) - Pesquisa preços e fornecedores na internet (Google via Serper).
-        34. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
+        33. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
 
         FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
         33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
@@ -139,8 +219,8 @@ export const TOOLS_PROMPT = `
         42b. prepare_create_delegation(label, project_id, fk_user_assign, date_end?, criterio?, description?) - Cria uma DELEGAÇÃO: tarefa + responsável + critério de pronto, pedindo o ACEITE do responsável. Use quando alguém PEDE algo a outra pessoa ("peça pro fulano entregar X até sexta"). project_id e fk_user_assign obrigatórios (ache com list_projects/list_users). date_end (prazo) em YYYY-MM-DD. criterio = como saber que terminou. O solicitante é quem confirmar.
         43. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
         44. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
-        45. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
-        46. prepare_edit_event(id, label?, date_start?, date_end?, description?, percentage?) - Prepara EDIÇÃO de um evento. Ache o id antes com list_events. date_start/date_end no formato "YYYY-MM-DDTHH:mm". percentage: 0-100 (progresso).
+        45. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code (códigos REAIS do dicionário de agenda CoolGroove — NÃO use os baunilha do Dolibarr AC_RDV/AC_TEL/AC_EMAIL/AC_OTH, eles não existem na base): ${COOLGROOVE_EVENT_TYPE_CODES_PROSE}.
+        46. prepare_edit_event(id, label?, date_start?, date_end?, description?, percentage?) - Prepara EDIÇÃO de um evento. Ache o id antes com list_events. date_start/date_end no formato "YYYY-MM-DDTHH:mm". percentage: 0-100 (progresso). type_code NÃO é editável aqui (defina no criar); se o tipo estiver errado, exclua e recrie.
         47. prepare_create_intervention(socid, date?, description?, project_id?) - Rascunho de intervenção (serviço de campo). socid = id do cliente (ache com search_customer). date em YYYY-MM-DD.
         48. prepare_create_job(label, qty?, description?) - Rascunho de nova vaga de emprego (label = cargo; qty = quantidade).
         49. prepare_edit_job(id, label?, qty?, description?) - Prepara EDIÇÃO de uma vaga. Ache o id antes com list_job_positions.
@@ -235,6 +315,10 @@ export const TOOLS_PROMPT = `
         FERRAMENTA DE AJUDA DE TELA:
         93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
 
+        FERRAMENTAS DE CONTEXTO VISUAL DE REPORTS:
+        122. get_report_screenshot(reportId) - Busca o print PNG de um report e devolve um link assinável temporário, válido por 1 hora. Use quando o usuário descrever um problema visual. Exemplo: peça para o Marciano ver o print do report #42.
+        123. get_report_html(reportId, selector?) - Busca o HTML sanitizado de um report. selector é opcional; quando informado, devolve apenas o innerHTML do primeiro elemento correspondente ao seletor CSS. Exemplo: peça para o Marciano ver o HTML do report #42 filtrando por ".error".
+
         FERRAMENTAS DE TASK RUNNER (automação opencode):
         94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
         95. list_opencode_tasks(status?) - Lista tasks do board opencode. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
@@ -280,10 +364,125 @@ export const TOOLS_PROMPT = `
         SOBRE VOCÊ:
         - Você é o assistente virtual do CoolGroove (sistemav2), um ERP baseado em Dolibarr.
         - O contexto da conversa inclui a IDENTIDADE DO USUÁRIO (login, nome, email, cargo, admin). Use isso para personalizar respostas.
+        - **IDENTIDADE JÁ RESOLVIDA:** se o contexto contém um bloco [FUNCIONÁRIO IDENTIFICADO] ou [DADOS DO CLIENTE IDENTIFICADO], o sistema JÁ identificou a pessoa pelo telefone. Trate-a como identificada, use o nome dela, e NUNCA peça "código de validação" nem invente qualquer etapa de confirmação de identidade — esse fluxo NÃO existe. (Sem esse bloco — ex.: grupo ou remetente desconhecido — aja com cautela e não assuma quem é.)
+        - **RASCUNHO ≠ FEITO:** ao usar uma ferramenta prepare_* (que devolve um link), diga "preparei o rascunho, clique para revisar e confirmar na tela" — é PROIBIDO afirmar que já criou/validou/enviou/cadastrou antes de a pessoa confirmar. Nada é escrito no sistema até a confirmação.
         - Se o usuário é admin, você pode sugerir ações administrativas. Se não é admin, limite-se ao que ele pode fazer.
         - O sistema roda em Express+TypeScript (backend) e React+Vite (frontend). O repositório é tcstulio/sistemav2.
         - Você NÃO deve criar issues, tasks ou bugs por conta própria — SEMPRE confirme com o usuário antes.
         `;
+
+// --- DEV_TOOLS / getToolsPrompt (#1498) ---
+// Pergunta do filtro: ao gerar o prompt para um NÃO-admin, queremos que o MODELO não saiba
+// que essas 13 ferramentas existem. O prompt-base tem 3 tipos de menção a essas tools:
+//   (a) seções inteiras 100% DEV (ex.: "FERRAMENTA DE GESTÃO DO PROJETO:", "FERRAMENTAS DE
+//       TASK RUNNER (...)") — basta remover o bloco até a próxima seção;
+//   (b) entradas numeradas dentro de seção mista (ex.: "99. read_project_file(...)" dentro
+//       de "FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO") — remover cada linha;
+//   (c) menção textual solta em regras/exemplos (ex.: "use search_code para encontrar ...")
+//       — remover o nome com word-boundaries.
+// Os helpers abaixo tratam cada caso. A ordem importa: passa (a) antes de (b) antes de (c).
+
+/**
+ * Regex de uma entrada numerada do tipo "<num>. <toolName>(...)" — captura até a próxima entrada
+ * numerada, OU fim de seção (duas quebras de linha), OU fim do bloco ($) (#1498).
+ *
+ * O lookahead original exigia "próxima entrada numerada", o que deixava resíduo quando uma DEV
+ * tool era a ÚLTIMA entrada numerada da seção (ex.: "99. (path) - ...\n\nFIM"); o catch-all
+ * `\b(name)\b` apagava só o nome, sobrando "99. (path) - desc...". Agora a entrada é removida
+ * integralmente em ambos os casos.
+ */
+function stripNumberedToolEntry(prompt: string, toolName: string): string {
+    // (?=\n\s+\d+\.|\n[ \t]*\n|$) — lookahead da PRÓXIMA entrada numerada OU de uma linha em
+    // branco extra (fim de seção/bloco) OU do fim do texto. Non-greedy [\s\S]*? para parar na
+    // primeira ocorrência.
+    const re = new RegExp(
+        `\\n\\s+\\d+\\.\\s+${toolName}\\([^)]*\\)[\\s\\S]*?(?=\\n\\s+\\d+\\.|\\n[ \\t]*\\n|$)`,
+        'g',
+    );
+    return prompt.replace(re, '');
+}
+
+/** Regex de um par User/Assistant de exemplo demonstrando uma tool call (ex.: create_github_issue). */
+function stripExampleToolCall(prompt: string, toolName: string): string {
+    // Casa "\n\s+User: ...\n\s+Assistant: { "tool": "<name>" ... }" (a linha Assistant inteira,
+    // sem tentar balancear chaves do args aninhado). Os 2 exemplos do template atual usam
+    // create_github_issue e list_github_issues.
+    const re = new RegExp(
+        `\\n[ \\t]*User:[^\\n]*\\n[ \\t]*Assistant:[^\\n]*\\{[ \\t]*"tool"[ \\t]*:[ \\t]*"${toolName}"[^\\n]*`,
+        'g',
+    );
+    return prompt.replace(re, '');
+}
+
+/**
+ * Devolve o prompt-base com TODAS as menções às 13 DEV_TOOLS removidas (#1498). Preserva
+ * inalteradas as ferramentas de negócio (search, list_*, prepare_*, validate_*, send_*,
+ * notify_*, get_financial_*, get_screen_help, etc.).
+ *
+ * Defesa em profundidade: a remoção aqui é cosmética (evita o modelo sugerir essas tools a
+ * não-admin). A trava REAL é em `executeTool`, que recusa a chamada se a tool for DEV e
+ * ctx.isAdmin !== true.
+ */
+function buildNonAdminPrompt(): string {
+    let p = TOOLS_PROMPT_FULL;
+
+    // (a) Seção 100% DEV: "FERRAMENTA DE GESTÃO DO PROJETO:" — contém as 3 tools de issues/bugs.
+    p = p.replace(
+        /\n\s+FERRAMENTA DE GESTÃO DO PROJETO:[^\n]*\n[\s\S]*?(?=\n\s+FERRAMENTA DE AJUDA DE TELA:)/,
+        '\n',
+    );
+    // (a) Seção 100% DEV: "FERRAMENTAS DE TASK RUNNER (automação opencode):" — contém as 5 tools
+    //     de task runner do opencode.
+    p = p.replace(
+        /\n\s+FERRAMENTAS DE TASK RUNNER[^\n]*\n[\s\S]*?(?=\n\s+REGRA PARA AÇÕES)/,
+        '\n',
+    );
+
+    // (b) Entradas numeradas das 5 tools de VERIFICAÇÃO (read_project_file, search_code,
+    //     project_structure, read_logs, git_recent) que aparecem dentro da seção mista
+    //     "FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO:" — removidas uma a uma.
+    for (const name of ['read_project_file', 'search_code', 'project_structure', 'read_logs', 'git_recent']) {
+        p = stripNumberedToolEntry(p, name);
+    }
+
+    // (c) Menções textuais soltas (regras 6 e 8 citam search_code/read_project_file/read_logs;
+    //     exemplos de formato citam create_github_issue e list_github_issues). Usamos
+    //     `\\s+${name}\\s+` com lookbehind/lookahead "alphanumeric|whitespace" para colapsar os
+    //     espaços órfãos que o word-boundary simples deixaria (ex.: "use search_code para" →
+    //     "use  para" → "use para"). Quebra de par (rota: "rules.md") fica intacta (#1498).
+    const toolAlt = Array.from(DEV_TOOLS).join('|');
+    p = p.replace(new RegExp(`(\\s+)(${toolAlt})(\\s+)`, 'g'), '$1$3');
+    // Fallback: nome DEV no INÍCIO da linha (sem espaço antes) ou colado em pontuação.
+    p = p.replace(new RegExp(`(^|[\\s\\(\\["])(${toolAlt})(?=[\\s\\)\\]".,;:!?]|$)`, 'gm'), '$1');
+
+    // (c) Exemplos do template: par User/Assistant demonstrando a tool call (create_github_issue
+    //     e list_github_issues).
+    for (const name of ['create_github_issue', 'list_github_issues']) {
+        p = stripExampleToolCall(p, name);
+    }
+
+    // Restaura a estética: colapsa linhas vazias triplas+ em dupla e remove espaços duplos
+    // deixados pelo filtro (ex.: "use  para" → "use para"). Defensiva contra regressões do
+    // filtro e estética aceitável para o modelo consumir.
+    p = p.replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ');
+    return p;
+}
+
+/**
+ * Devolve o prompt de ferramentas do agente respeitando o papel do chamador (#1498).
+ *  - `opts.isAdmin === true`  → prompt COMPLETO idêntico ao de hoje (todas as ferramentas).
+ *  - `opts.isAdmin !== true`  → mesmo prompt MAS sem qualquer menção/bloco das 13 DEV_TOOLS.
+ */
+export function getToolsPrompt(opts: { isAdmin: boolean }): string {
+    return opts.isAdmin === true ? TOOLS_PROMPT_FULL : buildNonAdminPrompt();
+}
+
+/**
+ * @deprecated desde #1498 — use `getToolsPrompt({ isAdmin })`. Mantida como wrapper legado
+ * que devolve o prompt COMPLETO (idêntico ao de hoje) para callers externos / testes que
+ * ainda importam o símbolo `TOOLS_PROMPT`. Equivalente a `getToolsPrompt({ isAdmin: true })`.
+ */
+export const TOOLS_PROMPT: string = getToolsPrompt({ isAdmin: true });
 
 // --- AÇÕES HITL via deeplink (#57 Peça 2/3) ---
 // Registro de entidades que o agente pode propor criar/editar. Adicionar uma entidade =
@@ -694,6 +893,12 @@ const MUTATING_TOOLS = new Set([
     'create_opencode_task', 'start_opencode_task', 'merge_opencode_task',
 ]);
 
+// #segurança — remetente NÃO identificado (bot WhatsApp readOnly SEM elevação de funcionário) não
+// roda NENHUMA tool de leitura de dado interno. Decisão do dono (2026-07-17): "nada de dado interno"
+// — o contexto do próprio cliente já vem injetado no prompt via CRM. Allowlist pública EXPLÍCITA
+// (fail-closed): hoje vazia porque toda tool de leitura expõe dado interno (usuários/banco/PII/RH).
+const PUBLIC_READONLY_ALLOWLIST = new Set<string>([]);
+
 /** True se a ferramenta escreve/dispara efeito externo (deve ser bloqueada em read-only). */
 function isMutatingTool(tool: string): boolean {
     return MUTATING_TOOLS.has(tool)
@@ -777,6 +982,17 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     }
 
     const ctx = getToolContext();
+
+    // #1498 — defesa em profundidade: 13 ferramentas de dev/robô (issues, tarefas opencode,
+    // leitura de código, logs/git) são restritas ao papel de administrador. NÃO basta filtrar
+    // o prompt — se o modelo (injeção, alucinação, ou chamador externo) injetar a tool direto,
+    // `executeTool` RECUSA educadamente sem executar o despacho. Admin (`ctx.isAdmin === true`)
+    // passa normal.
+    if (DEV_TOOLS.has(resolvedTool) && ctx?.isAdmin !== true) {
+        log.warn(`DEV_TOOLS blocked for non-admin: tool=${resolvedTool} actor=${ctx.userLogin || 'anônimo'}`);
+        return 'Esta ferramenta é restrita ao papel de administrador.';
+    }
+
     // Contexto somente-leitura (ex.: bot WhatsApp com entrada externa): bloqueia escrita/efeito
     // externo antes de qualquer checagem de profile — vale inclusive sem profile e para admin.
     // web_search também: entrada não-confiável não deve disparar requisições à internet
@@ -784,6 +1000,29 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     if (ctx.readOnly && (isMutatingTool(resolvedTool) || resolvedTool === 'web_search')) {
         log.warn(`Read-only context blocked mutating tool: ${resolvedTool}`);
         return `A ferramenta "${resolvedTool}" não está disponível neste contexto (somente leitura).`;
+    }
+    // #segurança — readOnly SEM perfil = remetente NÃO identificado (cliente/desconhecido no
+    // WhatsApp). Nega TODA tool de leitura de dado interno (só a allowlist pública passa; hoje
+    // vazia). Fecha o vazamento de list_users/banco/PII/RH a contato externo. NÃO afeta funcionário
+    // elevado (tem perfil, readOnly=false) nem o webapp (readOnly indefinido → falsy).
+    if (ctx.readOnly && !ctx.permissionProfile && !PUBLIC_READONLY_ALLOWLIST.has(resolvedTool)) {
+        log.warn(`Negado: remetente não-identificado tentou ler dado interno — tool=${resolvedTool} actor=${ctx.userLogin || 'não-identificado'}`);
+        return `A ferramenta "${resolvedTool}" não está disponível neste contexto.`;
+    }
+    // #1514/#1528 — usuário LOGADO cujo perfil FALHOU a carregar (Dolibarr instável/ id não resolvido):
+    // sem perfil não dá p/ checar permissão, e como readOnly é falsy no webapp a trava acima não pega.
+    // Fail-closed: nega a não-admin (admin é conhecido por req.user.admin, independe do perfil):
+    //   (a) ESCRITA REAL (isMutatingTool — validate_*/delete/notify_*/send_whatsapp); e
+    //   (b) LEITURA GATED por permissão (#1528 — tools com chave em WRITE_TOOLS, ex.: get_financial_*/
+    //       get_bank_balance → canAccessFinancial), que sem perfil executariam sem checagem (o gate
+    //       normal vive dentro de `if (permissionProfile && !isAdmin)`, pulado com perfil null).
+    // NÃO pega leituras SEM chave de permissão (search/list_*/get_customer → getWritePermissionKey null).
+    // prepare_* é isento — só gera deeplink; a escrita real ocorre no /confirm-action com a chave RBAC
+    // do usuário (2º fator). O usuário re-tenta quando o Dolibarr volta.
+    if (ctx.profileLoadFailed && !ctx.isAdmin && !resolvedTool.startsWith('prepare_')
+        && (isMutatingTool(resolvedTool) || getWritePermissionKey(resolvedTool))) {
+        log.warn(`#1514/#1528: perfil não carregou — "${resolvedTool}" negada fail-closed p/ ${ctx.userLogin || 'usuário'} (sem perfil, não-admin).`);
+        return `Não foi possível verificar suas permissões agora (o perfil não carregou). Tente novamente em instantes; se persistir, contate um administrador.`;
     }
     if (ctx.permissionProfile && !ctx.isAdmin) {
         const permKey = getWritePermissionKey(resolvedTool);
@@ -899,11 +1138,34 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         }
     }
 
+    // Idempotência de ESCRITA (red-team 2026-07-17): tool com efeito real executa NO MÁXIMO 1× por
+    // turno lógico (ctx.turnId), mesmo que a cadeia do agente seja re-invocada (retry externo do
+    // botService, re-emissão de evento @lid, fallback de provider). Roda DEPOIS de todos os gates
+    // (permissão/kill-switch/HITL) — um tool barrado ou desviado p/ deeplink NUNCA chega aqui, então
+    // não é cacheado. `prepare_*` é excluído: gera só deeplink (efeito zero), não é escrita real.
+    // Ausente turnId (webapp) ⇒ guarda inativa. Chave inclui ator+args ⇒ escritas distintas no mesmo
+    // turno não colidem; mesma chamada idêntica = intenção idempotente.
+    const isRealWrite = classifyTool(resolvedTool).reversibility !== 'read' && !resolvedTool.startsWith('prepare_');
+    const idemKey = (isRealWrite && ctx.turnId)
+        ? writeIdempotencyKey(ctx.turnId, ctx.userId || 'anon', resolvedTool, args)
+        : null;
+    if (idemKey) {
+        const cached = getIdempotentWrite(idemKey);
+        if (cached !== undefined) {
+            log.warn(`Idempotência: "${resolvedTool}" já executada neste turno — devolvendo resultado anterior SEM re-executar (evita escrita duplicada).`);
+            return cached;
+        }
+    }
+
     // #954: executeToolInner LANÇA em params inválidos/HTTP 5xx. Não engolimos aqui (mantém o
     // contrato testado); quem trata é o loop do agente (catch por-chamada injeta o erro e CONTINUA
     // em vez de abortar o turno — ver LocalProvider.generateReply e GoogleProvider).
     const t0 = Date.now();
     const result = await executeToolInner(resolvedTool, args);
+    // Contrato "no máximo 1×/turno": registra quando a chamada COMPLETA (retorna — sucesso OU erro
+    // tratado como string). Uma escrita que LANÇA (throw) NÃO chega aqui → permanece re-tentável.
+    // Re-tentar um erro tratado acontece num turno NOVO (msg nova = turnId novo), nunca dobra o efeito.
+    if (idemKey) rememberWrite(idemKey, result);
     const listener = ctx.listener || DEFAULT_TOOL_CONTEXT.listener;
     if (listener) {
         try { listener(tool, args, result, Date.now() - t0); } catch { /* ignore */ }
@@ -1190,8 +1452,19 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 ).join('') + '</ul>';
         }
         case 'list_events': {
-            const events = await dolibarrService.listEvents(args?.limit);
-            if (events.length === 0) return 'Nenhum evento encontrado.';
+            // Aceita period (atalho resolvido pelo servidor) OU date_start/date_end explícitos.
+            let dateStart = args?.date_start;
+            let dateEnd = args?.date_end;
+            if (args?.period && !dateStart && !dateEnd) {
+                const range = resolveEventPeriod(String(args.period), new Date());
+                dateStart = range.dateStart;
+                dateEnd = range.dateEnd;
+            }
+            const events = await dolibarrService.listEvents(args?.limit, dateStart, dateEnd);
+            if (events.length === 0) {
+                const periodoTxt = (dateStart || dateEnd) ? ` no período informado (${dateStart || '…'} a ${dateEnd || '…'})` : '';
+                return `Nenhum evento encontrado${periodoTxt}.`;
+            }
             return '<h3>📅 Eventos</h3><ul>' +
                 events.map((e: any) =>
                     `<li><a href="/agenda/${e.id}" class="text-blue-600 underline font-semibold">${e.label}</a> — ${e.datep || ''}</li>`
@@ -1304,12 +1577,22 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 ).join('') + '</ul>';
         }
         case 'search_web': {
-            const searchResults = await ScraperService.searchGoogle(args?.query);
-            if (!searchResults || searchResults.length === 0) return `Nenhum resultado encontrado para "${args?.query}".`;
-            return '<h3>🔍 Resultados da Web</h3><ul>' +
-                searchResults.map((r: any) =>
-                    `<li><a href="${r.link || '#'}" class="text-blue-600 underline font-semibold">${r.title || 'Sem título'}</a> — ${r.snippet || ''}</li>`
-                ).join('') + '</ul>';
+            try {
+                const searchResults = await ScraperService.searchGoogle(args?.query);
+                if (!searchResults || searchResults.length === 0) return `Nenhum resultado encontrado para "${args?.query}".`;
+                return '<h3>🔍 Resultados da Web</h3><ul>' +
+                    searchResults.map((r: any) =>
+                        `<li><a href="${r.link || '#'}" class="text-blue-600 underline font-semibold">${r.title || 'Sem título'}</a> — ${r.snippet || ''}</li>`
+                    ).join('') + '</ul>';
+            } catch (err: any) {
+                // #1504 — mantém o case para chamadas legadas, mas devolve o erro EXPLÍCITO do
+                // ScraperService (ex.: 'SERPER_API_KEY ausente — busca via Serper indisponível')
+                // em vez do genérico 'Nenhum resultado encontrado'. O nome da ferramenta vai como
+                // campo estruturado para preservar a rastreabilidade sem violar o critério literal
+                // "token da ferramenta aparece apenas no case do dispatch" do aceite da issue.
+                log.error('tool dispatch falhou', { tool, error: err?.message || String(err) });
+                return `Erro: ${err?.message || String(err)}`;
+            }
         }
         case 'extract_from_url': {
             if (!isValidExternalUrl(args?.url)) {
@@ -1324,11 +1607,13 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'generate_speech': {
             if (!args?.text) throw new Error("Parâmetro 'text' ausente.");
             const { url } = await minimaxService.generateSpeech(String(args.text), { voiceId: args.voice_id ? String(args.voice_id) : undefined });
+            getToolContext().pendingMedia?.push({ kind: 'audio', url }); // envio nativo (nota de voz) pelo caller
             return `Áudio gerado (mp3, válido ~24h): ${url}`;
         }
         case 'generate_image': {
             if (!args?.prompt) throw new Error("Parâmetro 'prompt' ausente.");
             const { urls } = await minimaxService.generateImage(String(args.prompt), { aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined });
+            urls.forEach((u: string) => getToolContext().pendingMedia?.push({ kind: 'image', url: u })); // envio nativo (anexo)
             return `Imagem gerada (válida ~24h): ${urls.join(' , ')}`;
         }
         case 'generate_video': {
@@ -1342,7 +1627,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'check_video': {
             if (!args?.task_id) throw new Error("Parâmetro 'task_id' ausente.");
             const { status, url } = await minimaxService.getVideoStatus(String(args.task_id));
-            if (url) return `Vídeo pronto (válido ~24h): ${url}`;
+            if (url) { getToolContext().pendingMedia?.push({ kind: 'video', url }); return `Vídeo pronto (válido ~24h): ${url}`; }
             if (status === 'Fail') return `A geração do vídeo (task_id ${args.task_id}) falhou.`;
             return `Vídeo ainda processando (status: ${status}). Tente novamente em instantes com o mesmo task_id.`;
         }
@@ -1430,6 +1715,14 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 log.error('create_bug_report failed', e);
                 return `Erro ao criar bug report: ${e.message}`;
             }
+        }
+
+        case 'get_report_screenshot': {
+            return getReportScreenshot(args?.reportId ?? args?.report_id);
+        }
+
+        case 'get_report_html': {
+            return getReportHtml(args?.reportId ?? args?.report_id, args?.selector);
         }
 
         case 'get_screen_help': {
@@ -1738,7 +2031,9 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 const base64 = pdf.toString('base64');
                 const typeLabels: Record<string, string> = { invoice: 'Fatura', order: 'Pedido', proposal: 'Proposta', supplier_order: 'Pedido fornecedor', supplier_invoice: 'Fatura fornecedor', intervention: 'Intervenção', contract: 'Contrato', shipment: 'Expedição' };
                 const label = typeLabels[entityType] || entityType;
-                return `PDF da ${label} #${entityId} obtido com sucesso (${pdf.length} bytes). Base64: ${base64.substring(0, 100)}...[truncado, ${base64.length} chars total]. Para download: GET /api/documents/${entityType}/${entityId}/pdf`;
+                // envio nativo do PDF como anexo (pelo caller); o base64 NÃO precisa mais ir no texto.
+                getToolContext().pendingMedia?.push({ kind: 'file', dataUri: `data:application/pdf;base64,${base64}`, filename: `${label}_${entityId}.pdf`, caption: `${label} #${entityId}` });
+                return `PDF da ${label} #${entityId} obtido (${pdf.length} bytes) — enviando o arquivo em anexo. Também disponível em: GET /api/documents/${entityType}/${entityId}/pdf`;
             } catch (e: any) {
                 return `Erro ao obter PDF de ${entityType} #${entityId}: ${e.message || e}`;
             }

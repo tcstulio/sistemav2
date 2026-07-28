@@ -44,7 +44,7 @@ const HRList: React.FC<HRListProps> = ({
     initialItemId,
     onRefresh
 }) => {
-    const { config, currentUser } = useDolibarr();
+    const { config, currentUser, canDo } = useDolibarr();
 
     const { data: usersData } = useUsers(config);
     const users = usersData || [];
@@ -356,6 +356,13 @@ const HRList: React.FC<HRListProps> = ({
     };
 
     const handleDeleteUser = async (id: string) => {
+        // #1416 — gate de escrita igual ao resto da casa: sem canDo('delete','users')
+        // NÃO chama a API (que deleteria de verdade no Dolibarr). A UI também esconde
+        // o botão no UserDetail, mas a defesa fica aqui — fonte única.
+        if (!canDo('delete', 'users')) {
+            toast.error('Você não tem permissão para excluir usuários.');
+            return;
+        }
         if (!(await confirm({ message: 'Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita.', danger: true }))) return;
         try {
             await deleteUser(config, id);

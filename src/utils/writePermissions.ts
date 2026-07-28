@@ -48,6 +48,10 @@ export const WRITE_MAP: Record<string, WriteEntry> = {
     supplier_proposals: { module: 'supplier_proposal', create: 'creer', delete: 'supprimer' },
     projects: { module: 'projet', create: 'creer', delete: 'supprimer' },
     tasks: { module: 'projet', create: 'creer', delete: 'supprimer' },
+    // #1416 — exclusão de usuário Dolibarr precisa do gate padrão. Dolibarr aninha
+    // as perms do módulo "user" sob "user.user.<perm>", daí o prefixo "user." nas
+    // chaves do WRITE_MAP (resolvido por dot-walk em canDoAction).
+    users: { module: 'user', create: 'user.creer', edit: 'user.creer', delete: 'user.supprimer' },
     products: { module: 'produit', create: 'creer', delete: 'supprimer' },
     services: { module: 'produit', create: 'creer', delete: 'supprimer' },
     tickets: { module: 'ticket', create: 'creer', delete: 'supprimer' },

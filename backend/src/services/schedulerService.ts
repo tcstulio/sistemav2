@@ -261,7 +261,9 @@ class SchedulerService {
                     name: def.name,
                     event: def.event as any,
                     channel: (def.channel as 'whatsapp' | 'email') || 'whatsapp',
-                    sessionId: 'default', // Will need to be updated by user for email
+                    // #1439 — sessionId agora vem do uiConfig.whatsappPrimarySessionId (string vazia
+                    // = deixa o channelRouter.resolveSession decidir). Antes era 'default' hardcoded.
+                    sessionId: uiConfigService.get().whatsappPrimarySessionId || '',
                     message: def.message,
                     subject: def.subject,
                     delay: 0
@@ -390,7 +392,7 @@ class SchedulerService {
             if (msg.channel === 'email') {
                 await emailService.sendEmail(msg.sessionId, msg.chatId, msg.subject || 'Notificação', msg.message);
             } else {
-                await messageService.sendText(msg.sessionId, msg.chatId, msg.message);
+                await messageService.sendText(msg.sessionId, msg.chatId, msg.message, { systemNotification: true });
             }
 
             // Update status
@@ -784,15 +786,49 @@ class SchedulerService {
     }
 
     /**
-     * Render a template with variables
+     * Verifica se um template existe (id conhecido no store). Helper de baixo custo
+     * usado pelas rotas p/ validar `templateId` antes de renderizar (#1567 — anti-injection
+     * via templateId arbitrário: um cliente não pode referenciar templates que não existem
+     * nem injetar conteúdo arbitrário via id forjado).
+     */
+    templateExists(templateId: string): boolean {
+        if (typeof templateId !== 'string' || templateId.length === 0) return false;
+        return this.data.templates.some(t => t.id === templateId);
+    }
+
+    /**
+     * Escapa variáveis fornecidas pelo cliente antes de inseri-las no conteúdo do template.
+     * Defesa em profundidade contra injeção (#1567):
+     *   - Impede recursão de placeholders: `{{x}}` no valor NÃO vira novo placeholder
+     *     porque removemos todas as ocorrências de `{{...}}` no valor.
+     *   - Escapa HTML/sign-entities perigosos (email em HTML, fallback WhatsApp) sem
+     *     quebrar texto puro (a substituição é 1-pra-1 — não é regex destrutiva).
+     * Não é um parser HTML completo; é uma camada defensiva ao redor do `replaceAll` cru.
+     */
+    escapeTemplateValue(value: string): string {
+        if (typeof value !== 'string') return '';
+        const noRecurse = value.replace(/\{\{[^}]*\}\}/g, '');
+        return noRecurse
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    /**
+     * Render a template with variables. Valida que o templateId existe com uma leitura única do
+     * store e escapa cada valor antes da substituição.
      */
     renderTemplate(templateId: string, variables: Record<string, string>): string | null {
         const template = this.getTemplate(templateId);
         if (!template) return null;
 
         let content = template.content;
-        for (const [key, value] of Object.entries(variables)) {
-            content = content.replaceAll(`{{${key}}}`, value);
+        for (const [key, value] of Object.entries(variables || {})) {
+            if (typeof key !== 'string' || key.length === 0) continue;
+            const safeValue = this.escapeTemplateValue(value);
+            content = content.replaceAll(`{{${key}}}`, safeValue);
         }
 
         return content;
@@ -887,6 +923,32 @@ class SchedulerService {
         log.info(`Created automation rule: ${rule.name}`);
 
         return rule;
+    }
+
+    /**
+     * #1439 — Resolve qual sessionId uma AutomationRule deve usar no momento do envio,
+     * respeitando a precedência:
+     *   1. `rule.sessionId` (se explicitamente setada na regra) — prevalece sobre o default global
+     *   2. `whatsappPrimarySessionId` do uiConfig (default global institucional)
+     *   3. string vazia — `channelRouter.resolveSession` aplica a política de fallback
+     *      (primeira sessão WORKING em runtime)
+     *
+     * Loga qual fonte foi escolhida (rule / config / unset) p/ observabilidade. Retorna o
+     * `source` junto com o sessionId p/ quem chama registrar em log/metadata.
+     */
+    resolveRuleSessionId(rule: Pick<AutomationRule, 'sessionId' | 'name' | 'id'>): { sessionId: string; source: 'rule' | 'config' | 'unset' } {
+        const ruleSessionId = (rule.sessionId || '').trim();
+        if (ruleSessionId) {
+            log.info(`Rule ${rule.name} (#${rule.id}): usando sessionId da própria regra (${ruleSessionId})`);
+            return { sessionId: ruleSessionId, source: 'rule' };
+        }
+        const configDefault = (uiConfigService.get().whatsappPrimarySessionId || '').trim();
+        if (configDefault) {
+            log.info(`Rule ${rule.name} (#${rule.id}): usando sessionId do uiConfig.whatsappPrimarySessionId (${configDefault})`);
+            return { sessionId: configDefault, source: 'config' };
+        }
+        log.info(`Rule ${rule.name} (#${rule.id}): sessionId não configurado — channelRouter.resolveSession decide em runtime`);
+        return { sessionId: '', source: 'unset' };
     }
 
     getRules(): AutomationRule[] {

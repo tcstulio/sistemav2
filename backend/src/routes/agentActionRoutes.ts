@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { describeConfirm, executeConfirm } from '../services/agentActionConfirm';
 import { agentActivityService } from '../services/agentActivityService';
+import { dolibarrService } from '../services/dolibarrService';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('AgentActionRoutes');
@@ -24,12 +25,25 @@ router.post('/execute', async (req, res) => {
 
     // requireDolibarrLogin já resolveu a chave EFETIVA do usuário (sessão → dolapikey real) neste header.
     const userKey = req.headers['dolapikey'] as string;
-    const r = await executeConfirm(String(token), userKey);
+    // Ator LOGADO (da sessão) — o executeConfirm exige que bata com o actorUserId do token (D).
+    const user = (req as any).user || {};
+    let sessionUserId = String(user.id || '');
+    // #1522 — sessão degradada (authMiddleware sem `id`, só login): a EMISSÃO do token resolve o id
+    // por login/email (fallback #300 do aiRoutes); espelhamos AQUI o mesmo fallback, senão o
+    // sessionUserId ficaria '' e o actor-binding recusaria uma confirmação LEGÍTIMA. Mesmo helper.
+    if (!sessionUserId && (user.login || user.email)) {
+        try {
+            const resolved = await dolibarrService.findUserByLoginOrEmail(user.login || user.email);
+            if (resolved?.id) sessionUserId = String(resolved.id);
+        } catch (e: any) {
+            log.warn('Falha ao resolver id por login/email na confirmação (fail-closed segue)', e?.message);
+        }
+    }
+    const r = await executeConfirm(String(token), sessionUserId, userKey);
 
     if (r.ok) {
         // Trilha (F0.3): registra a execução CONFIRMADA com o ator logado.
         try {
-            const user = (req as any).user || {};
             agentActivityService.record({
                 userId: String(user.id || user.login || ''),
                 userName: [user.firstname, user.lastname].filter(Boolean).join(' ') || user.login || 'Usuário',

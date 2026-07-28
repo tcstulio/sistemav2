@@ -127,3 +127,27 @@ describe('canDoAction — regressão de telas pré-existentes', () => {
         expect(canDoAction(semCreate, 'customers', 'edit')).toBe(false);
     });
 });
+
+describe('canDoAction — users (RH: delete-user #1416)', () => {
+    // Direitos reais do Dolibarr: module 'user', perms aninhadas em user.user.<perm>.
+    const rights = { user: { user: { lire: 1, creer: 1, supprimer: 1 } } };
+
+    it('delete: admin true / usuário com direito true / sem direito false', () => {
+        expect(canDoAction(admin(), 'users', 'delete')).toBe(true);
+        expect(canDoAction(user(rights), 'users', 'delete')).toBe(true);
+        expect(canDoAction(user({ user: { user: { supprimer: 0 } } }), 'users', 'delete')).toBe(false);
+        expect(canDoAction(user({ user: { user: {} } }), 'users', 'delete')).toBe(false);
+        expect(canDoAction(user({ user: {} }), 'users', 'delete')).toBe(false);
+        expect(canDoAction(user({}), 'users', 'delete')).toBe(false);
+    });
+
+    it('create: usuário com droit true / sem droit false', () => {
+        expect(canDoAction(user(rights), 'users', 'create')).toBe(true);
+        expect(canDoAction(user({ user: { user: { creer: 0 } } }), 'users', 'create')).toBe(false);
+    });
+
+    it('edit usa create (creer) quando há o perm', () => {
+        expect(canDoAction(user(rights), 'users', 'edit')).toBe(true);
+        expect(canDoAction(user({ user: { user: { creer: 0 } } }), 'users', 'edit')).toBe(false);
+    });
+});

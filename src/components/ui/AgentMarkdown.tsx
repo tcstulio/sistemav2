@@ -51,6 +51,26 @@ function htmlAnchorsToMarkdown(text: string): string {
     );
 }
 
+// Deeplink de ação SOLTO no texto (sem markdown): desde #1355 a resposta de um prepare_* é o
+// texto da tool verbatim ("… na tela: /tasks/new?prefill=eyJ…"), e o remark-gfm NÃO autolinka
+// caminho relativo — o deeplink virava texto morto (regressão do #1354, que trocou o render
+// antigo por markdown puro). Só reconstruímos deeplinks de AÇÃO (prefill/confirm-action);
+// precedido de espaço/":"/início p/ não tocar em alvos já dentro de markdown `](…)`.
+const BARE_ACTION_DEEPLINK_RE = /(^|[\s:])(\/(?:[A-Za-z0-9_\-/.]*\?prefill=|confirm-action\?token=)[A-Za-z0-9_\-.~%]+)/g;
+
+function normalizeBareDeeplinks(text: string): string {
+    let out = text;
+    // URL absoluta do PRÓPRIO app (ex.: o bot converte links p/ absoluto no WhatsApp e a mesma
+    // mensagem aparece aqui) volta a ser caminho relativo — senão cai no branch "externa".
+    if (typeof window !== 'undefined' && window.location?.origin) {
+        out = out.split(`${window.location.origin}/`).join('/');
+    }
+    return out.replace(BARE_ACTION_DEEPLINK_RE, (_full, pre, path) => {
+        const label = /confirm-action/.test(path) ? 'Revisar e confirmar' : 'Revisar e criar';
+        return `${pre}[${label}](${path})`;
+    });
+}
+
 export interface AgentMarkdownProps {
     text: string;
     /** Navegação in-app (React Router). Recebe o caminho relativo (ex.: "/proposals/303"). */
@@ -59,7 +79,7 @@ export interface AgentMarkdownProps {
 
 export const AgentMarkdown: React.FC<AgentMarkdownProps> = ({ text, navigate }) => {
     if (!text) return null;
-    const normalized = htmlAnchorsToMarkdown(text);
+    const normalized = normalizeBareDeeplinks(htmlAnchorsToMarkdown(text));
 
     return (
         <div className="text-sm leading-relaxed break-words">

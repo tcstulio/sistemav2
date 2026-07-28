@@ -12,6 +12,7 @@ import SetupWizard from './SetupWizard';
 import { MainLayout } from './Layout/MainLayout';
 
 import NotFound from './NotFound';
+import { LegacySingularNewRedirect } from './LegacySingularNewRedirect';
 import { DolibarrConfig } from '../types';
 
 // Lazy imports - Route components loaded on demand
@@ -71,6 +72,7 @@ const AuditLog = React.lazy(() => import('./admin/AuditLog').then(m => ({ defaul
 const AutomationSettings = React.lazy(() => import('./admin/AutomationSettings').then(m => ({ default: m.AutomationSettings })));
 const IssuesPage = React.lazy(() => import('./Issues/IssuesPage'));
 const PermissionsCenter = React.lazy(() => import('./admin/PermissionsCenter'));
+const Dunning = React.lazy(() => import('../pages/Dunning'));
 
 interface ViewWrapperProps {
     Component: React.ComponentType<{
@@ -312,6 +314,9 @@ const App: React.FC = () => {
 
                         <Route path="/simulator" element={<ViewWrapper Component={Simulator} viewId="simulator" />} />
                         <Route path="/centrovibe" element={<ViewWrapper Component={CentroVibeManager} viewId="centrovibe" />} />
+                        <Route path="/dunning" element={<Dunning />} />
+                        {/* #1521 — redirect de rota legacy SINGULAR (/task/new → /tasks/new), preservando ?prefill= */}
+                        <Route path="/:entity/new" element={<LegacySingularNewRedirect />} />
                         <Route path="*" element={<NotFound />} />
                     </Route>
                 </Routes>

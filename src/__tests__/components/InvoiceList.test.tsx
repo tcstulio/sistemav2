@@ -760,3 +760,234 @@ describe('InvoiceList — Registro de pagamento sem mutar o cache (#1095)', () =
         expect(payableInvoice.paye).toBe('0');
     });
 });
+
+// ============================================================
+// #1581 — inputs numéricos em InvoiceList não devem enviar NaN
+// ao payload quando o usuário apaga o campo (parseInt/parseFloat
+// direto em onChange produziam NaN, gerando "R$ NaN" no total).
+// ============================================================
+const { useInvoiceLines } = await import('../../hooks/dolibarr');
+
+describe('InvoiceList — #1581 sanitização de inputs numéricos (NaN)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+        vi.mocked(useInvoiceLines).mockReturnValue({
+            data: [],
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    const openCreateModalAndAddItem = async (user: ReturnType<typeof userEvent.setup>) => {
+        const novoBtn = await screen.findByText('Novo');
+        await user.click(novoBtn);
+
+        const combos = await screen.findAllByRole('combobox');
+        const clienteSelect = combos.find(s =>
+            Array.from((s as HTMLSelectElement).options || []).some((o: any) => o.value === 'cust1')
+        );
+        await user.selectOptions(clienteSelect!, 'cust1');
+
+        // Adiciona um item (default qty=1, price=0, remise_percent=0)
+        const addBtn = screen.getByRole('button', { name: /Adicionar Item/i });
+        await user.click(addBtn);
+    };
+
+    const getNumberInputs = () => {
+        const qty = screen.getByPlaceholderText('Qtd') as HTMLInputElement;
+        const price = screen.getByPlaceholderText('Preço') as HTMLInputElement;
+        const remise = screen.getByPlaceholderText('Desc%') as HTMLInputElement;
+        return { qty, price, remise };
+    };
+
+    it('apagar o campo Preço no modal de criação envia 0 no payload (não NaN)', async () => {
+        const mockMutateAsync = vi.fn().mockResolvedValue({});
+        vi.mocked(useInvoiceMutations).mockReturnValue({
+            createInvoice: { mutateAsync: mockMutateAsync },
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        await openCreateModalAndAddItem(user);
+
+        // Apaga o Preço (input controlado reverte ao valor do estado, que é 0)
+        const { price } = getNumberInputs();
+        await user.clear(price);
+
+        const submitBtn = screen.getByRole('button', { name: /Criar Fatura/i });
+        await user.click(submitBtn);
+
+        await waitFor(() => {
+            expect(mockMutateAsync).toHaveBeenCalledTimes(1);
+        });
+
+        const payload = mockMutateAsync.mock.calls[0][0] as any;
+        // Garante que NENHUM campo numérico enviado é NaN
+        expect(Number.isNaN(payload.lines[0].subprice)).toBe(false);
+        expect(payload.lines[0].subprice).toBe(0);
+    });
+
+    it('apagar o campo Qtd no modal de criação mantém qty como 0 no estado (não NaN)', async () => {
+        // O input tem min="1", então a submissão via form é bloqueada pelo HTML
+        // quando qty=0. Verificamos que o estado foi corretamente sanitizado
+        // para 0 (e não NaN) após clear, mesmo sem submit.
+        const mockMutateAsync = vi.fn().mockResolvedValue({});
+        vi.mocked(useInvoiceMutations).mockReturnValue({
+            createInvoice: { mutateAsync: mockMutateAsync },
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        await openCreateModalAndAddItem(user);
+
+        const { qty } = getNumberInputs();
+        await user.clear(qty);
+
+        // Após o clear, o input controlado reverte ao valor do estado (0), não NaN.
+        // Garantimos que o valor NÃO é NaN — é 0 (string '0').
+        expect(qty.value).toBe('0');
+        // E que parseInt reverso é finito
+        const parsed = parseInt(qty.value, 10);
+        expect(Number.isNaN(parsed)).toBe(false);
+        expect(parsed).toBe(0);
+    });
+
+    it('apagar o campo Desc% no modal de criação não bloqueia o submit (#1581)', async () => {
+        const mockMutateAsync = vi.fn().mockResolvedValue({});
+        vi.mocked(useInvoiceMutations).mockReturnValue({
+            createInvoice: { mutateAsync: mockMutateAsync },
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        await openCreateModalAndAddItem(user);
+
+        const { remise } = getNumberInputs();
+        await user.clear(remise);
+
+        const submitBtn = screen.getByRole('button', { name: /Criar Fatura/i });
+        await user.click(submitBtn);
+
+        await waitFor(() => {
+            expect(mockMutateAsync).toHaveBeenCalled();
+        });
+        // remise_percent não vai no payload padrão; garantimos que submit prosseguiu
+        expect(mockMutateAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('total do modal de criação mostra R$ 0,00 quando qty e price estão vazios (sem R$ NaN)', async () => {
+        const mockMutateAsync = vi.fn().mockResolvedValue({});
+        vi.mocked(useInvoiceMutations).mockReturnValue({
+            createInvoice: { mutateAsync: mockMutateAsync },
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        await openCreateModalAndAddItem(user);
+
+        const { qty, price } = getNumberInputs();
+        await user.clear(qty);
+        await user.clear(price);
+
+        // O total exibido NÃO pode conter "NaN"
+        const allText = (document.body.textContent || '');
+        expect(allText).not.toContain('R$ NaN');
+        expect(allText).not.toContain('NaN');
+    });
+
+    it('valor válido continua funcionando normalmente após a sanitização (#1581)', async () => {
+        const mockMutateAsync = vi.fn().mockResolvedValue({});
+        vi.mocked(useInvoiceMutations).mockReturnValue({
+            createInvoice: { mutateAsync: mockMutateAsync },
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        await openCreateModalAndAddItem(user);
+
+        const { qty, price } = getNumberInputs();
+        await user.clear(qty);
+        await user.type(qty, '3');
+        await user.clear(price);
+        await user.type(price, '99.90');
+
+        const submitBtn = screen.getByRole('button', { name: /Criar Fatura/i });
+        await user.click(submitBtn);
+
+        await waitFor(() => {
+            expect(mockMutateAsync).toHaveBeenCalledTimes(1);
+        });
+
+        const payload = mockMutateAsync.mock.calls[0][0] as any;
+        expect(payload.lines[0].qty).toBe(3);
+        expect(payload.lines[0].subprice).toBe(99.9);
+    });
+
+    it('apagar Preço no modal de EDIÇÃO envia 0 no payload updateInvoiceLine (não NaN)', async () => {
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                {
+                    id: 'inv1',
+                    ref: 'FA2501-0001',
+                    socid: 'cust1',
+                    date: 1700000000,
+                    total_ttc: 1200,
+                    statut: '0', // draft -> edit habilitado
+                    type: '0',
+                    project_id: null,
+                    order_id: null,
+                    date_lim_reglement: null,
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+        vi.mocked(useInvoiceLines).mockReturnValue({
+            data: [
+                {
+                    id: 'line1',
+                    parent_id: 'inv1',
+                    product_id: '',
+                    description: 'Item existente',
+                    qty: 2,
+                    subprice: 50,
+                    remise_percent: 0,
+                },
+            ],
+            refetch: mockRefetch,
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        // Abre detalhe da fatura
+        await user.click(await screen.findByText('FA2501-0001'));
+
+        // Abre modal de edição
+        await user.click(await screen.findByText('Editar'));
+
+        // Limpa o Preço da linha
+        const priceInput = (await screen.findByPlaceholderText('Preço')) as HTMLInputElement;
+        await user.clear(priceInput);
+
+        // Salva
+        const saveBtn = screen.getByRole('button', { name: /Salvar Alterações/i });
+        await user.click(saveBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.updateInvoiceLine).toHaveBeenCalled();
+        });
+
+        const callArgs = vi.mocked(DolibarrService.updateInvoiceLine).mock.calls[0];
+        const lineData = callArgs[3] as any;
+        expect(Number.isNaN(lineData.subprice)).toBe(false);
+        expect(lineData.subprice).toBe(0);
+        expect(Number.isNaN(lineData.qty)).toBe(false);
+    });
+});

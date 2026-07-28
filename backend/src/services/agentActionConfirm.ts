@@ -176,12 +176,28 @@ export function describeConfirm(token: string): { ok: true; action: string; acto
     return { ok: true, action, actorUserId, ...REGISTRY[action].describe(args) };
 }
 
-/** Verifica + anti-replay + EXECUTA com a chave do usuário (RBAC real). */
-export async function executeConfirm(token: string, userKey: string): Promise<{ ok: true; action: string; result: any } | { ok: false; error: string }> {
+/**
+ * Verifica + ATOR + anti-replay + EXECUTA com a chave do usuário (RBAC real).
+ *
+ * `sessionUserId` = id do usuário LOGADO que está confirmando (da sessão, não do token). O token
+ * carrega `actorUserId` = para QUEM o agente emitiu a confirmação. Exigir a igualdade fecha o furo
+ * do "bearer": um deeplink emitido para o funcionário X, se vazar/for encaminhado, NÃO executa nas
+ * mãos de outro logado Y — mesmo que Y tenha permissão. O fluxo real (X pede no WhatsApp → confirma
+ * logado como X no webapp; Y no webapp → emitido para Y) tem sempre ator == logado, então não quebra.
+ */
+export async function executeConfirm(token: string, sessionUserId: string, userKey: string): Promise<{ ok: true; action: string; result: any } | { ok: false; error: string }> {
     const p = verifyDeeplink<{ action: string; args: any; actorUserId: string; jti: string }>(token, CONFIRM_KIND);
     if (!p) return { ok: false, error: 'Confirmação inválida ou expirada.' };
-    const { action, args, jti } = p.data;
+    const { action, args, jti, actorUserId } = p.data;
     if (!isConfirmable(action)) return { ok: false, error: `Ação "${action}" não é confirmável.` };
+
+    // D (actor-binding, red-team 2026-07-17): a confirmação só executa nas mãos do ator para quem
+    // foi emitida. Fail-closed: token sem ator (não deveria ocorrer — o gate HITL só é atingido com
+    // userId) também é recusado. NÃO consome o jti aqui — o ator legítimo ainda pode usar o link.
+    if (!actorUserId || String(actorUserId) !== String(sessionUserId || '')) {
+        log.warn(`Confirmação recusada: ator do token (${actorUserId || 'vazio'}) ≠ usuário logado (${sessionUserId || 'anônimo'}) — jti=${jti}.`);
+        return { ok: false, error: 'Esta confirmação foi emitida para outro usuário. Peça ao agente um novo link com a sua conta.' };
+    }
 
     const now = Math.floor(Date.now() / 1000);
     cleanupConsumed(now);

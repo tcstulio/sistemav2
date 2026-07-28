@@ -14,9 +14,53 @@ interface PersistedConfig {
     moduleConfigs: Record<string, ModuleConfig>;
     customPrompts: Record<string, string>;
     fallbackChains?: Record<string, string[]>;
+    runtimeConfig?: Record<string, string>;
 }
 
-const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
+// Issue #1541: arquivo de runtime sugerido pela issue (`config/runtime.json`)
+// — NUNCA .env. `assertSafeConfigPath()` blinda mesmo se alguém mudar CONFIG_PATH.
+const CONFIG_DIR = path.resolve(process.cwd(), 'config');
+const CONFIG_PATH = path.resolve(CONFIG_DIR, 'runtime.json');
+const INITIAL_RUNTIME_CONFIG: Record<string, string | undefined> = {
+    googleApiKey: config.googleApiKey,
+    zaiApiKey: config.zaiApiKey,
+    minimaxApiKey: config.minimaxApiKey,
+    localLlmUrl: config.localLlmUrl,
+    localModelName: config.localModelName,
+    zaiBaseUrl: config.zaiBaseUrl,
+    zaiModel: config.zaiModel,
+    minimaxBaseUrl: config.minimaxBaseUrl,
+    minimaxModel: config.minimaxModel,
+    geminiModel: config.geminiModel,
+    llmProvider: config.llmProvider,
+};
+
+// Chaves do runtimeConfig que mapeiam para campos do `config` global do boot.
+// Permite refletir mudanças feitas pela API no objeto `config` que outras partes
+// do backend consomem diretamente (`config.llmProvider`, `config.localLlmUrl`...).
+// Mantemos o `config` global como cache de leitura e o `runtimeConfig` como fonte
+// persistida — `config` global é apenas um espelho para compatibilidade de
+// leitores legados. NÃO mutamos `config.*` em nenhum outro lugar.
+const RUNTIME_TO_GLOBAL_KEY: Record<string, keyof typeof config> = {
+    llmProvider: 'llmProvider',
+    localLlmUrl: 'localLlmUrl',
+    localModelName: 'localModelName',
+    googleApiKey: 'googleApiKey',
+    geminiModel: 'geminiModel',
+    zaiApiKey: 'zaiApiKey',
+    zaiBaseUrl: 'zaiBaseUrl',
+    zaiModel: 'zaiModel',
+    minimaxApiKey: 'minimaxApiKey',
+    minimaxBaseUrl: 'minimaxBaseUrl',
+    minimaxModel: 'minimaxModel',
+};
+
+function assertSafeConfigPath(): void {
+    const fileName = path.basename(CONFIG_PATH).toLowerCase();
+    if (fileName === '.env' || fileName.endsWith('.env')) {
+        throw new Error('Runtime configuration cannot target .env');
+    }
+}
 
 const KNOWN_PROVIDERS = new Set(['local', 'google', 'glm', 'minimax']);
 
@@ -64,12 +108,15 @@ class ConfigService {
     private customPrompts: Record<string, string>;
     // Cadeia de fallback POR MÓDULO — quando presente, sobrescreve o default global.
     private fallbackChains: Record<string, string[]>;
+    private runtimeConfig: Record<string, string>;
 
     constructor() {
+        assertSafeConfigPath();
         const persisted = this.loadFromDisk();
         this.moduleConfigs = persisted?.moduleConfigs ?? defaultModules();
         this.customPrompts = persisted?.customPrompts ?? defaultPrompts();
         this.fallbackChains = persisted?.fallbackChains ?? {};
+        this.runtimeConfig = persisted?.runtimeConfig ?? {};
         if (!persisted) {
             // Primeiro boot: persiste defaults para que survive restart.
             this.flush();
@@ -105,10 +152,12 @@ class ConfigService {
      */
     private flush(): void {
         try {
+            assertSafeConfigPath();
             const persisted: PersistedConfig = {
                 moduleConfigs: this.moduleConfigs,
                 customPrompts: this.customPrompts,
-                fallbackChains: this.fallbackChains
+                fallbackChains: this.fallbackChains,
+                runtimeConfig: this.runtimeConfig
             };
             atomicWriteSync(CONFIG_PATH, persisted);
         } catch (e: any) {
@@ -118,6 +167,35 @@ class ConfigService {
 
     getModuleConfig(moduleName: string): ModuleConfig {
         return this.moduleConfigs[moduleName] || { provider: config.llmProvider, model: modelForProvider(config.llmProvider) };
+    }
+
+    getConfig(key: string): string | undefined {
+        return this.runtimeConfig[key] ?? INITIAL_RUNTIME_CONFIG[key];
+    }
+
+    /**
+     * Define uma chave no runtimeConfig, persiste em disco e (se houver mapeamento
+     * em `RUNTIME_TO_GLOBAL_KEY`) reflete no objeto `config` global — fonte de
+     * verdade ÚNICA, sem permitir mutação direta fora deste método.
+     *
+     * Rechavea explicitamente chaves que tentariam tocar em `.env` — bloqueio em
+     * duas camadas: nome de arquivo (assertSafeConfigPath) E nome da chave.
+     */
+    setConfig(key: string, value: string): void {
+        if (key === '.env' || key.toLowerCase().includes('.env')) {
+            throw new Error('Runtime configuration cannot target .env');
+        }
+        this.runtimeConfig = { ...this.runtimeConfig, [key]: value };
+
+        // Reflete no `config` global SOMENTE via este mapeamento — todos os
+        // consumidores legados (`config.llmProvider`, etc.) passam a ver o
+        // valor atualizado. Fora daqui, ninguém mais toca em `config.*`.
+        const globalKey = RUNTIME_TO_GLOBAL_KEY[key];
+        if (globalKey) {
+            (config as Record<string, unknown>)[globalKey as string] = value;
+        }
+
+        this.flush();
     }
 
     getAllModuleConfigs(): Record<string, ModuleConfig> {

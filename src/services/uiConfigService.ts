@@ -30,6 +30,19 @@ export interface TaskAutomationConfig {
     /** Modelo do Juiz (LLM-as-judge). Vazio = cadeia do chat (MiniMax). Ex.: 'sonnet'/'opus'/'haiku' =
      * juiz roda no Claude Code CLI (gate independente do coder), com fallback pra cadeia do chat. */
     judgeModel?: string;
+    /** Modelo PRIMÁRIO do coder (opencode). Vazio = herda o env/default do opencode. Ex.:
+     * 'zai-coding-plan/glm-5.2', 'minimax/MiniMax-M3'. Troca sem restart. */
+    coderModel?: string;
+    /** Modelo de FALLBACK do coder (429/timeout do primário). Vazio = herda o env. */
+    coderFallbackModel?: string;
+    /** Escalada do coder p/ o Claude FORTE quando o coder barato empaca. GASTA $ real. */
+    opusEscalationEnabled?: boolean;
+    /** Teto de escaladas Claude por dia (anti-loop). */
+    maxOpusEscalationsPerDay?: number;
+    /** Teto de CUSTO $ das escaladas Claude por dia (guarda-corpo contra gasto descontrolado). */
+    maxOpusCostUsdPerDay?: number;
+    /** Modelo da escalada AUTOMÁTICA. 'fable' = mais capaz (~2x); 'opus' = mais econômico. */
+    coderEscalationModel?: string;
 }
 
 // #1204 — Kill-switches globais das automações de fundo. Default true = nada muda.
@@ -43,6 +56,7 @@ export interface FeatureSwitchesConfig {
     dryRunMode: boolean;          // impede envio real de mensagens (anti-spam de incidente)
     financialCommands: boolean;   // habilita /pagar e /pix (movimentam dinheiro real)
     crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
+    whatsappEmployeeElevation?: boolean; // funcionário identificado por fone ganha o próprio perfil no bot
 }
 
 // ---- Política de notificações (#1293): cadência de cobrança, quiet-hours por canal, alertas ----
@@ -71,11 +85,20 @@ export interface NotificationPolicyConfig {
     invoiceDueHorizonDays: number; // fatura a vencer (dias)
 }
 
+// #1398/#1440 — sessão de WhatsApp que dispara os envios institucionais (cobranças/notificações) e o
+// que fazer se ela cair. 'fail' (default seguro) = não envia (evita mandar do número errado);
+// 'first-working' = comportamento legado (desvia p/ a 1ª sessão WORKING).
+export type WhatsappFallbackPolicy = 'fail' | 'first-working';
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
     logoUrl?: string;
     themeColor: string;
+    /** #1440 — sessão de WhatsApp institucional (id) usada nos envios automáticos. Vazio = 'default' (legado). */
+    whatsappPrimarySessionId?: string;
+    /** #1440 — política se a sessão primária não estiver WORKING. Default 'fail'. */
+    whatsappFallbackPolicy?: WhatsappFallbackPolicy;
     menu?: OrderVisibilityPrefs;
     dashboard?: OrderVisibilityPrefs;
     screenPermissions?: ScreenPermissions;

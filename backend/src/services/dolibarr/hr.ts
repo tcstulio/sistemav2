@@ -295,6 +295,24 @@ export class DolibarrHRService extends DolibarrServiceBase {
         }
     }
 
+    /** Lista usuários sem filtro de nome (p/ match de identidade por telefone). */
+    async listAllUsers(limit: number = 200): Promise<any[]> {
+        try {
+            const headers = this.getHeaders();
+            const url = `${this.baseUrl}users`;
+            const response = await axios.get(url, {
+                headers,
+                params: { limit },
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s === 200
+            });
+            return Array.isArray(response.data) ? response.data : [];
+        } catch (error) {
+            log.error('listAllUsers Error', error);
+            return [];
+        }
+    }
+
     async listExpenseReports(status?: string): Promise<any[]> {
         try {
             const headers = this.getHeaders();

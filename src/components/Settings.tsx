@@ -19,6 +19,7 @@ import { TaskAutomationEditor } from './admin/TaskAutomationEditor';
 import { BackgroundAutomationSwitches } from './admin/BackgroundAutomationSwitches';
 import { SecurityFeatureSwitches } from './admin/SecurityFeatureSwitches';
 import { GovernanceEditor } from './admin/GovernanceEditor';
+import { WhatsAppSessionConfig } from './admin/WhatsAppSessionConfig';
 import { AgentBootstrapEditor } from './admin/AgentBootstrapEditor';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
 import { logger } from '../utils/logger';
@@ -414,6 +415,9 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
                 {/* Governanca de acoes do agente (HITL de irreversiveis) — so admin */}
                 {isAdmin && settingsTab === 'admin' && <GovernanceEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+
+                {/* Sessão de WhatsApp institucional + política de fallback (#1440/#1398) — so admin */}
+                {isAdmin && settingsTab === 'admin' && <WhatsAppSessionConfig isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Sessão automática do agente (#300 item 3) — so admin */}
                 {isAdmin && settingsTab === 'admin' && <AgentBootstrapEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}

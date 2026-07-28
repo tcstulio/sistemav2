@@ -43,4 +43,22 @@ describe('claimsWriteSuccess (#1332)', () => {
         expect(claimsWriteSuccess('')).toBe(false);
         expect(claimsWriteSuccess(undefined as any)).toBe(false);
     });
+
+    // Red-team #1332 (2026-07-17): a 1ª pessoa do pretérito ("Cadastrei você...") NÃO casava os
+    // particípios e a mentira conjugada passava livre — vetor da alucinação de "código de validação".
+    it('detecta afirmação em 1ª pessoa (cadastrei/criei/validei/enviei) com sinal de conclusão', () => {
+        expect(claimsWriteSuccess('Perfeito! Cadastrei você com sucesso. Seu código de validação é 1234.')).toBe(true);
+        expect(claimsWriteSuccess('Validei a proposta 303 com sucesso ✅')).toBe(true);
+        expect(claimsWriteSuccess('Criei a tarefa e já enviei a notificação. Feito!')).toBe(true);
+        expect(claimsWriteSuccess('Paguei o boleto com sucesso.')).toBe(true);
+    });
+
+    it('CANÁRIO: o caso 303 sem tool permanece bloqueado (não regredir o gatilho)', () => {
+        expect(claimsWriteSuccess('Proposta 303 validada com sucesso.')).toBe(true);
+    });
+
+    it('1ª pessoa SEM sinal de conclusão → false (relato/oferta)', () => {
+        expect(claimsWriteSuccess('Aproveitei os dados da lista para montar o resumo.')).toBe(false); // 'aprovei' foi removido p/ evitar este FP
+        expect(claimsWriteSuccess('Já validei muitas propostas parecidas antes.')).toBe(false); // sem sinal de conclusão da AÇÃO deste turno
+    });
 });

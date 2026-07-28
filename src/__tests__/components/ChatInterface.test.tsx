@@ -397,3 +397,105 @@ describe('ChatInterface — excluir/editar mensagens (#601)', () => {
         });
     });
 });
+
+describe('ChatInterface — fluxo de resposta (reply) (#1572)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(Operations.createEvent).mockResolvedValue({} as any);
+        vi.mocked(useEvents).mockReturnValue({
+            data: [msgOther],
+            isLoading: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('clicar em "Responder" em uma mensagem alheia exibe o banner com nome e trecho do conteúdo', async () => {
+        const user = userEvent.setup({ pointerEventsCheck: 0 });
+        const { container } = renderChat();
+
+        // O botão de resposta fica no grupo da mensagem e é selecionado pelo title.
+        const replyBtn = container.querySelector('button[title="Responder"]') as HTMLButtonElement;
+        expect(replyBtn).not.toBeNull();
+        await user.click(replyBtn);
+
+        // O banner mostra o nome do autor ("Outro") e os primeiros 50 chars do conteúdo.
+        expect(screen.getByText(/Respondendo a Outro/)).toBeInTheDocument();
+        // O trecho do banner recebe sufixo "..." — distinto do bubble da mensagem.
+        expect(screen.getByText(/Mensagem alheia\.\.\./)).toBeInTheDocument();
+    });
+
+    it('o botão × do banner cancela a resposta limpando o contexto', async () => {
+        const user = userEvent.setup({ pointerEventsCheck: 0 });
+        const { container } = renderChat();
+
+        const replyBtn = container.querySelector('button[title="Responder"]') as HTMLButtonElement;
+        await user.click(replyBtn);
+        expect(screen.getByText(/Respondendo a Outro/)).toBeInTheDocument();
+
+        // O botão × é o único botão com texto "×" dentro do banner.
+        const cancelBtn = screen.getByRole('button', { name: '×' });
+        await user.click(cancelBtn);
+
+        await waitFor(() => {
+            expect(screen.queryByText(/Respondendo a Outro/)).toBeNull();
+        });
+        expect(Operations.createEvent).not.toHaveBeenCalled();
+    });
+
+    it('enviar após responder inclui o bloco de citação no payload description', async () => {
+        const user = userEvent.setup({ pointerEventsCheck: 0 });
+        const { container } = renderChat();
+
+        const replyBtn = container.querySelector('button[title="Responder"]') as HTMLButtonElement;
+        await user.click(replyBtn);
+
+        const input = screen.getByTestId('message-input');
+        await user.type(input, 'Resposta adequada');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(Operations.createEvent).toHaveBeenCalledWith(
+                expect.any(Object),
+                expect.objectContaining({
+                    description: expect.stringContaining('<blockquote'),
+                })
+            );
+            // A citação referencia o autor e o conteúdo original, além do texto da resposta.
+            const call = vi.mocked(Operations.createEvent).mock.calls[0][1] as { description: string };
+            expect(call.description).toContain('Outro');
+            expect(call.description).toContain('Mensagem alheia');
+            expect(call.description).toContain('Resposta adequada');
+        });
+    });
+
+    it('após enviar com sucesso, o banner de resposta é removido', async () => {
+        const user = userEvent.setup({ pointerEventsCheck: 0 });
+        const { container } = renderChat();
+
+        const replyBtn = container.querySelector('button[title="Responder"]') as HTMLButtonElement;
+        await user.click(replyBtn);
+        await user.type(screen.getByTestId('message-input'), 'Reply ok');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(Operations.createEvent).toHaveBeenCalled();
+        });
+        await waitFor(() => {
+            expect(screen.queryByText(/Respondendo a Outro/)).toBeNull();
+        });
+    });
+});
+
+describe('ChatInterface — tipos sem any (#1572)', () => {
+    it('chatMessages é ChatMessage[]: campo content é renderizado no lugar de description/label', () => {
+        vi.mocked(useEvents).mockReturnValue({
+            data: [
+                { id: 't1', elementtype: 'project', fk_element: '1', fk_user_author: 'u2', user_author_name: 'Outro', description: 'Conteúdo via content', date_start: 1700000000 },
+            ],
+            isLoading: false,
+            refetch: mockRefetch,
+        } as any);
+        renderChat();
+        expect(screen.getByText('Conteúdo via content')).toBeInTheDocument();
+    });
+});

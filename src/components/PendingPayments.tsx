@@ -95,10 +95,10 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
         );
     }, [activeTab, receivables, payables, searchTerm]);
 
-    const totalReceivables = receivables.reduce((sum, item) => sum + item.total_ttc, 0);
-    const totalPayables = payables.reduce((sum, item) => sum + item.total_ttc, 0);
-    const totalOverdueReceivables = receivables.filter(i => i.isOverdue).reduce((sum, item) => sum + item.total_ttc, 0);
-    const totalOverduePayables = payables.filter(i => i.isOverdue).reduce((sum, item) => sum + item.total_ttc, 0);
+    const totalReceivables = receivables.reduce((sum, item) => sum + (Number(item.total_ttc) || 0), 0);
+    const totalPayables = payables.reduce((sum, item) => sum + (Number(item.total_ttc) || 0), 0);
+    const totalOverdueReceivables = receivables.filter(i => i.isOverdue).reduce((sum, item) => sum + (Number(item.total_ttc) || 0), 0);
+    const totalOverduePayables = payables.filter(i => i.isOverdue).reduce((sum, item) => sum + (Number(item.total_ttc) || 0), 0);
 
     const isLoading = activeTab === 'receivables' ? isLoadingInvoices : isLoadingSupplier;
     const error = activeTab === 'receivables' ? errorInvoices : errorSupplier;

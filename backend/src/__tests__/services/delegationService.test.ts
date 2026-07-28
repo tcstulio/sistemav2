@@ -1,12 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'path';
-import { DAY_MS } from '../../services/delegationFollowUpLogic';
+import { DAY_MS, DEFAULT_CADENCE } from '../../services/delegationFollowUpLogic';
 
 const mockDoli = vi.hoisted(() => ({
     setTaskDelegationState: vi.fn().mockResolvedValue(true),
     listDelegationStates: vi.fn().mockResolvedValue([]),
 }));
+// #1406 — mock do uiConfigService p/ controlar o `cobrancaCadence.prazoDeAceiteDays` lido
+// em runtime. Default devolve a cadência saneada (igual ao DEFAULT_CADENCE) p/ preservar
+// o comportamento dos testes existentes que não mexem no dial.
+const mockUiConfig = vi.hoisted(() => ({
+    getCobrancaCadence: vi.fn(() => ({ ...DEFAULT_CADENCE })),
+}));
 vi.mock('../../services/dolibarr', () => ({ dolibarrService: mockDoli }));
+vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
 vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
 vi.mock('../../utils/logger', () => ({ createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 
@@ -17,7 +24,11 @@ const STORE = path.join(__dirname, '__delegation_store_unit_test__.json');
 const newSvc = () => new DelegationService(STORE);
 
 describe('DelegationService', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // #1406 — reset do mock do uiConfig para a cadência default (vi.clearAllMocks não reseta implementação).
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE });
+    });
 
     it('get retorna undefined para tarefa desconhecida; getAceite idem', () => {
         const svc = newSvc();
@@ -93,5 +104,44 @@ describe('DelegationService', () => {
         const n = await svc.hydrateFromDolibarr();
         expect(n).toBe(0);
         expect(svc.get('88')).toBeUndefined();
+    });
+});
+
+// #1406 — TESTE DE ENFORCEMENT para `delegationService.requestAcceptance` (AC#3 da issue).
+// Valida que o dial `cobrancaCadence.prazoDeAceiteDays` do uiConfigService é lido em
+// RUNTIME (sem restart) e que o deadlineDay reflete EXATAMENTE o valor configurado —
+// não os defaults hard-coded.
+describe('DelegationService — runtime cobrancaCadence (#1406)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE });
+    });
+
+    it('enforcement #1406: prazoDeAceiteDays do uiConfigService é respeitado em runtime (sem restart)', () => {
+        // Admin setou prazoDeAceiteDays=7 (≠ default 1) via PUT /api/ui-config.
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, prazoDeAceiteDays: 7 });
+        const svc = newSvc();
+        const rec = svc.requestAcceptance('50', { nowMs: noon(10) });
+        // dayIndex(noon(10)) + 7 = 10 + 7 = 17 — prova que o valor configurado foi usado.
+        expect(rec.aceite?.deadlineDay).toBe(17);
+        // helper foi consultado (prova o runtime read, não cache de construção).
+        expect(mockUiConfig.getCobrancaCadence).toHaveBeenCalled();
+    });
+
+    it('controle #1406: com DEFAULT_CADENCE (prazoDeAceiteDays=1), deadlineDay cai 1 dia após hoje', () => {
+        // CONTROLE: com o dial default (sem override), o comportamento histórico é mantido.
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE }); // prazoDeAceiteDays=1
+        const svc = newSvc();
+        const rec = svc.requestAcceptance('50', { nowMs: noon(10) });
+        expect(rec.aceite?.deadlineDay).toBe(11); // dayIndex(10) + 1
+    });
+
+    it('enforcement #1406: prazo explícito no opts vence o config (não há regressão)', () => {
+        // Caller pode sobrescrever prazoDeAceiteDays por chamada — comportamento preservado.
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, prazoDeAceiteDays: 7 });
+        const svc = newSvc();
+        const rec = svc.requestAcceptance('50', { nowMs: noon(10), prazoDeAceiteDays: 3 });
+        // opts.prazoDeAceiteDays=3 vence o config=7 — não regrediu a API existente.
+        expect(rec.aceite?.deadlineDay).toBe(13); // dayIndex(10) + 3
     });
 });

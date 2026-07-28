@@ -15,7 +15,7 @@ export interface TaskAutomationEditorProps {
 export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAdmin, themeColor = 'indigo' }) => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '' });
+    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '', coderModel: '', coderFallbackModel: '', opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus' });
 
     useEffect(() => {
         if (!isAdmin) { setLoading(false); return; }
@@ -167,6 +167,42 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                             </div>
                         </div>
 
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
+                                <ShieldCheck size={16} /> Modelo do Coder (quem resolve as issues)
+                            </div>
+                            <p className="text-xs text-slate-500 mb-3">
+                                Vazio = usa o default do servidor (env/opencode — hoje MiniMax). Setado = o opencode roda nesse modelo. Troca vale no PROXIMO run, sem reiniciar. So letras/digitos/. _ : / - (nome tipo provider/modelo).
+                            </p>
+                            <input
+                                type="text"
+                                placeholder="vazio = default do servidor — ou: zai-coding-plan/glm-5.2 / minimax/MiniMax-M3"
+                                value={config.coderModel ?? ''}
+                                onChange={(e) => setConfig({ ...config, coderModel: e.target.value })}
+                                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                            />
+                            <div className="flex flex-wrap gap-2 mt-2">
+                                {['', 'zai-coding-plan/glm-5.2', 'minimax/MiniMax-M3'].map((m) => (
+                                    <button
+                                        key={m || 'default'}
+                                        type="button"
+                                        onClick={() => setConfig({ ...config, coderModel: m })}
+                                        className={`text-xs px-2 py-1 rounded border ${(config.coderModel ?? '') === m ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}`}
+                                    >
+                                        {m || 'default (servidor)'}
+                                    </button>
+                                ))}
+                            </div>
+                            <label className="block text-xs text-slate-500 mt-3 mb-1">Fallback (quando o primario da 429/timeout)</label>
+                            <input
+                                type="text"
+                                placeholder="vazio = default do servidor (MiniMax-M3)"
+                                value={config.coderFallbackModel ?? ''}
+                                onChange={(e) => setConfig({ ...config, coderFallbackModel: e.target.value })}
+                                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                            />
+                        </div>
+
                         {config.autoMerge && (
                             <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
                                 <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
@@ -251,6 +287,59 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                                         max={5000}
                                         value={config.dailyRoundBudget ?? 200}
                                         onChange={(e) => setConfig({ ...config, dailyRoundBudget: Math.max(10, Math.min(5000, Number(e.target.value) || 10)) })}
+                                        className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                                    />
+                                </label>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
+                                <ShieldCheck size={16} /> Escalada do coder (Claude — gasta $ real)
+                            </div>
+                            <p className="text-xs text-slate-500 mb-3">
+                                Quando o coder barato (GLM/MiniMax) empaca por QUALIDADE, o robo pode escalar 1 rodada p/ o Claude FORTE. <strong>Fable = mais capaz</strong> (~2x o custo); <strong>Opus = mais economico</strong>. O teto de custo/dia e o guarda-corpo contra gasto descontrolado (um loop de Claude sem limite queima $ irreversivel).
+                            </p>
+                            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200 mb-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={config.opusEscalationEnabled ?? false}
+                                    onChange={(e) => setConfig({ ...config, opusEscalationEnabled: e.target.checked })}
+                                    className="rounded border-slate-300"
+                                />
+                                Ligar escalada automatica (o botao Escalar manual funciona independente disto)
+                            </label>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <label className="text-xs text-slate-500 dark:text-slate-400">
+                                    Modelo da escalada auto
+                                    <select
+                                        value={config.coderEscalationModel ?? 'opus'}
+                                        onChange={(e) => setConfig({ ...config, coderEscalationModel: e.target.value })}
+                                        className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                                    >
+                                        <option value="fable">Fable (mais capaz, ~2x)</option>
+                                        <option value="opus">Opus (mais economico)</option>
+                                    </select>
+                                </label>
+                                <label className="text-xs text-slate-500 dark:text-slate-400">
+                                    Escaladas por dia (0&ndash;100)
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        max={100}
+                                        value={config.maxOpusEscalationsPerDay ?? 2}
+                                        onChange={(e) => setConfig({ ...config, maxOpusEscalationsPerDay: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                                        className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                                    />
+                                </label>
+                                <label className="text-xs text-slate-500 dark:text-slate-400">
+                                    Custo maximo por dia (USD, 0&ndash;500)
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        max={500}
+                                        value={config.maxOpusCostUsdPerDay ?? 5}
+                                        onChange={(e) => setConfig({ ...config, maxOpusCostUsdPerDay: Math.max(0, Math.min(500, Number(e.target.value) || 0)) })}
                                         className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
                                     />
                                 </label>

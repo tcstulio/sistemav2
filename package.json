@@ -31,7 +31,8 @@
     "test:coolgroove": "npx tsx scripts/coolgroove-complete-test.ts",
     "explore:pages": "npx tsx scripts/explore-all-pages.ts",
     "gc:worktrees": "npx tsx scripts/gc-worktrees.ts",
-    "gc:worktrees:dry": "npx tsx scripts/gc-worktrees.ts --dry-run"
+    "gc:worktrees:dry": "npx tsx scripts/gc-worktrees.ts --dry-run",
+    "eval:dunning": "tsx backend/src/eval/dunning.eval.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",

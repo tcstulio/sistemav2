@@ -14,10 +14,29 @@ import path from 'path';
 
 export const PROMPT_FILE = '.taskrunner-prompt.md';
 export const VISUAL_JUDGE_MARKER = 'taskrunner-visual-judge';
+/**
+ * #kill-per-slot (red-team Fable): prefixo do marcador ÚNICO por-execução injetado no comando do
+ * opencode (`[tr-run:<issue>-<ts>]`). Serve p/ (a) discriminar cada run no CommandLine e (b) — como
+ * prefixo genérico — permitir que o sweep de órfãos reconheça um coder de QUALQUER slot mesmo que o
+ * texto do prompt mude no futuro (hoje o needle do run principal é efeito colateral de citar PROMPT_FILE).
+ */
+export const RUN_MARKER_PREFIX = '[tr-run:';
+/**
+ * Needles GENÉRICOS que identificam um opencode do TaskRunner (run principal, Judge Visual, e o
+ * marcador por-run). Usados p/ matar ÓRFÃOS por CommandLine sem atingir um opencode manual de outro
+ * projeto. Fonte ÚNICA (importada por taskRunnerService, runOpencode e o GC) p/ evitar drift.
+ */
+export const OPENCODE_ORPHAN_NEEDLES = [PROMPT_FILE, VISUAL_JUDGE_MARKER, RUN_MARKER_PREFIX];
 /** Limiar padrão de alerta de disco livre: 5 GiB. */
 export const DEFAULT_DISK_THRESHOLD_BYTES = 5 * 1024 ** 3;
 
-/** Faixa de portas de preview derivadas do TaskRunner (previewPortsFor: 5174+(n%10), 3014+(n%10)). */
+/**
+ * Faixa de portas de preview do TaskRunner: frontend [5174, 5174+RANGE), backend [3014, 3014+RANGE).
+ * FONTE DA VERDADE compartilhada: o GC ceifa processos órfãos NESTA faixa (isTaskrunnerPreviewPort) e
+ * o pool/lease de portas (previewPorts.ts) aloca DENTRO dela (#1661 PR-C). A alocação virou lease
+ * por-issue (mata a colisão mod-10), mas a faixa numérica é a MESMA — por isso o GC segue alcançando
+ * qualquer órfão. Mude aqui e ambos (GC + pool) acompanham.
+ */
 export const PREVIEW_FRONTEND_PORT_BASE = 5174;
 export const PREVIEW_BACKEND_PORT_BASE = 3014;
 export const PREVIEW_PORT_RANGE = 10;

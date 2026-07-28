@@ -12,14 +12,13 @@ export const ScraperService = {
      * Search Google using Serper.dev API
      */
     searchGoogle: async (query: string): Promise<any[]> => {
+        const apiKey = config.serperApiKey || process.env.SERPER_API_KEY;
+
+        if (!apiKey) {
+            throw new Error('SERPER_API_KEY ausente — busca via Serper indisponível');
+        }
+
         try {
-            const apiKey = config.serperApiKey || process.env.SERPER_API_KEY;
-
-            if (!apiKey) {
-                log.warn("Serper API Key missing. Returning simulation.");
-                return [];
-            }
-
             const response = await axios.post(
                 'https://google.serper.dev/search',
                 { q: query, gl: 'br', hl: 'pt-br', num: 10 },

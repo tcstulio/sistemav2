@@ -55,8 +55,10 @@ export const UserDetail: React.FC<UserDetailProps> = ({
 }) => {
     const [detailTab, setDetailTab] = useState<'overview' | 'time' | 'expenses' | 'leaves' | 'team' | 'groups' | 'permissions' | 'agent'>('overview');
     const confirm = useConfirm();
-    const { currentUser } = useDolibarr();
+    const { currentUser, canDo } = useDolibarr();
     const viewerIsAdmin = currentUser?.admin === 1 || (currentUser?.admin as unknown) === '1' || (currentUser?.admin as unknown) === true;
+    // #1416 — esconde o botão de excluir usuário p/ quem não tem canDo('delete','users').
+    const canDeleteUser = canDo('delete', 'users');
 
     // Hooks for Groups Management
     const { data: allGroups } = useGroups(config);
@@ -123,7 +125,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                 </div>
                 <div className="flex items-center gap-2">
                     <button onClick={onEditUser} className="p-2 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors" title="Editar Usuário"><Edit2 size={18} /></button>
-                    {onDeleteUser && (
+                    {onDeleteUser && canDeleteUser && (
                         <button onClick={() => onDeleteUser(user.id)} className="p-2 text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 transition-colors" title="Excluir Usuário"><Trash2 size={18} /></button>
                     )}
                     <button onClick={onClose} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>

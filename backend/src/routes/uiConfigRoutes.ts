@@ -77,6 +77,21 @@ const UpdateSchema = z.object({
         maxGateFixRounds: z.number().optional(),
         maxRoundsPerTask: z.number().optional(),
         dailyRoundBudget: z.number().optional(),
+        // #1411/#1443: juiz Claude-first configurável. Sem isto, o Zod estripa o campo e o
+        // save do editor volta p/ '' (cadeia do chat). Rota valida só o tipo (string) —
+        // alinhado com o padrão actionGovernance/notificationPolicy (#1207/#1293): o cap
+        // 60 fica no service (sanitizeTaskAutomation → .slice(0, 60)), que TRUNCA em vez
+        // de rejeitar (AC#3: '>60 chars → sanitize corta pra 60 sem quebrar a validação').
+        judgeModel: z.string().optional(),
+        // #escalada-opus (PR #1497): sem listar aqui, o Zod estripa e o save do editor reseta p/ os
+        // defaults (opusEscalationEnabled=false). Faixas/clamps ficam no sanitizeTaskAutomation.
+        opusEscalationEnabled: z.boolean().optional(),
+        maxOpusEscalationsPerDay: z.number().optional(),
+        maxOpusCostUsdPerDay: z.number().optional(),
+        coderEscalationModel: z.string().optional(),
+        // Modelo do coder (primário/fallback) editável na tela; charset validado no sanitizeTaskAutomation.
+        coderModel: z.string().optional(),
+        coderFallbackModel: z.string().optional(),
     }).optional(),
     // #1207: governança de ações irreversíveis — só valida forma/tipos aqui; o sanitize real
     // (clamp de threshold, filtragem de allowlist por dígitos, etc.) fica no service.
@@ -89,6 +104,12 @@ const UpdateSchema = z.object({
     }).optional(),
     // Grupo Dolibarr p/ "Habilitar acesso ao app" (sem isto o Zod descartaria o campo e o save não persistiria).
     appAccessGroupId: z.string().max(40).optional(),
+    // #1439 — sessionId primário do WhatsApp (default global p/ scheduler). Trim + cap no service.
+    // Zod precisa declarar a chave p/ ela sobreviver ao .parse() e chegar ao sanitize.
+    whatsappPrimarySessionId: z.string().max(80).optional(),
+    // #1440 — política de fallback da sessão primária. O #1437 declarou o campo no service+sanitize mas
+    // ESQUECEU o Zod da rota → o .parse() estripava a chave e o save da política era NO-OP (bug #1443).
+    whatsappFallbackPolicy: z.enum(['fail', 'first-working']).optional(),
     // #1204: kill-switches de automações de fundo (schedulerService / alertCronService). O Zod precisa
     // declarar o objeto p/ os flags sobreviverem ao .parse() e chegarem ao service (senão são estripados).
     automationSwitches: z.object({
@@ -101,6 +122,7 @@ const UpdateSchema = z.object({
         dryRunMode: z.boolean().optional(),
         financialCommands: z.boolean().optional(),
         crmContextInjection: z.boolean().optional(),
+        whatsappEmployeeElevation: z.boolean().optional(),
     }).optional(),
     // #1293: política de notificações (cadência/quiet-hours/alertas). Sanitização final (clamp de
     // faixas, validação de HH:mm) fica no service; o Zod só declara a forma p/ os campos sobreviverem.

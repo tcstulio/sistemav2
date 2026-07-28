@@ -75,7 +75,7 @@ export function SendDocumentModal({
             const data = await res.json();
 
             if (data.success) {
-                if (data.approvalRequired) {
+                if (data.data?.approvalRequired) {
                     setResult({
                         success: true,
                         message: 'Documento adicionado à fila de aprovação. Aguarde a confirmação de um gestor.',
@@ -89,7 +89,7 @@ export function SendDocumentModal({
             } else {
                 setResult({
                     success: false,
-                    message: data.error || 'Erro ao enviar documento',
+                    message: data.error?.message || 'Erro ao enviar documento',
                 });
             }
         } catch (error: any) {

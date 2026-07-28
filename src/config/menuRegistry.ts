@@ -64,6 +64,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
             { id: 'invoices', path: '/invoices', label: 'Faturas' },
             { id: 'payments', path: '/payments', label: 'Pagamentos' },
             { id: 'tax_payments', path: '/tax_payments', label: 'Impostos e Encargos' },
+            { id: 'dunning', path: '/dunning', label: 'Cobranças (digest)' },
         ],
     },
     {

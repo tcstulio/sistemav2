@@ -7,15 +7,124 @@ import path from 'path';
 import { ScraperService } from './scraperService';
 import { logger } from '../utils/logger';
 import { isValidExternalUrl } from '../utils/urlValidation';
-import { TOOLS_PROMPT, executeTool } from './agentTools';
+import { getToolsPrompt, executeTool, getToolContext } from './agentTools';
 import { agentConfigService } from './agentConfigService';
 import { classifyTool } from '../config/actionCatalog';
 import { claimsWriteSuccess, WRITE_CLAIM_RETRY_INSTRUCTION, WRITE_CLAIM_DISCLAIMER } from '../utils/writeClaimGuard';
+import {
+    emitThinking,
+    emitToolCall,
+    emitToolResult,
+    withTurnProgress,
+} from '../agent/progressStream';
 // #1316: system prompt do Marciano centralizado em config/agentSystemPrompt.ts.
 import { MARCIANO_IDENTITY_PROMPT } from '../config/agentSystemPrompt';
+import {
+    FALLBACK_CALL_TIMEOUT_MS,
+    MAX_CHAINED_CALLS,
+    PRIMARY_CALL_TIMEOUT_MS,
+    RETRY_DEADLINE_MS,
+} from './aiJobBudget';
 export { MARCIANO_IDENTITY_PROMPT };
+export {
+    CLIENT_MAX_WAIT_MS,
+    DEADLINE_MARGIN_MS,
+    FALLBACK_CALL_TIMEOUT_MS,
+    MAX_CHAINED_CALL_DEADLINE_MS,
+    MAX_CHAINED_CALLS,
+    PRIMARY_CALL_TIMEOUT_MS,
+    RETRY_DEADLINE_MS,
+} from './aiJobBudget';
 
 const log = logger.child('AiService');
+
+// Orçamento máximo: 4 providers × (60s primário + 30s retries + 60s fallback) + 60s de margem = 11min,
+// sempre abaixo do teto de polling de 20min do cliente. Overrides de ambiente são limitados por estes tetos.
+export class DeadlineExceededError extends Error {
+    readonly code = 'deadline_exceeded';
+
+    constructor() {
+        super('deadline_exceeded');
+        this.name = 'DeadlineExceededError';
+    }
+}
+
+function assertWithinDeadline(deadlineAt?: number): void {
+    if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw new DeadlineExceededError();
+}
+
+async function awaitWithinDeadline<T>(promise: Promise<T>, deadlineAt?: number): Promise<T> {
+    if (deadlineAt === undefined) return promise;
+    assertWithinDeadline(deadlineAt);
+    const remainingMs = deadlineAt - Date.now();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<T>((_resolve, reject) => {
+                timer = setTimeout(() => reject(new DeadlineExceededError()), remainingMs);
+                timer.unref?.();
+            }),
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+// Delimitador de token do MiniMax M3: entre CADA token o modelo às vezes intercala
+// `]<]minimax[>[` (e variantes soltas). Precisa ser removido ANTES de casar o XML, senão
+// os `<invoke>`/`</PARAM>` ficam picotados. Tolerante ao `[` final opcional e à variante `<|minimax|>`.
+const MINIMAX_TOKEN_DELIM_RE = /\]<\]minimax\[>\[?|<\|minimax\|>/g;
+
+// #minimax-invoke: o MiniMax M3 emite tool-calls no formato XML estilo Anthropic/Claude:
+//   <invoke name="list_users"><search>marcus</search></invoke>
+// às vezes embrulhado no delimitador de token `]<]minimax[>[` e num wrapper <tool_call>...</tool_call>.
+// Os args vêm dos filhos: <PARAM>VALOR</PARAM> (curto) OU <parameter name="PARAM">VALOR</parameter> (Claude-XML).
+// Antes deste parser, essas calls VAZAVAM como TEXTO CRU ao usuário no WhatsApp (o parser só via JSON/GLM).
+export function parseInvokeToolCalls(text: string, max = 16): { tool: string; args: any }[] {
+    const calls: { tool: string; args: any }[] = [];
+    if (!text) return calls;
+    // 1) Limpa os delimitadores de token do MiniMax para reconstruir o XML.
+    const clean = String(text).replace(MINIMAX_TOKEN_DELIM_RE, '');
+    if (!/<invoke\b/i.test(clean)) return calls;
+
+    const coerce = (raw: string): any => {
+        const v = raw.trim();
+        if (v === '') return '';
+        if (/^-?\d+$/.test(v)) return Number(v);
+        if (v === 'true') return true;
+        if (v === 'false') return false;
+        return v;
+    };
+
+    // 2) Casa cada bloco <invoke name="NOME">...</invoke> (dotall/multiline).
+    const invokeRe = /<invoke\b[^>]*\bname\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/invoke>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = invokeRe.exec(clean)) && calls.length < max) {
+        const tool = m[1].trim();
+        const inner = m[2] || '';
+        const args: Record<string, any> = {};
+
+        // 2a) Variante Claude-XML: <parameter name="X">VALOR</parameter>
+        const paramNamedRe = /<parameter\b[^>]*\bname\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/parameter>/gi;
+        let pm: RegExpExecArray | null;
+        while ((pm = paramNamedRe.exec(inner))) {
+            args[pm[1].trim()] = coerce(pm[2]);
+        }
+
+        // 2b) Variante curta: <PARAM>VALOR</PARAM> (ignora o <parameter ...> já tratado acima).
+        const paramShortRe = /<([a-zA-Z_][\w-]*)\s*>([\s\S]*?)<\/\1>/g;
+        let sm: RegExpExecArray | null;
+        while ((sm = paramShortRe.exec(inner))) {
+            const key = sm[1].trim();
+            if (key.toLowerCase() === 'parameter') continue; // já coberto por 2a
+            if (!(key in args)) args[key] = coerce(sm[2]);
+        }
+
+        if (tool) calls.push({ tool, args });
+    }
+    return calls;
+}
 
 export function extractToolCall(text: string): { tool: string; args: any } | null {
     // Format 1: {"tool": "name", "args": {...}}  (our standard)
@@ -63,6 +172,12 @@ export function extractToolCall(text: string): { tool: string; args: any } | nul
         }
     }
 
+    // Format 4: <invoke name="...">...</invoke>  (MiniMax M3 XML, estilo Claude/Anthropic)
+    if (/<invoke\b/i.test(text)) {
+        const invokeCalls = parseInvokeToolCalls(text);
+        if (invokeCalls.length) return invokeCalls[0];
+    }
+
     return null;
 }
 
@@ -90,7 +205,36 @@ export function extractToolCalls(text: string, max = 16): { tool: string; args: 
             }
         }
     }
+    // #minimax-invoke: se os formatos JSON não acharam nada mas há XML <invoke> do MiniMax M3,
+    // parseia por lá (evita vazamento de tool-call cru no WhatsApp).
+    if (!calls.length && /<invoke\b/i.test(text)) {
+        return parseInvokeToolCalls(text, max);
+    }
     return calls;
+}
+
+// #E (red-team bot WhatsApp 2026-07-17): barra VAZAMENTO de tool-call CRU. Quando o modelo emite
+// `tool":"prepare_create_task","args":{...}}` SEM a chave inicial `{`, o extractToolCall (que exige
+// `{`) não casa, a call não é executada e o JSON iria como TEXTO ao usuário (visto no histórico do
+// dono). A assinatura do vazamento é o par tool:"nome", args: — raríssimo em prosa legítima. Deeplinks
+// de prepare_* (mensagem + URL) NÃO casam. Se detectado numa resposta final, troca por erro amigável.
+// #minimax-invoke: também reconhece o XML <invoke name="..."> e o delimitador de token do
+// MiniMax (`]<]minimax[>[`) como assinatura de vazamento. Assim, se a call por algum motivo
+// NÃO for executada, o texto cru é SUPRIMIDO (não vaza pro usuário no WhatsApp).
+const LEAKED_TOOLCALL_RE = /"?tool"?\s*:\s*"[a-z_]{3,}"\s*,\s*"?args"?\s*:|<tool_call\s*[:>]|<invoke\b[^>]*\bname\s*=|\]<\]minimax\[>/i;
+export function looksLikeLeakedToolCall(text?: string): boolean {
+    return LEAKED_TOOLCALL_RE.test(String(text || ''));
+}
+export function sanitizeFinalReply(text: string): string {
+    if (looksLikeLeakedToolCall(text)) {
+        log.warn('#E: resposta final continha tool-call CRU não-interpretado — substituída por erro amigável.');
+        return 'Tive um problema ao processar essa ação. Pode repetir o pedido, por favor?';
+    }
+    return text;
+}
+function sanitizeResult(r: GenerateReplyResult): GenerateReplyResult {
+    if (r && typeof r.text === 'string') r.text = sanitizeFinalReply(r.text);
+    return r;
 }
 
 // #1002/#1316: system prompt do Marciano — identidade concisa + regras anti-sycophancy,
@@ -204,6 +348,17 @@ export function toolCallSignature(tool: string, args: any): string {
     return `${tool}:${stableStringify(args ?? {})}`;
 }
 
+function recordChainToolExchange(state: ChainState | undefined, assistantContent: string, tool: string, args: any, result: unknown): void {
+    if (!state) return;
+    const toolCallId = `chain-tool-${state.messages.length}`;
+    state.messages.push({
+        role: 'assistant',
+        content: assistantContent,
+        tool_calls: [{ id: toolCallId, type: 'function', function: { name: tool, arguments: stableStringify(args ?? {}) } }],
+    });
+    state.messages.push({ role: 'tool', tool_call_id: toolCallId, name: tool, content: String(result) });
+}
+
 // #957/#955: teto de quantas vezes o gate de conclusão cutuca um "anuncia e para" antes de
 // desistir e forçar síntese. Substitui o "dispara no máximo 1x" do nudge lexical #954.
 export const MAX_CONCLUSION_NUDGES = 2;
@@ -255,8 +410,55 @@ export function evaluateConclusionGate(inp: ConclusionGateInput): ConclusionGate
     return { action: 'synthesize', reason: 'announce-no-nudge-budget' };
 }
 
+// #1408: opções do runner. `approvedTools` é a lista de ferramentas que o USUÁRIO já aprovou
+// explicitamente para este turno (alimenta o gate de confirmação abaixo).
+// #1499: `isAdmin` é o papel do chamador para o filtro de DEV_TOOLS (#1498) — propagado
+// EXPLICITAMENTE pela handler `runChatReply` (que já o tem do req.user.admin, normalizado
+// para boolean estrito). Quando NÃO é fornecido, o runner cai pro fallback
+// `getToolContext().isAdmin` (compat com callers legacy que já envolveram a chamada em
+// `runWithToolContext({ isAdmin })`). Quando É fornecido, é a FONTE DA VERDADE — mesmo
+// que o ctx diga admin, passar `isAdmin: false` força o prompt não-admin (defesa em
+// profundidade / testes determinísticos). A normalização final (`=== true`) é ÚNICA e
+// acontece dentro dos providers, garantindo que ambos os caminhos (options explícito e
+// ctx) recebam o MESMO tratamento — defence in depth contra tipos não-boolean (ex.:
+// `req.user.admin === '1'` / `=== 1` do Dolibarr), que nunca viram admin e nunca
+// conseguem passar pelo `getToolsPrompt` como admin.
+export interface GenerateReplyOptions {
+    provider?: string;
+    model?: string;
+    origin?: string;
+    approvedTools?: string[];
+    isAdmin?: boolean;
+    chainState?: ChainState;
+    jobId?: string;
+    deadlineAt?: number;
+    progressLifecycleManaged?: boolean;
+}
+
+// #1408: mensagem EXPLÍCITA de teto de tool-calls atingido. Antes o loop caía em síntese
+// silenciosa ao bater o teto (parecia uma resposta normal). Agora o teto interrompe com um
+// aviso claro, dizendo qual dial ajustar. Exportada para o teste de enforcement asseverar.
+export const TOOL_BUDGET_EXHAUSTED_MSG = (max: number): string =>
+    `⚠️ Limite de ferramentas atingido: este turno alcançou o teto de ${max} chamada(s) de ferramenta `
+    + `(dial \`maxToolCallsPerConversation\`) e foi interrompido para evitar loop. `
+    + `Refine o pedido ou ajuste o limite nas configurações do agente.`;
+
+/**
+ * #1408: gate de confirmação (HITL) do runner. Uma ferramenta listada em `requireConfirmationFor`
+ * (config do agente) só pode ser executada com aprovação explícita do usuário
+ * (`options.approvedTools`) OU quando o chamador é admin (bypass — uso interno/testes).
+ * Retorna a MENSAGEM de bloqueio quando a execução deve ser BARRADA, ou `null` para liberar.
+ */
+export function confirmationBlock(tool: string, approvedTools?: string[]): string | null {
+    if (!agentConfigService.requiresConfirmation(tool)) return null;
+    if (getToolContext().isAdmin === true) return null;      // bypass admin
+    if ((approvedTools || []).includes(tool)) return null;   // aprovado pelo usuário neste turno
+    return `A ferramenta "${tool}" exige confirmação humana e NÃO foi aprovada. `
+        + `Peça ao usuário para confirmar explicitamente antes de executá-la — não invente o resultado nem afirme que foi feita.`;
+}
+
 interface AIProvider {
-    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
+    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult>;
     analyzeSystem(query: string, fileContext: string, module?: string): Promise<string>;
     analyzeSentiment(text: string, module?: string): Promise<{ score: number; label: string }>;
     extractCustomerInfo(text: string, module?: string): Promise<any>;
@@ -317,28 +519,54 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
+        if (options?.jobId && !options.progressLifecycleManaged) {
+            return withTurnProgress(options.jobId, () => this.generateReply(
+                conversationHistory,
+                context,
+                imageBase64,
+                { ...options, progressLifecycleManaged: true },
+            ));
+        }
         if (!this.ai) {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
         }
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
-        const toolsPrompt = TOOLS_PROMPT;
+        // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin.
+        // #1499: `options.isAdmin` (propagado explicitamente pela handler `runChatReply`
+        // a partir do `req.user.admin` normalizado) é a FONTE DA VERDADE — quando ausente,
+        // cai pro ctx do runWithToolContext (compat com callers legacy). A normalização
+        // `=== true` é aplicada UNIFORMEMENTE nos DOIS caminhos (parênteses explícitos):
+        // sem ela, um `options.isAdmin` não-boolean (ex.: string `'1'`, número `1` do
+        // Dolibarr, objeto `{}`) seria repassado CRU a `getToolsPrompt`, vazando o filtro
+        // ou vazando DEV_TOOLS conforme a checagem interna do helper. Fazemos fail-closed
+        // AQUI, no provider — único ponto onde o admin gate é avaliado para o prompt.
+        const isAdminExplicit = (options?.isAdmin ?? getToolContext().isAdmin) === true;
+        const toolsPrompt = getToolsPrompt({ isAdmin: isAdminExplicit });
 
         let currentHistory = [...conversationHistory];
-        let currentContext = context;
+        const chainState = options?.chainState;
+        let currentContext = chainState?.context || context;
+        const updateContext = (next: string) => {
+            currentContext = next;
+            if (chainState) chainState.context = next;
+        };
+        if (chainState && !chainState.context) chainState.context = context;
         let iterations = 0;
         const MAX_ITERATIONS = 5;
-        const seenToolCalls = new Set<string>();
+        const seenToolCalls = chainState?.seenToolCalls ?? new Set<string>();
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
         while (iterations < MAX_ITERATIONS) {
+            emitThinking(options?.jobId, 'iteration', iterations);
 
             // Format history
-            const historyText = currentHistory.map(msg =>
-                `${msg.role.toUpperCase()}: ${msg.parts}`
-            ).join('\n');
+            const historyText = [
+                ...currentHistory.map(msg => `${msg.role.toUpperCase()}: ${msg.parts}`),
+                ...(chainState?.messages ?? []).map(msg => `${String(msg.role || 'assistant').toUpperCase()}: ${msg.content || stableStringify(msg.tool_calls || '')}`),
+            ].join('\n');
 
             const agentPrompt = agentConfigService.getSystemPrompt();
             const prompt = `
@@ -389,6 +617,7 @@ class GoogleProvider implements AIProvider {
             const toolCall = extractToolCall(textResponse);
 
             if (toolCall) {
+                let progressToolStarted = false;
                 try {
                     log.info(`Tool Call: ${toolCall.tool}`, toolCall.args);
 
@@ -397,30 +626,47 @@ class GoogleProvider implements AIProvider {
                         // #957: duplicata não aborta o turno — avisa o modelo e segue (deixa
                         // variar os parâmetros ou concluir). O teto MAX_ITERATIONS garante término.
                         log.warn(`GoogleProvider: tool call duplicada ignorada (turno continua): ${callSig}`);
-                        currentContext += `\n\n[SISTEMA] Você já chamou ${toolCall.tool} com esses mesmos argumentos. Varie os parâmetros ou responda ao usuário com o que já tem.`;
+                        updateContext(`${currentContext}\n\n[SISTEMA] Você já chamou ${toolCall.tool} com esses mesmos argumentos. Varie os parâmetros ou responda ao usuário com o que já tem.`);
                         iterations++;
                         continue;
                     }
                     seenToolCalls.add(callSig);
 
+                    // #1408: gate de confirmação (HITL) — paridade com o LocalProvider. Tools em
+                    // `requireConfirmationFor` sem aprovação/admin não executam; injeta a instrução.
+                    const confirmBlock = confirmationBlock(toolCall.tool, options?.approvedTools);
+                    if (confirmBlock) {
+                        log.warn(`GoogleProvider #1408: tool "${toolCall.tool}" exige confirmação e não foi aprovada — execução barrada.`);
+                        updateContext(`${currentContext}\n\n[CONFIRMAÇÃO NECESSÁRIA ${toolCall.tool}]: ${confirmBlock}`);
+                        iterations++;
+                        continue;
+                    }
+
+                    emitToolCall(options?.jobId, toolCall.tool, toolCall.args || {});
+                    progressToolStarted = true;
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
+                    emitToolResult(options?.jobId, toolCall.tool, toolResult);
+                    progressToolStarted = false;
 
                     // #1355: encerra o turno SÓ com deeplink real (?prefill=) — ver LocalProvider.
                     if (String(toolCall.tool).startsWith('prepare_') && /\?prefill=/.test(String(toolResult))) {
                         return { text: toolResult, usage: accUsage, contextWindow: ctxWindow };
                     }
 
-                    currentContext += `\n\n[DADOS OBTIDOS VIA ${toolCall.tool}]:\n${toolResult}\n`;
+                    recordChainToolExchange(chainState, textResponse, toolCall.tool, toolCall.args || {}, toolResult);
+                    updateContext(`${currentContext}\n\n[DADOS OBTIDOS VIA ${toolCall.tool}]:\n${toolResult}\n`);
 
                     iterations++;
                     continue;
 
                 } catch (e: any) {
+                    if (progressToolStarted) emitToolResult(options?.jobId, toolCall.tool, e, false);
                     if (e.name === 'AskUserInterrupt') {
                         return { text: e.question, usage: accUsage, contextWindow: ctxWindow };
                     }
                     log.error("Tool execution failed", e);
-                    currentContext += `\n\n[ERRO NA EXECUÇÃO]: ${e.message}\n`;
+                    recordChainToolExchange(chainState, textResponse, toolCall.tool, toolCall.args || {}, `[ERRO]: ${e.message}`);
+                    updateContext(`${currentContext}\n\n[ERRO NA EXECUÇÃO]: ${e.message}\n`);
                     iterations++;
                     continue;
                 }
@@ -1021,14 +1267,22 @@ export class LocalProvider implements AIProvider {
     // fallback, com esperas 2s→4s→8s... até o DEADLINE de re-tentativas. Não é um loop infinito:
     // quando o deadline estoura, desiste e passa para o fallback (se houver) ou lança.
     // Não toca o fallback em erro não-recuperável (4xx exceto 429, JSON inválido, etc.).
-    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
+    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string; deadlineAt?: number }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
         const buildBody = (model: string) => ({ model, messages, temperature });
         const primaryModel = options?.model || this.modelName;
         const origin = options?.origin;
-        const primaryTimeoutMs = config.llmPrimaryTimeoutMs ?? 180000;
-        const retryDeadlineMs = config.llmRetryDeadlineMs ?? 60000;
+        const configuredPrimaryTimeoutMs = config.llmPrimaryTimeoutMs ?? PRIMARY_CALL_TIMEOUT_MS;
+        const configuredRetryDeadlineMs = config.llmRetryDeadlineMs ?? RETRY_DEADLINE_MS;
+        const primaryTimeoutMs = Math.max(1, Math.min(configuredPrimaryTimeoutMs, PRIMARY_CALL_TIMEOUT_MS));
+        const retryDeadlineMs = Math.max(0, Math.min(configuredRetryDeadlineMs, RETRY_DEADLINE_MS));
         const retryDeadline = Date.now() + retryDeadlineMs;
         const t0 = Date.now();
+        const requestTimeout = (capMs: number) => {
+            assertWithinDeadline(options?.deadlineAt);
+            return options?.deadlineAt === undefined
+                ? capMs
+                : Math.max(1, Math.min(capMs, options.deadlineAt - Date.now()));
+        };
 
         let primaryErr: any;
         let retryDelay = 2000; // backoff inicial: 2s
@@ -1036,11 +1290,14 @@ export class LocalProvider implements AIProvider {
         // Tenta o primário com backoff exponencial dentro do deadline.
         while (true) {
             try {
-                const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: primaryTimeoutMs });
+                const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: requestTimeout(primaryTimeoutMs) });
                 clearQuotaExhausted(); // sucesso -> cota OK
                 llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: true, latencyMs: Date.now() - t0, origin, totalTokens: r.data?.usage?.total_tokens });
                 return { data: r.data, modelUsed: primaryModel, fellBack: false };
             } catch (err: any) {
+                if (err instanceof DeadlineExceededError || (options?.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
+                    throw new DeadlineExceededError();
+                }
                 primaryErr = err;
                 // Erro não-recuperável (400/401/403 etc.): não tenta fallback, lança imediatamente.
                 if (!this.isRetryableError(err)) {
@@ -1050,12 +1307,13 @@ export class LocalProvider implements AIProvider {
                 }
 
                 const reason = err?.response?.status || err?.code || err?.message || 'erro';
+                assertWithinDeadline(options?.deadlineAt);
                 const remaining = retryDeadline - Date.now();
 
                 if (remaining > retryDelay) {
                     // Ainda há tempo dentro do deadline — aguarda backoff e tenta de novo.
                     log.warn(`LLM primário (${this.modelName}) falhou [${reason}] — backoff ${retryDelay}ms (deadline restante: ${Math.round(remaining / 1000)}s)`);
-                    await new Promise((res) => setTimeout(res, retryDelay));
+                    await awaitWithinDeadline(new Promise<void>((res) => setTimeout(res, retryDelay)), options?.deadlineAt);
                     retryDelay = Math.min(retryDelay * 2, 32000); // cap em 32s
                 } else {
                     // Deadline esgotado: passa para fallback (se houver) ou lança.
@@ -1077,12 +1335,16 @@ export class LocalProvider implements AIProvider {
         if (this.fallbackConfig!.apiKey) fbHeaders['Authorization'] = `Bearer ${this.fallbackConfig!.apiKey}`;
         const tFb = Date.now();
         try {
-            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: primaryTimeoutMs });
+            assertWithinDeadline(options?.deadlineAt);
+            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: requestTimeout(FALLBACK_CALL_TIMEOUT_MS) });
             log.info(`LLM fallback OK: ${this.fallbackConfig!.model} respondeu no lugar de ${this.modelName}`);
             clearQuotaExhausted(); // fallback respondeu -> ainda há cota (no MiniMax)
             llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: true, latencyMs: Date.now() - tFb, origin, errorDetail: `primário ${primaryModel}: ${this.errDetail(primaryErr)}`.slice(0, 300), totalTokens: resp.data?.usage?.total_tokens });
             return { data: resp.data, modelUsed: this.fallbackConfig!.model, fellBack: true };
         } catch (fbErr: any) {
+            if (fbErr instanceof DeadlineExceededError || (options?.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
+                throw new DeadlineExceededError();
+            }
             // Ambos falharam: se qualquer um foi erro de cota, sinaliza esgotamento GLOBAL.
             if (isQuotaError(this.errDetail(fbErr)) || isQuotaError(this.errDetail(primaryErr))) {
                 markQuotaExhausted(`primário+fallback esgotados — ${this.errDetail(fbErr)}`);
@@ -1124,26 +1386,56 @@ export class LocalProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
-        const toolsPrompt = TOOLS_PROMPT;
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
+        if (options?.jobId && !options.progressLifecycleManaged) {
+            return withTurnProgress(options.jobId, () => this.generateReply(
+                conversationHistory,
+                context,
+                imageBase64,
+                { ...options, progressLifecycleManaged: true },
+            ));
+        }
+        // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin (defesa em profundidade:
+        // executeTool TAMBÉM recusa, mesmo com prompt injetado).
+        // #1499: `options.isAdmin` é a FONTE DA VERDADE — quando ausente, cai pro ctx
+        // do runWithToolContext (compat com callers legacy). A normalização `=== true`
+        // é aplicada UNIFORMEMENTE nos DOIS caminhos (parênteses explícitos): sem ela,
+        // um `options.isAdmin` não-boolean (ex.: string `'1'`, número `1` do Dolibarr,
+        // objeto `{}`) seria repassado CRU a `getToolsPrompt`, vazando o filtro ou
+        // vazando DEV_TOOLS. Fail-closed no provider — admin gate avaliado em UM ponto.
+        const isAdminExplicit = (options?.isAdmin ?? getToolContext().isAdmin) === true;
+        const toolsPrompt = getToolsPrompt({ isAdmin: isAdminExplicit });
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         let currentHistory = [...conversationHistory];
-        let currentContext = context;
+        const chainState = options?.chainState;
+        let currentContext = chainState?.context || context;
+        const updateContext = (next: string) => {
+            currentContext = next;
+            if (chainState) chainState.context = next;
+        };
+        if (chainState && !chainState.context) chainState.context = context;
         let iterations = 0;
-        // #956: teto de iterações (25-40; default 30) — NÃO infinito (risco de loop). Junto
-        // com o orçamento de tokens abaixo, garante que tarefas multi-lookup (cotação = achar
-        // cliente + buscar N produtos + montar proposta) completem sem cair na síntese que
-        // proíbe ferramentas. Criação em massa (prepare_create_proposal(lines)/prepare_batch_create)
-        // colapsa N escritas em 1 call — reforçado no prompt — então 30 cobre cenários pesados.
-        const MAX_ITERATIONS = Math.min(Math.max(config.agentMaxIterations ?? 30, 1), 40);
+        // #1408: teto de TOOL CALLS por conversa — agora vindo do CONFIG SERVICE
+        // (`maxToolCallsPerConversation`, editável pelo admin em runtime), NÃO mais de
+        // process.env.AGENT_MAX_ITERATIONS (que sobrevive só como override de cold-start).
+        // Junto com o orçamento de tokens (#956), garante que tarefas multi-lookup (cotação =
+        // achar cliente + buscar N produtos + montar proposta) completem sem cair na síntese que
+        // proíbe ferramentas. Criação em massa colapsa N escritas em 1 call — então o default (50)
+        // cobre cenários pesados. `toolCallsUsed` conta cada executeTool() de fato disparado.
+        const MAX_TOOL_CALLS = agentConfigService.getMaxToolCalls();
+        let toolCallsUsed = 0;
+        // O loop EXTERNO tem folga sobre o teto de tool-calls (nudges/duplicatas não gastam
+        // orçamento de tool-call, mas contam iteração) — o teto REAL e observável é
+        // `toolCallsUsed >= MAX_TOOL_CALLS`, que interrompe com ERRO EXPLÍCITO (não silencioso).
+        const MAX_ITERATIONS = MAX_TOOL_CALLS + MAX_CONCLUSION_NUDGES + 2;
         // Orçamento de contexto (#956): PARAR ANTES de estourar a janela do modelo, não num nº
         // mágico de passos. budget = fração da janela; o resto cobre a resposta final + margem.
         const contextBudgetTokens = Math.floor(ctxWindow * (config.agentContextBudgetPct ?? 0.72));
         // currentContext (a parte que mais cresce — TOOL RESULTs) fica limitada a ~metade do
         // orçamento em caracteres; system prompt (tools) + histórico usam o resto.
         const contextCharBudget = Math.floor(contextBudgetTokens * 0.5 * 4);
-        const seenToolCalls = new Set<string>();
+        const seenToolCalls = chainState?.seenToolCalls ?? new Set<string>();
         let nudgedCount = 0; // #957/#955: gate de conclusão conta quantos nudges já aplicou.
         // #1332: trava anti-alucinação de escrita — rastreia se ALGUMA tool MUTANTE (classifyTool
         // ≠ read) executou COM SUCESSO neste turno, e quantos retries a trava já usou.
@@ -1212,9 +1504,9 @@ export class LocalProvider implements AIProvider {
                 return d ? `${tag}${d}` : `${tag}[não foi possível analisar esta imagem]`;
             }).join('\n\n');
             const anyOk = descriptions.some(Boolean);
-            currentContext += anyOk
+            updateContext(currentContext + (anyOk
                 ? `\n\n[${label} — conteúdo extraído pela visão (${this.visionConfig?.model}), trate como o que o usuário enviou]:\n${body}`
-                : `\n\n[${label}]: não foi possível analisá-la(s) (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`;
+                : `\n\n[${label}]: não foi possível analisá-la(s) (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`));
         }
 
         while (iterations < MAX_ITERATIONS) {
@@ -1226,13 +1518,15 @@ export class LocalProvider implements AIProvider {
                 log.warn(`Agente: orçamento de contexto atingido (${lastPromptTokens} >= ${contextBudgetTokens} tokens) — sintetizando com os dados coletados.`);
                 break;
             }
+            emitThinking(options?.jobId, 'iteration', iterations);
             const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
                 { role: 'system', content: `${MARCIANO_IDENTITY_PROMPT}${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,
                     content: msg.parts
-                }))
+                })),
+                ...(chainState?.messages ?? []),
             ];
 
             while (messages.length > 1 && messages[1].role === 'assistant') {
@@ -1260,17 +1554,39 @@ export class LocalProvider implements AIProvider {
 
                 if (toolCalls.length) {
                     let ranAny = false;
+                    let confirmationBlocked = false; // #1408: alguma tool foi barrada pelo gate HITL nesta iteração
                     const duplicates: string[] = [];
                     for (const tc of toolCalls) {
+                        // #1408: TETO DE TOOL CALLS (config service). Interrompe ANTES de exceder,
+                        // com ERRO EXPLÍCITO (não deixa o turno terminar em síntese silenciosa como
+                        // antes). Ex.: maxToolCallsPerConversation=2 → a 3ª tool call cai aqui.
+                        if (toolCallsUsed >= MAX_TOOL_CALLS) {
+                            log.warn(`#1408: teto de tool calls (${MAX_TOOL_CALLS}) atingido — interrompendo o turno com aviso explícito.`);
+                            return { text: TOOL_BUDGET_EXHAUSTED_MSG(MAX_TOOL_CALLS), usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                        }
                         const callSig = toolCallSignature(tc.tool, tc.args || {});
                         if (seenToolCalls.has(callSig)) {
                             duplicates.push(tc.tool);
                             continue; // #957: pula a duplicata (não aborta o turno)
                         }
                         seenToolCalls.add(callSig);
+                        // #1408: GATE DE CONFIRMAÇÃO (HITL). Tools em `requireConfirmationFor` só
+                        // rodam com aprovação explícita (options.approvedTools) ou por admin. Sem
+                        // aprovação: NÃO executa, injeta a instrução clara e segue (o modelo pede
+                        // a confirmação ao usuário). Sem isto o dial era teatro (nunca lido).
+                        const confirmBlock = confirmationBlock(tc.tool, options?.approvedTools);
+                        if (confirmBlock) {
+                            log.warn(`#1408: tool "${tc.tool}" exige confirmação e não foi aprovada — execução barrada.`);
+                            updateContext(`${currentContext}\n\n[CONFIRMAÇÃO NECESSÁRIA ${tc.tool}]: ${confirmBlock}`);
+                            confirmationBlocked = true;
+                            continue;
+                        }
+                        toolCallsUsed++; // #1408: só conta o que de fato vai executar
                         log.info(`Local LLM Tool Call: ${tc.tool}`, tc.args);
+                        emitToolCall(options?.jobId, tc.tool, tc.args || {});
                         try {
                             const toolResult = await executeTool(tc.tool, tc.args || {});
+                            emitToolResult(options?.jobId, tc.tool, toolResult);
                             // prepare_* (HITL) devolve deeplink e encerra o turno p/ o usuário confirmar.
                             // #1355: encerrar SÓ quando o resultado é DE FATO um deeplink (?prefill=).
                             // Antes, qualquer string de uma tool prepare_* saía direto p/ o usuário — então
@@ -1284,24 +1600,30 @@ export class LocalProvider implements AIProvider {
                             if (classifyTool(tc.tool).reversibility !== 'read' && !/confirm-action\?token=/.test(String(toolResult))) {
                                 mutantToolRan = true;
                             }
-                            currentContext += `\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`;
-                            // #956: poda de contexto — mantém o currentContext dentro do orçamento
-                            // (TOOL RESULTs antigos viram sumário; os recentes ficam inteiros).
-                            currentContext = pruneContext(currentContext, contextCharBudget, 2);
+                            recordChainToolExchange(chainState, rawContent, tc.tool, tc.args || {}, toolResult);
+                            updateContext(pruneContext(`${currentContext}\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`, contextCharBudget, 2));
                             ranAny = true;
                         } catch (e: any) {
+                            emitToolResult(options?.jobId, tc.tool, e, false);
                             if (e.name === 'AskUserInterrupt') {
                                 return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                             }
                             // erro de tool não aborta o turno — injeta e segue.
                             const detail = e?.message || String(e);
                             log.warn(`Local LLM Tool Error (injeta e continua): ${detail}`);
-                            currentContext += `\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`;
-                            currentContext = pruneContext(currentContext, contextCharBudget, 2);
+                            recordChainToolExchange(chainState, rawContent, tc.tool, tc.args || {}, `[ERRO]: ${detail}`);
+                            updateContext(pruneContext(`${currentContext}\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`, contextCharBudget, 2));
                             ranAny = true;
                         }
                     }
                     if (ranAny) {
+                        iterations++;
+                        continue;
+                    }
+                    if (confirmationBlocked) {
+                        // #1408: nada executou porque a(s) tool(s) exigiam confirmação. O contexto
+                        // já tem a instrução p/ o modelo pedir aprovação — segue o loop (não trata
+                        // como duplicata). O teto de iterações garante a terminação.
                         iterations++;
                         continue;
                     }
@@ -1310,7 +1632,7 @@ export class LocalProvider implements AIProvider {
                     // ferramenta repetida e dá ao modelo outra chance de variar os parâmetros ou
                     // concluir. O teto MAX_ITERATIONS (#956) garante a terminação do loop.
                     const dupList = Array.from(new Set(duplicates)).join(', ') || 'a ferramenta';
-                    currentContext += `\n\n[SISTEMA] Você já chamou ${dupList} com esses mesmos argumentos. Varie os parâmetros (ex.: outro termo de busca, outro filtro) ou, se já tem dados suficientes, responda ao usuário com o que já coletou.`;
+                    updateContext(`${currentContext}\n\n[SISTEMA] Você já chamou ${dupList} com esses mesmos argumentos. Varie os parâmetros (ex.: outro termo de busca, outro filtro) ou, se já tem dados suficientes, responda ao usuário com o que já coletou.`);
                     iterations++;
                     continue;
                 }
@@ -1327,7 +1649,7 @@ export class LocalProvider implements AIProvider {
                 });
                 if (gate.action === 'nudge') {
                     nudgedCount++;
-                    currentContext += `\n\n[SISTEMA] Sua resposta anterior apenas ANUNCIOU uma ação ("${reply.slice(0, 160).replace(/\s+/g, ' ')}") mas NÃO executou ferramenta nem entregou uma resposta final. Decida AGORA: (a) se precisa de dados, emita o JSON {"tool":"nome","args":{...}} — nada de texto antes; (b) se já tem o suficiente, responda DIRETAMENTE ao usuário, sem apenas anunciar.`;
+                    updateContext(`${currentContext}\n\n[SISTEMA] Sua resposta anterior apenas ANUNCIOU uma ação ("${reply.slice(0, 160).replace(/\s+/g, ' ')}") mas NÃO executou ferramenta nem entregou uma resposta final. Decida AGORA: (a) se precisa de dados, emita o JSON {"tool":"nome","args":{...}} — nada de texto antes; (b) se já tem o suficiente, responda DIRETAMENTE ao usuário, sem apenas anunciar.`);
                     iterations++;
                     continue;
                 }
@@ -1341,7 +1663,7 @@ export class LocalProvider implements AIProvider {
                 // não é entregue: 1 retry com instrução dura; persistindo, disclaimer prefixado.
                 const guarded = guardWriteClaim(reply);
                 if (guarded.retry) {
-                    currentContext += `\n\n${WRITE_CLAIM_RETRY_INSTRUCTION}`;
+                    updateContext(`${currentContext}\n\n${WRITE_CLAIM_RETRY_INSTRUCTION}`);
                     iterations++;
                     continue;
                 }
@@ -1372,6 +1694,7 @@ export class LocalProvider implements AIProvider {
             while (finalMessages.length > 1 && finalMessages[1].role === 'assistant') {
                 finalMessages.splice(1, 1);
             }
+            emitThinking(options?.jobId, 'synthesis', iterations);
             const { data: finalData, modelUsed: finalModel, fellBack: finalFellBack } = await this.postChatCompletion(finalMessages, 0.3, options);
             accumulate(finalData?.usage);
             let finalText = stripReasoning(finalData?.choices?.[0]?.message?.content || '');
@@ -1863,6 +2186,38 @@ export interface ChainState {
 /** Opções de runWithChain (#1010): semente de estado para retomar uma cadeia. */
 export interface RunWithChainOptions {
     initialState?: Partial<ChainState>;
+    deadlineAt?: number;
+}
+
+export class UnrecoverableChainError extends Error {
+    public readonly reason: string;
+
+    constructor(reason: string, message?: string) {
+        super(message || reason);
+        this.name = 'UnrecoverableChainError';
+        this.reason = reason;
+    }
+}
+
+const UNRECOVERABLE_CHAIN_ERROR_PATTERN = /(?:schema|malformed|corrupt(?:ed|ion)?|corrompid[ao]|invalid[_\s-](?:message|payload|format|schema|request)|mensagem\s+inv[aá]lid[ao]|unexpected token|unprocessable)/i;
+const TRANSIENT_CHAIN_ERROR_CODES = new Set(['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED']);
+
+function getChainResetReason(err: any, detail: string): string | null {
+    if (err instanceof UnrecoverableChainError) return err.reason || err.message || detail;
+    if (err?.unrecoverable === true) return err?.reason || err?.message || detail;
+
+    const status = Number(err?.response?.status);
+    const code = String(err?.code || '').toUpperCase();
+    const isTransient = status === 429
+        || (status >= 500 && status < 600)
+        || TRANSIENT_CHAIN_ERROR_CODES.has(code)
+        || /(?:timeout|timed out)/i.test(detail);
+    if (isTransient) return null;
+
+    if (status === 400 || status === 422 || UNRECOVERABLE_CHAIN_ERROR_PATTERN.test(detail)) {
+        return err?.reason || err?.message || detail;
+    }
+    return null;
 }
 
 /**
@@ -1887,7 +2242,8 @@ async function runWithChain<T>(
     exec: (provider: string, state: ChainState) => Promise<T>,
     opts?: RunWithChainOptions,
 ): Promise<T> {
-    const chain = _configService.getFallbackChain(moduleName);
+    const chain = _configService.getFallbackChain(moduleName).slice(0, MAX_CHAINED_CALLS);
+    const deadlineAt = opts?.deadlineAt;
     // #1010: estado acumulado, levado entre trocas de provider. Objeto mutável
     // compartilhado por referência — mutações antes de uma falha persistem.
     const state: ChainState = {
@@ -1897,16 +2253,22 @@ async function runWithChain<T>(
     };
     let lastErr: any;
     let activeIndex = -1;
+    let resumePending = false;
 
     for (let i = 0; i < chain.length; i++) {
+        assertWithinDeadline(deadlineAt);
         const provider = chain[i];
         if (!llmHealthService.isAvailable(provider)) {
             log.warn(`runWithChain[${moduleName}]: provider '${provider}' em cooldown — pulando.`);
             continue;
         }
+        if (resumePending) {
+            log.info(`runWithChain[${moduleName}]: chain resumed with ${state.messages.length} messages, ${state.seenToolCalls.size} tool calls seen`);
+            resumePending = false;
+        }
         log.debug(`runWithChain[${moduleName}]: tentando provider '${provider}' (messages.length=${state.messages.length}, seenToolCalls=${state.seenToolCalls.size}).`);
         try {
-            const result = await exec(provider, state);
+            const result = await awaitWithinDeadline(Promise.resolve(exec(provider, state)), deadlineAt);
             llmHealthService.recordSuccess(provider);
             activeIndex = i;
             // Registra encerramento da cadeia (aditivo ao log individual do provider)
@@ -1924,6 +2286,11 @@ async function runWithChain<T>(
             } catch { /* observabilidade não quebra chamada */ }
             return result;
         } catch (err: any) {
+            if (err instanceof DeadlineExceededError || (deadlineAt !== undefined && Date.now() >= deadlineAt)) {
+                lastErr = new DeadlineExceededError();
+                log.warn(`runWithChain[${moduleName}]: deadline global excedido — cadeia interrompida.`);
+                break;
+            }
             const detail = err?.response
                 ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data || '').slice(0, 200)}`
                 : (err?.code || err?.message || String(err));
@@ -1934,9 +2301,17 @@ async function runWithChain<T>(
                 llmHealthService.recordTransientError(provider, err);
             }
             lastErr = err;
-            // #1010: preserva o estado acumulado (messages/seenToolCalls/contexto)
-            // para o próximo provider — NÃO reinicia a cadeia do zero.
-            log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo (preservando ${state.messages.length} mensagens, ${state.seenToolCalls.size} tool_call(s) já vista(s)).`);
+
+            const resetReason = getChainResetReason(err, detail);
+            if (resetReason) {
+                state.messages.length = 0;
+                state.seenToolCalls.clear();
+                state.context = '';
+                log.warn(`runWithChain[${moduleName}]: chain reset: ${String(resetReason).slice(0, 200)}`);
+            } else {
+                log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — estado preservado para fallback.`);
+            }
+            resumePending = true;
         }
     }
 
@@ -2016,7 +2391,14 @@ export const aiService = {
         return [];
     },
 
-    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat') => {
+    // #1499: `isAdmin` é o papel do chamador para o filtro de DEV_TOOLS (#1498). Propagado
+    // EXPLICITAMENTE pela handler `runChatReply` (`req.user.admin` já normalizado para
+    // boolean estrito por lá). Quando ausente, cada provider cai pro fallback
+    // `getToolContext().isAdmin` (compat com callers legacy que já envolviam em
+    // runWithToolContext). A normalização final (`=== true`) é responsabilidade do
+    // provider — UNIFORME nos dois caminhos (options explícito e ctx), fail-closed
+    // contra qualquer valor não-boolean (`'1'`, `1`, `{}`, etc.).
+    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean, jobId?: string, livenessExpiresAt?: string) => withTurnProgress(jobId, async () => {
         // Injeta o endereço público (cloudflared) no contexto -> o agente sabe responder "qual o endereço de acesso?".
         try {
             const tunnelUrl = require('./tunnelService').tunnelService.getUrl();
@@ -2024,18 +2406,20 @@ export const aiService = {
         } catch { /* ignore */ }
 
         const configService = _configService;
+        const parsedDeadlineAt = livenessExpiresAt ? Date.parse(livenessExpiresAt) : NaN;
+        const deadlineAt = Number.isFinite(parsedDeadlineAt) ? parsedDeadlineAt : undefined;
 
         if (configService.isRunWithChainEnabled()) {
-            return runWithChain(moduleName, (providerName) => {
+            return runWithChain(moduleName, (providerName, state) => {
                 const moduleConfig = configService.getModuleConfig(moduleName);
                 const modelName = moduleConfig.model;
                 let specificProvider = getProvider(providerName);
                 if (imageBase64 && !providerSupportsVision(specificProvider)) {
                     const mm = getMultimodalProvider();
-                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName });
+                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, chainState: state, jobId, deadlineAt, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
                 }
-                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName });
-            });
+                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, chainState: state, jobId, deadlineAt, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
+            }, { deadlineAt });
         }
 
         const moduleConfig = configService.getModuleConfig(moduleName);
@@ -2048,13 +2432,13 @@ export const aiService = {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
-                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName });
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, jobId, deadlineAt, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
             }
             log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
         }
 
-        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName });
-    },
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, jobId, deadlineAt, progressLifecycleManaged: !!jobId }).then(sanitizeResult);
+    }),
 
     analyzeSystem: async (query: string, rootPath: string = '../src', module: string = 'system_analysis') => {
         const configService = _configService;
@@ -2170,14 +2554,16 @@ export const aiService = {
         throw new Error('draftCollectionEmail não disponível neste provider');
     },
 
-    generateSalesForecast: async (invoices: any[], context?: any, module: string = 'banking') => {
+    generateSalesForecast: async (invoices: any[], context?: any, module: string = 'banking', livenessExpiresAt?: string) => {
         const configService = _configService;
+        const parsedDeadlineAt = livenessExpiresAt ? Date.parse(livenessExpiresAt) : NaN;
+        const deadlineAt = Number.isFinite(parsedDeadlineAt) ? parsedDeadlineAt : undefined;
         if (configService.isRunWithChainEnabled()) {
             return runWithChain(module, (p) => {
                 const pr = getProvider(p);
                 if (!('generateSalesForecast' in pr && pr.generateSalesForecast)) throw new Error('generateSalesForecast indisponível');
                 return pr.generateSalesForecast!(invoices, context, module);
-            });
+            }, { deadlineAt });
         }
         const provider = getProvider();
         if ('generateSalesForecast' in provider && provider.generateSalesForecast) {

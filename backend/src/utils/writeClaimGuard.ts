@@ -19,6 +19,13 @@ const WRITE_PARTICIPLES = [
     'validad', 'criad', 'enviad', 'atualizad', 'excluid', 'excluíd', 'deletad', 'removid',
     'cadastrad', 'registrad', 'gerad', 'emitid', 'aprovad', 'confirmad', 'salv', 'marcad',
     'convertid', 'faturad', 'cancelad', 'agendad', 'alterad', 'editad', 'movid', 'transferid',
+    // 1ª pessoa do pretérito (red-team #1332): o LLM alucina "Cadastrei você, seu código é X"
+    // — os particípios acima NÃO casavam essa forma conjugada, então a mentira passava livre.
+    // Entradas já normalizadas (norm() tira acento): 'excluí'→'exclui'. Substring-match, então
+    // formas já cobertas por um particípio (ex.: 'emiti'⊂'emitido') são redundantes-inócuas.
+    'criei', 'cadastrei', 'validei', 'enviei', 'atualizei', 'exclui', 'registrei', 'emiti',
+    'agendei', 'gerei', 'paguei', 'confirmei', 'deletei', 'apaguei', 'faturei',
+    'cancelei', 'editei', 'alterei', 'salvei', 'marquei', 'converti',
 ];
 
 const SUCCESS_SIGNALS = [
