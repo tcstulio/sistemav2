@@ -6,6 +6,13 @@ import { safeStorage } from '../utils/safeStorage';
 
 const log = logger.child('AiService');
 
+// #envelope-fix (#1707): o backend embrulha em { success, data }. Desembrulha SE for o envelope;
+// senão devolve cru (compat com respostas não-envelopadas — sem regressão).
+function unwrap<T = any>(r: { data: any }): T {
+  const b = r?.data;
+  return (b && typeof b === 'object' && !Array.isArray(b) && 'success' in b && 'data' in b) ? b.data : b;
+}
+
 const handleAiError = (context: string, error: any): void => {
     const msg = error.response?.data?.error || error.message || 'Erro desconhecido';
     log.error(`${context}: ${msg}`);
@@ -102,7 +109,7 @@ export interface ChatJobProgress {
 async function checkJobHeartbeat(jobId: string): Promise<{ alive: boolean; lastHeartbeatMs?: number; progressPct?: number }> {
     try {
         const st = await axios.get(`${AI_JOBS_URL}/${jobId}/status`, getAuthHeaders());
-        const data: any = st.data;
+        const data: any = st.data?.data ?? st.data; // desembrulha envelope ok() se houver (defensivo)
         if (data?.alive) {
             const hbMs = data.lastHeartbeat ? new Date(data.lastHeartbeat).getTime() : Date.now();
             return { alive: true, lastHeartbeatMs: hbMs, progressPct: data.progressPct };
@@ -136,7 +143,10 @@ async function pollChatJob(jobId: string, onProgress?: (p: ChatJobProgress) => v
         let job: any;
         try {
             const st = await axios.get(`${API_URL}/jobs/${jobId}`, getAuthHeaders());
-            job = st.data;
+            // Envelope ok(): { success, data: { status, reply, ... } }. Desembrulha p/ ler
+            // job.status/job.reply/job.alive (senão job.status=undefined → nunca vê 'done' → timeout).
+            // Fallback p/ resposta não-embrulhada (compat).
+            job = st.data?.data ?? st.data;
             consecutive5xx = 0;
         } catch (pollErr: any) {
             const status = pollErr?.response?.status;
@@ -214,7 +224,7 @@ export const AiService = {
                 history: history.map(h => ({ role: 'user', parts: h })),
                 module: 'chat'
             }, getAuthHeaders());
-            return response.data.reply;
+            return unwrap(response).reply;
         } catch (error: any) {
             handleAiError('Resposta de ticket', error);
             return null;
@@ -238,7 +248,7 @@ export const AiService = {
             }, getAuthHeaders());
 
             // The backend returns a string. We attempt to parse it if the model wrapped it in code blocks or just text.
-            let reply = response.data.reply;
+            let reply = unwrap(response).reply;
             // Basic cleanup if md blocks are present
             reply = reply.replace(/```json/g, '').replace(/```/g, '').trim();
             return JSON.parse(reply);
@@ -251,7 +261,7 @@ export const AiService = {
     extractProjectInfo: async (text: string) => {
         try {
             const response = await axios.post(`${API_URL}/extract/customer`, { text }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             handleAiError('Extração de projeto', error);
             return null;
@@ -261,7 +271,7 @@ export const AiService = {
     analyzeFinancialHealth: async (data: any) => {
         try {
             const response = await axios.post(`${API_URL}/analyze/financial`, { data }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             handleAiError('Análise financeira', error);
             return "Erro ao processar análise.";
@@ -274,7 +284,7 @@ export const AiService = {
     getLatestFinancialAnalysis: async (): Promise<LatestFinancialAnalysis | null> => {
         try {
             const response = await axios.get(`${API_URL}/analyze/financial-analysis/latest`, getAuthHeaders());
-            return (response.data as LatestFinancialAnalysis | null) ?? null;
+            return (unwrap<LatestFinancialAnalysis | null>(response)) ?? null;
         } catch (error: any) {
             handleAiError('Última análise financeira', error);
             return null;
@@ -286,7 +296,7 @@ export const AiService = {
     getFinancialAnalysisAutomationConfig: async (): Promise<FinancialAnalysisAutomationConfig | null> => {
         try {
             const response = await axios.get(`${API_URL}/analyze/financial-analysis/automation-config`, getAuthHeaders());
-            return response.data as FinancialAnalysisAutomationConfig;
+            return unwrap<FinancialAnalysisAutomationConfig>(response);
         } catch (error: any) {
             log.error('Config de automação financeira', error);
             return null;
@@ -300,7 +310,7 @@ export const AiService = {
     ): Promise<FinancialAnalysisAutomationConfig | null> => {
         try {
             const response = await axios.put(`${API_URL}/analyze/financial-analysis/automation-config`, patch, getAuthHeaders());
-            return response.data as FinancialAnalysisAutomationConfig;
+            return unwrap<FinancialAnalysisAutomationConfig>(response);
         } catch (error: any) {
             log.error('Salvar config de automação financeira', error);
             return null;
@@ -317,7 +327,7 @@ export const AiService = {
                 customer: { name: customer.name, email: customer.email, id: customer.id },
                 amount: totalDue
             }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             handleAiError('Email de cobrança', error);
             return JSON.stringify({ subject: "Lembrete de Pagamento", body: "Erro ao gerar email." });
@@ -407,7 +417,7 @@ export const AiService = {
                 }
             }, { ...getAuthHeaders(), timeout: 30000 });
 
-            const jobId = start.data?.jobId;
+            const jobId = unwrap(start)?.jobId;
             if (!jobId) throw new Error('Falha ao enfileirar a previsão de vendas.');
 
             const POLL_MS = 2500;
@@ -418,7 +428,7 @@ export const AiService = {
                 let job: any;
                 try {
                     const st = await axios.get(`${API_URL}/jobs/${jobId}`, { ...getAuthHeaders(), timeout: 30000 });
-                    job = st.data;
+                    job = unwrap(st);
                 } catch (pollErr: any) {
                     if (pollErr?.response?.status === 404) throw new Error('O processamento da previsão expirou. Tente novamente.');
                     throw pollErr;
@@ -452,7 +462,7 @@ export const AiService = {
                 }))
             }, getAuthHeaders());
             // Return in the format expected by the component
-            return { text: response.data.result, logId: Date.now().toString() };
+            return { text: unwrap(response).result, logId: Date.now().toString() };
         } catch (error: any) {
             handleAiError('Análise de sentimento', error);
             return null;
@@ -462,7 +472,7 @@ export const AiService = {
     extractReceiptData: async (base64: string) => {
         try {
             const response = await axios.post(`${API_URL}/extract/receipt`, { image: base64 }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             handleAiError('Extração de recibo', error);
             return null;
@@ -472,7 +482,7 @@ export const AiService = {
     auditProposal: async (proposal: any) => {
         try {
             const response = await axios.post(`${API_URL}/audit/proposal`, { proposal }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             handleAiError('Auditoria de proposta', error);
             return null;
@@ -486,7 +496,7 @@ export const AiService = {
                 tasks: tasks.slice(0, 20),
                 invoices: invoices.slice(0, 10)
             }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             handleAiError('Auditoria de projeto', error);
             return null;
@@ -498,13 +508,13 @@ export const AiService = {
     /** Texto → URL de áudio (mp3). Lança com status 402 quando sem saldo (front usa fallback do navegador). */
     tts: async (text: string, voiceId?: string): Promise<string> => {
         const response = await axios.post(`${API_URL}/voice/tts`, { text, ...(voiceId ? { voiceId } : {}) }, { ...getAuthHeaders(), timeout: 120000 });
-        return response.data.url;
+        return unwrap(response).url;
     },
 
     listVoices: async (): Promise<{ voiceId: string; name: string }[]> => {
         try {
             const response = await axios.get(`${API_URL}/voice/voices`, getAuthHeaders());
-            return response.data.voices || [];
+            return unwrap(response).voices || [];
         } catch (error: any) {
             log.error('listVoices', error);
             return [];
@@ -514,7 +524,7 @@ export const AiService = {
     getVoiceConfig: async (): Promise<{ voiceId: string; speed: number } | null> => {
         try {
             const response = await axios.get(`${API_URL}/voice/config`, getAuthHeaders());
-            return response.data;
+            return unwrap(response);
         } catch (error: any) {
             log.error('getVoiceConfig', error);
             return null;
@@ -524,7 +534,7 @@ export const AiService = {
     updateVoiceConfig: async (patch: { voiceId?: string; speed?: number }): Promise<{ voiceId: string; speed: number } | null> => {
         try {
             const response = await axios.put(`${API_URL}/voice/config`, patch, getAuthHeaders());
-            return response.data;
+            return unwrap(response);
         } catch (error: any) {
             log.error('updateVoiceConfig', error);
             return null;
@@ -557,7 +567,11 @@ export const AiService = {
                 sessionId
             }, getAuthHeaders());
 
-            const jobId = start.data?.jobId;
+            // Envelope ok(): { success, data: { jobId, ... } }. Lê o nível certo (start.data.data),
+            // com fallback p/ resposta não-embrulhada (compat). Ler start.data.jobId (nível errado)
+            // devolvia undefined → "Falha ao enfileirar" → "Erro de conexão" (mesmo bug de envelope
+            // do #1707/#1730 numa peça não migrada).
+            const jobId = start.data?.data?.jobId ?? start.data?.jobId;
             if (!jobId) throw new Error('Falha ao enfileirar o job do assistente.');
             onJobStarted?.(jobId); // #953: componente persiste o jobId p/ retomar após F5
 
@@ -640,7 +654,7 @@ export const AiService = {
     deleteAllChatSessions: async (): Promise<number> => {
         try {
             const response = await axios.delete(`${API_URL}/sessions`, getAuthHeaders());
-            return response.data.deletedCount || 0;
+            return unwrap(response).deletedCount || 0;
         } catch (error: any) {
             handleAiError('Deletar todas as sessões', error);
             return 0;
@@ -662,7 +676,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/analyze/logs`, {
                 logs: safeLogs
             }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             handleAiError('Análise de logs', error);
             return "[]";
@@ -672,7 +686,7 @@ export const AiService = {
     analyzeApiStructure: async (json: string) => {
         try {
             const response = await axios.post(`${API_URL}/analyze-system`, { query: `Analyze this API structure: ${json}` }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             handleAiError('Análise de API', error);
             return null;
@@ -682,7 +696,7 @@ export const AiService = {
     analyzeSystem: async (query: string) => {
         try {
             const response = await axios.post(`${API_URL}/analyze-system`, { query }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             log.error('System Analysis Error', error);
             return "Erro ao analisar sistema: " + (error.response?.data?.error || error.message);
@@ -692,7 +706,7 @@ export const AiService = {
     analyzeSentiment: async (text: string) => {
         try {
             const response = await axios.post(`${API_URL}/analyze-sentiment`, { text }, getAuthHeaders());
-            return response.data;
+            return unwrap(response);
         } catch (error: any) {
             log.error('Sentiment Analysis Error', error);
             return { score: 50, label: "Error" };
@@ -702,7 +716,7 @@ export const AiService = {
     extractCustomerInfo: async (text: string) => {
         try {
             const response = await axios.post(`${API_URL}/extract/customer`, { text }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             log.error('Extraction Error', error);
             return null;
@@ -712,7 +726,7 @@ export const AiService = {
     fixApiCallWithDocs: async (failedLog: any, doc: string) => {
         try {
             const response = await axios.post(`${API_URL}/fix/api-call`, { log: failedLog }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             log.error('Fix API Error', error);
             return "Erro ao analisar log: " + (error.response?.data?.error || error.message);
@@ -722,7 +736,7 @@ export const AiService = {
     generateServiceCode: async (endpoint: string, method: string, description?: string) => {
         try {
             const response = await axios.post(`${API_URL}/generate/code`, { endpoint, method, description }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             return "Erro ao gerar código: " + (error.response?.data?.error || error.message);
         }
@@ -731,7 +745,7 @@ export const AiService = {
     transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/ogg') => {
         try {
             const response = await axios.post(`${API_URL}/transcribe-audio`, { audio: audioBase64, mimeType }, getAuthHeaders());
-            return response.data.transcription;
+            return unwrap(response).transcription;
         } catch (error: any) {
             log.error('Transcription Error', error);
             return "[Erro na transcrição]";
@@ -741,7 +755,7 @@ export const AiService = {
     analyzePdf: async (pdfBase64: string, question?: string) => {
         try {
             const response = await axios.post(`${API_URL}/analyze/pdf`, { pdf: pdfBase64, question }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             log.error('PDF Analysis Error', error);
             return "[Erro na análise do PDF]";
@@ -769,7 +783,7 @@ export const AiService = {
                 context: "You are a project manager assistant generating a work report.",
                 module: 'system_analysis'
             }, getAuthHeaders());
-            return response.data.reply;
+            return unwrap(response).reply;
         } catch (error: any) {
             log.error('Activity Report Error', error);
             return "Erro ao gerar relatório. Verifique sua conexão ou tente novamente.";
@@ -779,7 +793,7 @@ export const AiService = {
     analyzeMonthlyReport: async (data: any) => {
         try {
             const response = await axios.post(`${API_URL}/analyze/monthly-report`, { data }, getAuthHeaders());
-            return response.data.result;
+            return unwrap(response).result;
         } catch (error: any) {
             log.error('Monthly Report Analysis Error', error);
             return "Erro ao gerar análise do relatório mensal.";
@@ -823,7 +837,7 @@ export const AiService = {
 
             // The backend returns a string in 'reply'. We need to parse it if it's JSON.
             // But generate-reply returns text. We rely on the model obeying the JSON instruction.
-            return response.data.reply;
+            return unwrap(response).reply;
         } catch (error: any) {
             handleAiError('Rascunho de mensagem', error);
             return null;

@@ -4,6 +4,13 @@ import { logger } from '../utils/logger';
 
 const log = logger.child('AgentBootstrapService');
 
+// #envelope-fix (#1707): o backend embrulha em { success, data }. Desembrulha SE for o envelope;
+// senão devolve cru (compat com respostas não-envelopadas — sem regressão).
+function unwrap<T = any>(r: { data: any }): T {
+  const b = r?.data;
+  return (b && typeof b === 'object' && !Array.isArray(b) && 'success' in b && 'data' in b) ? b.data : b;
+}
+
 export interface AgentBootstrapConfig {
     enabled: boolean;
     includeTasks: boolean;
@@ -23,7 +30,7 @@ const getAuthHeaders = () => {
 export async function getAgentBootstrapConfig(): Promise<AgentBootstrapConfig | null> {
     try {
         const res = await axios.get(API_URL, getAuthHeaders());
-        return res.data as AgentBootstrapConfig;
+        return unwrap<AgentBootstrapConfig>(res);
     } catch (e: any) {
         log.warn(`Falha ao carregar bootstrap-config: ${e?.message || e}`);
         return null;
@@ -33,5 +40,5 @@ export async function getAgentBootstrapConfig(): Promise<AgentBootstrapConfig | 
 /** Atualiza a config (somente admin no backend). */
 export async function updateAgentBootstrapConfig(patch: Partial<AgentBootstrapConfig>): Promise<AgentBootstrapConfig> {
     const res = await axios.put(API_URL, patch, getAuthHeaders());
-    return res.data as AgentBootstrapConfig;
+    return unwrap<AgentBootstrapConfig>(res);
 }

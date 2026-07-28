@@ -116,8 +116,26 @@ class ChatSessionService {
     }
 
     addMessage(sessionId: string, msg: Omit<ChatSessionMessage, 'timestamp'>): ChatSessionMessage | null {
-        const session = this.data.sessions.find(s => s.id === sessionId);
-        if (!session) return null;
+        let session = this.data.sessions.find(s => s.id === sessionId);
+        if (!session) {
+            // #chat-stale-session: sessão inexistente (sessionId stale no localStorage do cliente,
+            // podada por MAX_SESSIONS, ou perdida num restart) — CRIA com esse id em vez de DESCARTAR
+            // a mensagem. O descarte silencioso (return null antigo) deixava o LLM sem turno de
+            // usuário (history vazio) → glm 400 "messages illegal" (1214) / minimax "content is
+            // empty" → cadeia inteira estoura (AggregateError) → chat MUDO.
+            session = {
+                id: sessionId,
+                userId: (msg.metadata as any)?.userId || '',
+                title: 'Nova conversa',
+                messages: [],
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                messageCount: 0,
+                lastPreview: '',
+            };
+            this.data.sessions.unshift(session);
+            this.trimSessions();
+        }
 
         const chatMsg: ChatSessionMessage = {
             ...msg,

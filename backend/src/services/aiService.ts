@@ -2412,7 +2412,13 @@ export const aiService = {
         if (configService.isRunWithChainEnabled()) {
             return runWithChain(moduleName, (providerName, state) => {
                 const moduleConfig = configService.getModuleConfig(moduleName);
-                const modelName = moduleConfig.model;
+                // #chat-fallback: cada provider da CHAIN usa o SEU modelo. `moduleConfig.model`
+                // (ex.: 'glm-5.2') é o modelo do PRIMÁRIO — forçá-lo em TODOS os providers quebrava
+                // o fallback: o minimax recebia 'glm-5.2' ("unknown model" 400) e o local também
+                // (ECONNREFUSED). Quando o glm falhava (ex.: 400/1214 "messages illegal"), a cadeia
+                // inteira estourava (AggregateError → chat mudo). Fallbacks herdam o default do
+                // próprio provider (glm→glm-5.2, minimax→MiniMax-M3, local→llama3).
+                const modelName = providerName === moduleConfig.provider ? moduleConfig.model : undefined;
                 let specificProvider = getProvider(providerName);
                 if (imageBase64 && !providerSupportsVision(specificProvider)) {
                     const mm = getMultimodalProvider();
