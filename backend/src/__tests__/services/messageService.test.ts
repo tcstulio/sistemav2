@@ -399,10 +399,28 @@ describe('MessageService.getMessageMedia (@lid fallback #1721)', () => {
         expect(r?.contentType).toBe('image/png');
     });
 
+    it('FALLBACK @lid REAL: getChatById devolve null → resolve via getContactById.getChat() (via do getMessages)', async () => {
+        // ORÁCULO DO FIX #1722: getChatById FALHA p/ @lid (era só isto que eu usava); o getMessages
+        // recupera via getContactById.getChat(). Espelhamos essa resolução no getMessageMedia.
+        const id = 'false_59936436445425@lid_ABC';
+        const found = { id: { _serialized: id }, hasMedia: true, downloadMedia: vi.fn().mockResolvedValue(media) };
+        const getChat = vi.fn().mockResolvedValue({ fetchMessages: vi.fn().mockResolvedValue([found]) });
+        const getContactById = vi.fn().mockResolvedValue({ getChat });
+        (sessionService.getClient as any).mockReturnValue({
+            getMessageById: vi.fn().mockResolvedValue(null),
+            getChatById: vi.fn().mockResolvedValue(null),   // @lid não resolve por aqui
+            getContactById,
+        });
+        const r = await messageService.getMessageMedia('s', id);
+        expect(getContactById).toHaveBeenCalledWith('59936436445425@lid'); // caiu no contato
+        expect(r?.contentType).toBe('image/png');
+    });
+
     it('não acha em lugar nenhum → null (não quebra)', async () => {
         (sessionService.getClient as any).mockReturnValue({
             getMessageById: vi.fn().mockResolvedValue(null),
             getChatById: vi.fn().mockResolvedValue({ fetchMessages: vi.fn().mockResolvedValue([]) }),
+            getContactById: vi.fn().mockResolvedValue(null),
         });
         const r = await messageService.getMessageMedia('s', 'false_5511@lid_NOPE');
         expect(r).toBeNull();

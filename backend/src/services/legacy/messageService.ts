@@ -324,36 +324,66 @@ export class MessageService {
 
     async getMessageMedia(sessionId: string, messageId: string) {
         const client = this.getClient(sessionId);
+        const dbg: string[] = [];
         try {
             // getMessageById costuma FALHAR para ids @lid (formato novo do WhatsApp Web) → retorna
             // null/lança, e o download de mídia recebida (imagem/áudio) dava "Media not found".
-            let msg: any = await Promise.resolve(client.getMessageById(messageId)).catch(() => null);
-            // Fallback @lid: acha a mensagem PELA CONVERSA (fetchMessages já funciona p/ @lid — é o
-            // que o getMessages usa) e casa pelo id serializado. É o que destrava a visão/áudio.
+            let msg: any = await Promise.resolve(client.getMessageById(messageId)).catch((e: any) => { dbg.push(`getMessageById threw: ${e?.message}`); return null; });
+            dbg.push(`primary msg=${msg ? 'found' : 'null'} hasMedia=${msg?.hasMedia}`);
+            // Fallback @lid: acha a mensagem PELA CONVERSA. Resolve o chat IGUAL ao getMessages
+            // (getChatById → getContactById.getChat()) — só getChatById falha p/ @lid. fetchMessages
+            // já funciona p/ @lid (é o que o getMessages usa). Casa pelo id serializado.
             if (!msg || !msg.hasMedia) {
                 const chatId = this.chatIdFromMessageId(messageId);
+                dbg.push(`fallback chatId=${chatId}`);
                 if (chatId) {
-                    const chat = await Promise.resolve(client.getChatById(chatId)).catch(() => null);
+                    const chat = await this.resolveChat(client, chatId);
+                    dbg.push(`chat=${chat ? 'resolved' : 'null'}`);
                     if (chat) {
-                        const msgs: any[] = await Promise.resolve(chat.fetchMessages({ limit: 50 })).catch(() => []);
+                        const msgs: any[] = await Promise.resolve(chat.fetchMessages({ limit: 50 })).catch((e: any) => { dbg.push(`fetchMessages threw: ${e?.message}`); return []; });
+                        dbg.push(`fetched=${msgs.length}`);
                         const found = msgs.find((m: any) => (m?.id?._serialized || m?.id?.$1) === messageId);
+                        dbg.push(`found=${found ? 'yes' : 'no'} foundHasMedia=${found?.hasMedia}`);
                         if (found) msg = found;
                     }
                 }
             }
             if (msg && msg.hasMedia) {
-                const media = await msg.downloadMedia();
-                if (media) {
+                const media = await Promise.resolve(msg.downloadMedia()).catch((e: any) => { dbg.push(`downloadMedia threw: ${e?.message}`); return null; });
+                dbg.push(`downloadMedia=${media ? `ok ${media.mimetype}` : 'null'}`);
+                if (media && media.data) {
                     return {
                         data: Buffer.from(media.data, 'base64'),
                         contentType: media.mimetype
                     };
                 }
             }
-        } catch (e) {
+            this.mediaDebug(messageId, dbg);
+        } catch (e: any) {
+            dbg.push(`OUTER threw: ${e?.message}`);
+            this.mediaDebug(messageId, dbg);
             log.error('Error fetching media', e);
         }
         return null;
+    }
+
+    /** Resolve o chat IGUAL ao getMessages: getChatById, e se falhar (ex.: @lid) getContactById.getChat(). */
+    private async resolveChat(client: any, chatId: string): Promise<any> {
+        const formatted = this.formatChatId(chatId);
+        let chat = await Promise.resolve(client.getChatById(formatted)).catch(() => null);
+        if (!chat) {
+            const contact = await Promise.resolve(client.getContactById(formatted)).catch(() => null);
+            if (contact) chat = await Promise.resolve(contact.getChat()).catch(() => null);
+        }
+        return chat;
+    }
+
+    /** Diagnóstico best-effort do download de mídia (o pino vai p/ stdout, não p/ arquivo legível). */
+    private mediaDebug(messageId: string, steps: string[]): void {
+        try {
+            const line = `${new Date().toISOString()} ${messageId} :: ${steps.join(' | ')}\n`;
+            fs.appendFileSync('logs/media-debug.log', line);
+        } catch { /* best-effort */ }
     }
 
     /** Extrai o chatId de um message id serializado. Ex.: "false_59936@lid_3EB0..." → "59936@lid". */
