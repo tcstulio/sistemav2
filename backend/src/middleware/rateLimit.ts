@@ -33,6 +33,25 @@ const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const ONE_MIN_MS = 60 * 1000;
 
 // =============================================
+// Chave por CLIENTE REAL (atrás do túnel Cloudflare)
+// =============================================
+/**
+ * Chave de rate-limit pelo IP do CLIENTE REAL.
+ *
+ * Atrás do túnel Cloudflare, `req.ip` vira o IP do túnel — o MESMO para TODOS os clientes.
+ * Assim o bucket vira global e um único cliente estoura o limite de todos (429 injusto; foi o
+ * que fez o modal do deeplink não abrir, ver #1728). O Cloudflare seta `CF-Connecting-IP` com o
+ * IP real do cliente e o REESCREVE na borda (o cliente não consegue forjá-lo passando pelo CF).
+ * Como o backend só é público via o túnel, confiar nesse header é seguro; fallback = `req.ip`
+ * (acesso local/direto). `ipKeyGenerator` normaliza IPv6 (exigência do express-rate-limit v7).
+ */
+export function clientIpKey(req: Request): string {
+    const cf = req.headers?.['cf-connecting-ip'];
+    const raw = (Array.isArray(cf) ? cf[0] : cf) || req.ip || 'unknown';
+    return ipKeyGenerator(String(raw));
+}
+
+// =============================================
 // Shared handler factory
 // =============================================
 
@@ -78,7 +97,7 @@ const login: RequestHandler = rateLimit({
     legacyHeaders: false,
     handler: rateLimitHandler(FIFTEEN_MIN_MS, 5, 'Too many login attempts. Please try again in 15 minutes.'),
     keyGenerator: (req: Request) => {
-        const ip = ipKeyGenerator(req.ip || 'unknown');
+        const ip = clientIpKey(req);
         const body = (req.body && typeof req.body === 'object') ? (req.body as any) : {};
         const identifier = String(
             body.email || body.login || body.username || 'anon'
@@ -101,6 +120,7 @@ const ai: RequestHandler = rateLimit({
     legacyHeaders: false,
     handler: rateLimitHandler(ONE_MIN_MS, 20, 'AI rate limit exceeded. Please wait before trying again.'),
     skip: (req: Request) => req.method === 'GET',
+    keyGenerator: clientIpKey,
 });
 
 // =============================================
@@ -114,6 +134,7 @@ const banking: RequestHandler = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     handler: rateLimitHandler(ONE_MIN_MS, 30, 'Banking rate limit exceeded. Please wait.'),
+    keyGenerator: clientIpKey,
 });
 
 // =============================================
@@ -127,6 +148,7 @@ const scheduler: RequestHandler = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     handler: rateLimitHandler(ONE_MIN_MS, 10, 'Scheduler rate limit exceeded. Please wait.'),
+    keyGenerator: clientIpKey,
 });
 
 // =============================================
@@ -141,6 +163,7 @@ const strict: RequestHandler = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     handler: rateLimitHandler(ONE_MIN_MS, 10, 'Too many requests. Please slow down.'),
+    keyGenerator: clientIpKey,
 });
 
 // =============================================
@@ -155,6 +178,7 @@ const defaultLimiter: RequestHandler = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     handler: rateLimitHandler(FIFTEEN_MIN_MS, 100, 'Rate limit exceeded. Please try again later.'),
+    keyGenerator: clientIpKey,
 });
 
 // =============================================
@@ -170,6 +194,7 @@ const sync: RequestHandler = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     handler: rateLimitHandler(ONE_MIN_MS, 30, 'Sync rate limit exceeded. Please wait before retrying.'),
+    keyGenerator: clientIpKey,
 });
 
 // =============================================

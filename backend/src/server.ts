@@ -29,7 +29,7 @@ import { healthLimiter } from './middleware/healthRateLimiter';
 // e divergindo no formato de resposta (message vs handler→errorHandler envelope). O preset
 // `ai` usa handler que delega ao errorHandler global, produzindo o envelope padronizado
 // { success:false, error:{ code:'RATE_LIMIT', message, details:{retryAfter,limit} } }.
-import { rateLimiters } from './middleware/rateLimit';
+import { rateLimiters, clientIpKey } from './middleware/rateLimit';
 
 const app = express();
 
@@ -109,6 +109,10 @@ const globalLimiter = rateLimit({
     message: { error: 'Too many requests. Please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
+    // Chave pelo IP do CLIENTE REAL (CF-Connecting-IP). Atrás do túnel, req.ip é o IP do túnel
+    // (mesmo p/ todos) → os 500/15min viravam um bucket global compartilhado. Agora cada cliente
+    // tem o seu. Ver clientIpKey em middleware/rateLimit.ts.
+    keyGenerator: clientIpKey,
     // Isenta o RESOLVE de deeplink (GET /api/ai/prefill) do limite global. É uma ação crítica de
     // UM clique (abrir o form pré-preenchido pelo agente), já protegida por login + token HMAC
     // assinado — logo, rate-limitá-la não agrega segurança. Sem isto, quando o orçamento por-IP

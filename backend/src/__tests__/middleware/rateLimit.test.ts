@@ -26,10 +26,25 @@ vi.mock('express-rate-limit', () => ({
     ipKeyGenerator: vi.fn((ip: string) => ip),
 }));
 
-import { rateLimiters } from '../../middleware/rateLimit';
+import { rateLimiters, clientIpKey } from '../../middleware/rateLimit';
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const ONE_MIN_MS = 60 * 1000;
+
+describe('clientIpKey (CF-Connecting-IP — chave por cliente real atrás do túnel)', () => {
+    it('usa CF-Connecting-IP quando presente (não o IP do túnel)', () => {
+        expect(clientIpKey({ headers: { 'cf-connecting-ip': '203.0.113.7' }, ip: '10.0.0.1' } as any)).toBe('203.0.113.7');
+    });
+    it('cai no req.ip quando NÃO há CF-Connecting-IP', () => {
+        expect(clientIpKey({ headers: {}, ip: '10.0.0.1' } as any)).toBe('10.0.0.1');
+    });
+    it('header em array → pega o primeiro', () => {
+        expect(clientIpKey({ headers: { 'cf-connecting-ip': ['203.0.113.7', 'x'] }, ip: '10.0.0.1' } as any)).toBe('203.0.113.7');
+    });
+    it('sem IP nenhum → "unknown" (não quebra)', () => {
+        expect(clientIpKey({ headers: {} } as any)).toBe('unknown');
+    });
+});
 
 describe('rateLimiters (#1540 infrastructure)', () => {
     beforeAll(() => {
