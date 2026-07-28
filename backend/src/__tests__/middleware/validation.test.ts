@@ -36,28 +36,35 @@ describe('validateBody', () => {
 
         validateBody(schema)(req, res, next);
 
-        expect(next).toHaveBeenCalled();
+        expect(next).toHaveBeenCalledWith();
         expect(req.body).toEqual({ name: 'John', age: 30 });
     });
 
-    it('returns 400 with validation error on invalid body', () => {
+    it('calls next(validationError) with status 400 + VALIDATION_ERROR + details on invalid body (#1540)', () => {
         const req: any = { body: { name: 123, age: 'not-a-number' } };
         const res = mockRes();
         const next = mockNext();
 
         validateBody(schema)(req, res, next);
 
-        expect(res.status).toHaveBeenCalledWith(400);
-        expect(res.json).toHaveBeenCalledWith(
-            expect.objectContaining({
-                error: 'Validation failed',
-                details: expect.any(Array),
-            })
-        );
-        expect(next).not.toHaveBeenCalled();
+        expect(next).toHaveBeenCalledTimes(1);
+        const err = next.mock.calls[0][0];
+        expect(err).toBeInstanceOf(Error);
+        expect(err.status).toBe(400);
+        expect(err.code).toBe('VALIDATION_ERROR');
+        expect(err.message).toBe('Validation failed');
+        expect(Array.isArray(err.details)).toBe(true);
+        expect(err.details.length).toBeGreaterThan(0);
+        err.details.forEach((d: any) => {
+            expect(d).toHaveProperty('field');
+            expect(d).toHaveProperty('message');
+        });
+        // Não escreve direto na resposta — delega ao errorHandler global (#1540).
+        expect(res.status).not.toHaveBeenCalled();
+        expect(res.json).not.toHaveBeenCalled();
     });
 
-    it('passes non-ZodError to next', () => {
+    it('passes non-ZodError to next unchanged', () => {
         const badSchema: any = {
             parse: () => {
                 throw new Error('boom');
@@ -91,24 +98,26 @@ describe('validateQuery', () => {
 
         validateQuery(schema)(req, res, next);
 
-        expect(next).toHaveBeenCalled();
+        expect(next).toHaveBeenCalledWith();
         expect(req.query).toEqual({ page: 1 });
     });
 
-    it('returns 400 with validation error on invalid query', () => {
+    it('calls next(validationError) with status 400 + VALIDATION_ERROR + details on invalid query (#1540)', () => {
         const req: any = { query: {} };
         const res = mockRes();
         const next = mockNext();
 
         validateQuery(schema)(req, res, next);
 
-        expect(res.status).toHaveBeenCalledWith(400);
-        expect(res.json).toHaveBeenCalledWith(
-            expect.objectContaining({
-                error: 'Invalid query parameters',
-                details: expect.any(Array),
-            })
-        );
+        expect(next).toHaveBeenCalledTimes(1);
+        const err = next.mock.calls[0][0];
+        expect(err).toBeInstanceOf(Error);
+        expect(err.status).toBe(400);
+        expect(err.code).toBe('VALIDATION_ERROR');
+        expect(err.message).toBe('Invalid query parameters');
+        expect(Array.isArray(err.details)).toBe(true);
+        expect(res.status).not.toHaveBeenCalled();
+        expect(res.json).not.toHaveBeenCalled();
     });
 
     it('passes non-ZodError to next', () => {
@@ -140,24 +149,26 @@ describe('validateParams', () => {
 
         validateParams(schema)(req, res, next);
 
-        expect(next).toHaveBeenCalled();
+        expect(next).toHaveBeenCalledWith();
         expect(req.params).toEqual({ id: 'abc' });
     });
 
-    it('returns 400 with validation error on invalid params', () => {
+    it('calls next(validationError) with status 400 + VALIDATION_ERROR + details on invalid params (#1540)', () => {
         const req: any = { params: {} };
         const res = mockRes();
         const next = mockNext();
 
         validateParams(schema)(req, res, next);
 
-        expect(res.status).toHaveBeenCalledWith(400);
-        expect(res.json).toHaveBeenCalledWith(
-            expect.objectContaining({
-                error: 'Invalid route parameters',
-                details: expect.any(Array),
-            })
-        );
+        expect(next).toHaveBeenCalledTimes(1);
+        const err = next.mock.calls[0][0];
+        expect(err).toBeInstanceOf(Error);
+        expect(err.status).toBe(400);
+        expect(err.code).toBe('VALIDATION_ERROR');
+        expect(err.message).toBe('Invalid route parameters');
+        expect(Array.isArray(err.details)).toBe(true);
+        expect(res.status).not.toHaveBeenCalled();
+        expect(res.json).not.toHaveBeenCalled();
     });
 
     it('passes non-ZodError to next', () => {

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2, History, Plus, Zap, Volume2, Square } from 'lucide-react';
 import { AiService, ChatMessage, ChatJobProgress } from '../services/aiService';
@@ -13,6 +13,7 @@ import { formatViewContext } from '../config/viewRegistry';
 import { getAgentBootstrapConfig, AgentBootstrapConfig } from '../services/agentBootstrapService';
 import { getContextUsage } from '../utils/contextUsage';
 import { AgentMarkdown } from './ui/AgentMarkdown';
+import { ChatMessages } from './chat/ChatMessages';
 // Hooks removidos: Backend processa dados via ferramentas IA
 
 const log = logger.child('VirtualAssistant');
@@ -109,6 +110,8 @@ const VirtualAssistant: React.FC = () => {
   });
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const cancelledJobsRef = useRef(new Set<string>());
   const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -131,6 +134,15 @@ const VirtualAssistant: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
+
+  const handleJobCancelled = useCallback((jobId: string, summary: string) => {
+    cancelledJobsRef.current.add(jobId);
+    setMessages(prev => [...prev, { role: 'model', text: summary }]);
+    setActiveJobId(current => current === jobId ? null : current);
+    setIsLoading(false);
+    setLastHeartbeat(null);
+    safeStorage.removeItem(VA_PENDING_JOB_KEY);
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -169,9 +181,11 @@ const VirtualAssistant: React.FC = () => {
     const pending = safeStorage.getJSON<{ jobId: string } | null>(VA_PENDING_JOB_KEY, null);
     if (!pending?.jobId) return;
     setIsLoading(true);
+    setActiveJobId(pending.jobId);
     setLastHeartbeat(Date.now());
     AiService.resumeChatJob(pending.jobId, (p: ChatJobProgress) => setLastHeartbeat(p.lastHeartbeat))
       .then((result: any) => {
+        if (cancelledJobsRef.current.has(pending.jobId)) return;
         if (result?.contextWindow) setContextWindow(result.contextWindow);
         const responseText = result?.reply;
         if (responseText) {
@@ -183,10 +197,12 @@ const VirtualAssistant: React.FC = () => {
         }
       })
       .catch(() => {
+        if (cancelledJobsRef.current.has(pending.jobId)) return;
         setMessages(prev => [...prev, { role: 'model', text: '⚠️ A resposta anterior foi interrompida ao recarregar a página. Envie a pergunta novamente, se precisar.', isError: true }]);
       })
       .finally(() => {
         setIsLoading(false);
+        setActiveJobId(current => current === pending.jobId ? null : current);
         setLastHeartbeat(null);
         safeStorage.removeItem(VA_PENDING_JOB_KEY);
       });
@@ -361,14 +377,19 @@ const VirtualAssistant: React.FC = () => {
 
     setIsLoading(true);
     setLastHeartbeat(Date.now());
+    let bootstrapJobId: string | null = null;
     try {
       const sid = await ensureSessionId('Resumo inicial');
       const pageContext = formatViewContext(location.pathname, location.search || undefined);
       const result = await AiService.chatWithData(
         buildBootstrapPrompt(cfg), [], undefined, sid || undefined, pageContext,
-        undefined,
+        (jobId) => {
+          bootstrapJobId = jobId;
+          setActiveJobId(jobId);
+        },
         (p: ChatJobProgress) => setLastHeartbeat(p.lastHeartbeat),
       );
+      if (bootstrapJobId && cancelledJobsRef.current.has(bootstrapJobId)) return;
       if ((result as any)?.contextWindow) setContextWindow((result as any).contextWindow);
       if (result?.reply) {
         setMessages([{ role: 'model', text: result.reply, usage: (result as any).usage, model: (result as any).model, fellBack: (result as any).fellBack }]);
@@ -377,6 +398,7 @@ const VirtualAssistant: React.FC = () => {
       // Mantém a saudação estática em caso de erro (degradação graciosa).
     } finally {
       setIsLoading(false);
+      if (bootstrapJobId) setActiveJobId(current => current === bootstrapJobId ? null : current);
       setLastHeartbeat(null);
     }
   };
@@ -417,6 +439,7 @@ const VirtualAssistant: React.FC = () => {
 
     setIsLoading(true);
     setLastHeartbeat(Date.now());
+    let sentJobId: string | null = null;
 
     try {
       const relevantHistory = messages.filter((m, index) => {
@@ -440,10 +463,15 @@ const VirtualAssistant: React.FC = () => {
         userMsg, relevantHistory, userImages.map(im => im.data), sid || undefined, pageContext,
         // #953: persiste o jobId assim que enfileira → se recarregar a página, o effect de
         // montagem retoma o polling e a resposta não se perde.
-        (jobId) => safeStorage.setJSON(VA_PENDING_JOB_KEY, { jobId, at: Date.now() }),
+        (jobId) => {
+          sentJobId = jobId;
+          setActiveJobId(jobId);
+          safeStorage.setJSON(VA_PENDING_JOB_KEY, { jobId, at: Date.now() });
+        },
         // #1013: atualiza o lastHeartbeat p/ o indicador "Processando... Xs".
         (p: ChatJobProgress) => setLastHeartbeat(p.lastHeartbeat),
       );
+      if (sentJobId && cancelledJobsRef.current.has(sentJobId)) return;
       const responseText = result.reply;
       // #967: usa a janela recém-retornada pelo backend (evita closure stale do estado) p/ o cálculo.
       const effectiveWindow = (result as any).contextWindow || contextWindow;
@@ -473,9 +501,12 @@ const VirtualAssistant: React.FC = () => {
         setMessages(prev => [...prev, { role: 'model', text: "Não consegui gerar uma resposta." }]);
       }
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'model', text: "Desculpe, encontrei um erro ao processar sua solicitação.", isError: true }]);
+      if (!sentJobId || !cancelledJobsRef.current.has(sentJobId)) {
+        setMessages(prev => [...prev, { role: 'model', text: "Desculpe, encontrei um erro ao processar sua solicitação.", isError: true }]);
+      }
     } finally {
       setIsLoading(false);
+      if (sentJobId) setActiveJobId(current => current === sentJobId ? null : current);
       setLastHeartbeat(null);
       safeStorage.removeItem(VA_PENDING_JOB_KEY); // #953: job concluído (ou erro) → não retomar
     }
@@ -704,16 +735,17 @@ const VirtualAssistant: React.FC = () => {
                       <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-75"></div>
                       <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-150"></div>
                     </div>
-                    {lastHeartbeat && (
-                      <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1" aria-live="polite">
-                        Processando… ({Math.max(0, Math.round((nowTick - lastHeartbeat) / 1000))}s desde último update)
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+                     {lastHeartbeat && (
+                       <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1" aria-live="polite">
+                         Processando… ({Math.max(0, Math.round((nowTick - lastHeartbeat) / 1000))}s desde último update)
+                       </div>
+                     )}
+                   </div>
+                 </div>
+               </div>
+             )}
+            {activeJobId && <ChatMessages activeJobId={activeJobId} onCancelled={handleJobCancelled} />}
+           </div>
 
           {/* Image Preview(s) — #947: miniaturas de todas as imagens anexadas */}
           {(attachedImages.length > 0 || imageProcessing) && (

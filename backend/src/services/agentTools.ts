@@ -14,6 +14,7 @@ import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
 import { isValidExternalUrl } from '../utils/urlValidation';
 import { resolveUserMobile } from '../utils/userMobile';
+import { resolveEventPeriod } from '../utils/eventPeriod';
 import { logger } from '../utils/logger';
 import { signDeeplink } from '../utils/deeplinkToken';
 import { minimaxService } from './minimaxService';
@@ -32,6 +33,8 @@ import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
 import { classifyTool } from '../config/actionCatalog';
 import { writeIdempotencyKey, getIdempotentWrite, rememberWrite } from '../utils/writeIdempotency';
 import { notificationService } from './notificationService';
+import { getReportScreenshot } from '../agent/tools/getReportScreenshot';
+import { getReportHtml } from '../agent/tools/getReportHtml';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -93,6 +96,12 @@ interface ToolContext {
      * NEGA escrita real fail-closed a não-admin (não dá p/ checar permissão sem o perfil). Ver #1514.
      */
     profileLoadFailed?: boolean;
+    /**
+     * Mídia gerada DURANTE o turno (por generate_speech/image/video/get_document_pdf) para o
+     * chamador (ex.: botService no WhatsApp) enviar NATIVAMENTE (nota de voz / anexo) além do link
+     * no texto. O caller cria o array []; as tools empurram; o caller envia após a resposta.
+     */
+    pendingMedia?: { kind: 'audio' | 'image' | 'video' | 'file'; url?: string; dataUri?: string; filename?: string; caption?: string }[];
 }
 
 const toolContextStore = new AsyncLocalStorage<ToolContext>();
@@ -180,7 +189,7 @@ const TOOLS_PROMPT_FULL = `
         16. list_warehouses() - Lista estoques/armazéns.
         17. list_tasks(projectId: string) - Lista tarefas de um projeto.
         18. list_user_tasks(userId?: string) - Lista as tarefas atribuídas a um usuário. Omita userId para listar as tarefas do PRÓPRIO usuário logado ("minhas tarefas").
-        19. list_events(limit: number) - Lista eventos da agenda.
+        19. list_events(limit?, period?, date_start?, date_end?) - Lista eventos da agenda. Para "dessa semana/mês/hoje" PREFIRA period (calculado pelo servidor): 'today'|'tomorrow'|'this_week'|'next_week'|'this_month'|'next_month'. Ou date_start/date_end em YYYY-MM-DD para intervalo específico. Sem filtro = mais recentes.
         20. list_contacts(search: string) - Lista contatos (pessoas de contato).
         21. list_categories(type: string) - Lista categorias (customer, product, etc).
         22. list_suppliers(search: string) - Lista fornecedores.
@@ -305,6 +314,10 @@ const TOOLS_PROMPT_FULL = `
 
         FERRAMENTA DE AJUDA DE TELA:
         93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
+
+        FERRAMENTAS DE CONTEXTO VISUAL DE REPORTS:
+        122. get_report_screenshot(reportId) - Busca o print PNG de um report e devolve um link assinável temporário, válido por 1 hora. Use quando o usuário descrever um problema visual. Exemplo: peça para o Marciano ver o print do report #42.
+        123. get_report_html(reportId, selector?) - Busca o HTML sanitizado de um report. selector é opcional; quando informado, devolve apenas o innerHTML do primeiro elemento correspondente ao seletor CSS. Exemplo: peça para o Marciano ver o HTML do report #42 filtrando por ".error".
 
         FERRAMENTAS DE TASK RUNNER (automação opencode):
         94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
@@ -1439,8 +1452,19 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 ).join('') + '</ul>';
         }
         case 'list_events': {
-            const events = await dolibarrService.listEvents(args?.limit);
-            if (events.length === 0) return 'Nenhum evento encontrado.';
+            // Aceita period (atalho resolvido pelo servidor) OU date_start/date_end explícitos.
+            let dateStart = args?.date_start;
+            let dateEnd = args?.date_end;
+            if (args?.period && !dateStart && !dateEnd) {
+                const range = resolveEventPeriod(String(args.period), new Date());
+                dateStart = range.dateStart;
+                dateEnd = range.dateEnd;
+            }
+            const events = await dolibarrService.listEvents(args?.limit, dateStart, dateEnd);
+            if (events.length === 0) {
+                const periodoTxt = (dateStart || dateEnd) ? ` no período informado (${dateStart || '…'} a ${dateEnd || '…'})` : '';
+                return `Nenhum evento encontrado${periodoTxt}.`;
+            }
             return '<h3>📅 Eventos</h3><ul>' +
                 events.map((e: any) =>
                     `<li><a href="/agenda/${e.id}" class="text-blue-600 underline font-semibold">${e.label}</a> — ${e.datep || ''}</li>`
@@ -1583,11 +1607,13 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'generate_speech': {
             if (!args?.text) throw new Error("Parâmetro 'text' ausente.");
             const { url } = await minimaxService.generateSpeech(String(args.text), { voiceId: args.voice_id ? String(args.voice_id) : undefined });
+            getToolContext().pendingMedia?.push({ kind: 'audio', url }); // envio nativo (nota de voz) pelo caller
             return `Áudio gerado (mp3, válido ~24h): ${url}`;
         }
         case 'generate_image': {
             if (!args?.prompt) throw new Error("Parâmetro 'prompt' ausente.");
             const { urls } = await minimaxService.generateImage(String(args.prompt), { aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined });
+            urls.forEach((u: string) => getToolContext().pendingMedia?.push({ kind: 'image', url: u })); // envio nativo (anexo)
             return `Imagem gerada (válida ~24h): ${urls.join(' , ')}`;
         }
         case 'generate_video': {
@@ -1601,7 +1627,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'check_video': {
             if (!args?.task_id) throw new Error("Parâmetro 'task_id' ausente.");
             const { status, url } = await minimaxService.getVideoStatus(String(args.task_id));
-            if (url) return `Vídeo pronto (válido ~24h): ${url}`;
+            if (url) { getToolContext().pendingMedia?.push({ kind: 'video', url }); return `Vídeo pronto (válido ~24h): ${url}`; }
             if (status === 'Fail') return `A geração do vídeo (task_id ${args.task_id}) falhou.`;
             return `Vídeo ainda processando (status: ${status}). Tente novamente em instantes com o mesmo task_id.`;
         }
@@ -1689,6 +1715,14 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 log.error('create_bug_report failed', e);
                 return `Erro ao criar bug report: ${e.message}`;
             }
+        }
+
+        case 'get_report_screenshot': {
+            return getReportScreenshot(args?.reportId ?? args?.report_id);
+        }
+
+        case 'get_report_html': {
+            return getReportHtml(args?.reportId ?? args?.report_id, args?.selector);
         }
 
         case 'get_screen_help': {
@@ -1997,7 +2031,9 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 const base64 = pdf.toString('base64');
                 const typeLabels: Record<string, string> = { invoice: 'Fatura', order: 'Pedido', proposal: 'Proposta', supplier_order: 'Pedido fornecedor', supplier_invoice: 'Fatura fornecedor', intervention: 'Intervenção', contract: 'Contrato', shipment: 'Expedição' };
                 const label = typeLabels[entityType] || entityType;
-                return `PDF da ${label} #${entityId} obtido com sucesso (${pdf.length} bytes). Base64: ${base64.substring(0, 100)}...[truncado, ${base64.length} chars total]. Para download: GET /api/documents/${entityType}/${entityId}/pdf`;
+                // envio nativo do PDF como anexo (pelo caller); o base64 NÃO precisa mais ir no texto.
+                getToolContext().pendingMedia?.push({ kind: 'file', dataUri: `data:application/pdf;base64,${base64}`, filename: `${label}_${entityId}.pdf`, caption: `${label} #${entityId}` });
+                return `PDF da ${label} #${entityId} obtido (${pdf.length} bytes) — enviando o arquivo em anexo. Também disponível em: GET /api/documents/${entityType}/${entityId}/pdf`;
             } catch (e: any) {
                 return `Erro ao obter PDF de ${entityType} #${entityId}: ${e.message || e}`;
             }

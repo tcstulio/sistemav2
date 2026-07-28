@@ -1023,4 +1023,21 @@ describe('AiService', () => {
             });
         });
     });
+
+    describe('controles de job do chat', () => {
+        it('envia cancelamento para o job ativo', async () => {
+            mockAxios.post.mockResolvedValue({ data: { success: true } });
+            await expect(AiService.cancelChatJob('job 1')).resolves.toBe(true);
+            expect(mockAxios.post).toHaveBeenCalledWith('/api/chat/jobs/job%201/cancel', {}, expect.any(Object));
+        });
+
+        it('envia a visibilidade e não propaga falhas', async () => {
+            mockAxios.post.mockResolvedValueOnce({ data: { success: true } });
+            await expect(AiService.notifyChatJobVisibility('job-2', true)).resolves.toBe(true);
+            expect(mockAxios.post).toHaveBeenCalledWith('/api/chat/jobs/job-2/visibility', { hidden: true }, expect.any(Object));
+
+            mockAxios.post.mockRejectedValueOnce(new Error('offline'));
+            await expect(AiService.notifyChatJobVisibility('job-2', false)).resolves.toBe(false);
+        });
+    });
 });

@@ -11,7 +11,7 @@
  * `executeTool` (espião), dirigindo as respostas do LLM via axios. Assim o teste isola o
  * comportamento do RUNNER dado o config — que é exatamente o critério de aceite da issue.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 
 vi.mock('@google/genai', () => ({
@@ -83,6 +83,11 @@ vi.mock('../../services/scraperService', () => ({
 }));
 
 import { LocalProvider, TOOL_BUDGET_EXHAUSTED_MSG } from '../../services/aiService';
+import {
+    ProgressStream,
+    __resetProgressStreamForTesting,
+    __setProgressStreamForTesting,
+} from '../../agent/progressStream';
 
 /** Faz o axios devolver, em sequência, os conteúdos de `replies` (o resto repete o último). */
 function scriptLlm(replies: string[]) {
@@ -218,5 +223,68 @@ describe('#1408 — enforcement de requireConfirmationFor (gate de aprovação) 
         await provider.generateReply(user, 'ctx');
 
         expect(executeToolMock).toHaveBeenCalledWith('deleteInvoice', { id: 5 });
+    });
+});
+
+describe('#1574 — streaming no loop real do LocalProvider', () => {
+    let stream: ProgressStream;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dialState.maxToolCalls = 50;
+        dialState.requireConfirmationFor = [];
+        toolState.isAdmin = false;
+        executeToolMock.mockResolvedValue('RESULTADO OK');
+        stream = new ProgressStream({ ttlMs: 60_000, autoCleanupIntervalMs: 0 });
+        __setProgressStreamForTesting(stream);
+    });
+
+    afterEach(() => {
+        __resetProgressStreamForTesting();
+    });
+
+    it('emite thinking, tool_call, tool_result, text_delta e done no provider de produção', async () => {
+        scriptLlm([
+            '{"tool":"list_users","args":{"search":"ana"}}',
+            'Encontrei os dados solicitados.',
+        ]);
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply(user, 'ctx', undefined, { jobId: 'job-real' });
+        const events = stream.getBuffer('job-real');
+        const eventTypes = events.map((event) => event.type);
+
+        expect(result.text).toBe('Encontrei os dados solicitados.');
+        expect(eventTypes).toEqual([
+            'thinking',
+            'thinking',
+            'tool_call',
+            'tool_result',
+            'thinking',
+            'text_delta',
+            'done',
+        ]);
+        expect(events.find((event) => event.type === 'tool_call')?.payload).toEqual({
+            name: 'list_users',
+            args: { search: 'ana' },
+        });
+        expect(events.find((event) => event.type === 'tool_result')?.payload).toEqual({
+            name: 'list_users',
+            summary: 'RESULTADO OK',
+        });
+        expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    });
+
+    it('fecha o stream com error quando o loop de produção falha', async () => {
+        (axios.post as any).mockRejectedValueOnce(new Error('llm unavailable'));
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+
+        await expect(
+            provider.generateReply(user, 'ctx', undefined, { jobId: 'job-error' }),
+        ).rejects.toThrow('llm unavailable');
+
+        const events = stream.getBuffer('job-error');
+        expect(events.map((event) => event.type)).toEqual(['thinking', 'thinking', 'error']);
+        expect(events[2].payload).toEqual({ message: 'llm unavailable' });
     });
 });

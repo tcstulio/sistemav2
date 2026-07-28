@@ -15,6 +15,7 @@ import { formatCurrency } from '../utils/formatUtils';
 import { toast } from 'sonner';
 import { logger } from '../utils/logger';
 import { notifyError } from '../utils/notifyError';
+import { sanitizeQtyInput } from '../utils/sanitizeQtyInput';
 
 const log = logger.child('SupplierList');
 
@@ -187,6 +188,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         e.preventDefault();
         if (!receptionForm.warehouseId || !receptionForm.productId) {
             toast.warning("Por favor, selecione armazém e produto");
+            return;
+        }
+        if (!Number.isFinite(receptionForm.qty)) {
+            toast.error("Quantidade inválida. Informe um número válido.");
             return;
         }
         setIsSubmittingReception(true);
@@ -495,8 +500,12 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                     <Input
                         label="Quantidade"
                         type="number"
+                        min="0"
                         value={receptionForm.qty}
-                        onChange={e => setReceptionForm({ ...receptionForm, qty: parseInt(e.target.value) })}
+                        onChange={e => setReceptionForm({
+                            ...receptionForm,
+                            qty: sanitizeQtyInput(e.target.value)
+                        })}
                         required
                     />
                 </div>

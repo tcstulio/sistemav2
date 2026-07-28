@@ -13,6 +13,20 @@ const QUOTA_MARKERS = [
   'insufficient balance',
   'too many requests',
   'quota',
+  // Esgotamento de saldo/uso do Claude (CLI local do juiz/escalada). A mensagem é
+  // "You've hit your monthly spend limit" / "usage limit reached" — NÃO casa com os
+  // marcadores acima, então sem isto o juiz contaria como erro transitório e queimaria
+  // as 3 re-tentativas → revisão humana, em vez de segurar-e-retomar quando o saldo volta.
+  'spend limit',
+  'monthly spend',
+  'usage limit',
+  // MiniMax: o 429 vem como "Token Plan usage limit reached: Upgrade your Token Plan or
+  // purchase Credits" — 'usage limit' já casa, mas 'token plan' cobre variantes sem essa
+  // frase exata. NÃO adicionamos o 1211/"unknown model" aqui de propósito: globalmente 1211
+  // é "modelo desconhecido" e classificá-lo como cota faria o robô (juiz/escalada) segurar-e-
+  // retentar para sempre num erro real de config. O bot do WhatsApp cobre o 1211 pela REDE DE
+  // SEGURANÇA (recado técnico genérico), sem sujar o estado global de cota.
+  'token plan',
   'econnaborted',
   'etimedout',
   'http 429',

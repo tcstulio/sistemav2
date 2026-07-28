@@ -524,7 +524,7 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
             toast.warning('Por favor selecione produto e armazéns');
             return;
         }
-        if (!(transferForm.qty > 0)) {
+        if (!(transferForm.qty > 0) || !Number.isFinite(transferForm.qty)) {
             toast.warning('A quantidade deve ser maior que zero');
             return;
         }
@@ -549,7 +549,7 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
             toast.warning('Por favor selecione produto e armazém');
             return;
         }
-        if (!(correctionForm.qty > 0)) {
+        if (!(correctionForm.qty > 0) || !Number.isFinite(correctionForm.qty)) {
             toast.warning('A quantidade deve ser maior que zero');
             return;
         }
@@ -692,7 +692,7 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
-                        <input type="number" min="1" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.qty} onChange={e => setTransferForm({ ...transferForm, qty: parseInt(e.target.value) })} required />
+                        <input type="number" min="1" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.qty} onChange={e => setTransferForm({ ...transferForm, qty: e.target.value === '' ? 0 : parseInt(e.target.value) || 0 })} required />
                     </div>
                 </form>
             </Modal>
@@ -743,7 +743,7 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
-                            <input type="number" min="1" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={correctionForm.qty} onChange={e => setCorrectionForm({ ...correctionForm, qty: parseInt(e.target.value) })} required />
+                            <input type="number" min="1" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={correctionForm.qty} onChange={e => setCorrectionForm({ ...correctionForm, qty: e.target.value === '' ? 0 : parseInt(e.target.value) || 0 })} required />
                         </div>
                     </div>
                     <div>

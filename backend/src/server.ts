@@ -5,17 +5,31 @@ import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
 import { createLogger } from './utils/logger';
 import { initSentry } from './utils/sentry';
+import { installCrashHandlers } from './utils/crashLog';
 
 initSentry();
+// #29 — captura a causa de crash num arquivo (backend/logs/crash.log) antes do processo morrer.
+// Nasceu do outage de 20/07 (backend ~2h fora, causa não capturada). Cedo no boot p/ pegar
+// falhas de startup também.
+installCrashHandlers();
 
 const log = createLogger('Server');
 import { config } from './config/env';
 import whatsappRoutes from './routes/whatsappRoutes';
 import schedulerRoutes from './routes/schedulerRoutes';
 import githubRoutes from './routes/githubRoutes';
+// #1561 sub-tarefa 2: endpoint dedicado de report (screenshot + html + body).
+// Reutiliza `createGitHubIssue` (utils/githubIssue.ts) — ver issueReportService.
+import issueReportRoutes from './routes/issueReportRoutes';
 import { sessionService } from './services/legacy/sessionService';
 import { schedulerService } from './services/schedulerService';
 import { healthLimiter } from './middleware/healthRateLimiter';
+// #1566: aiLimiter agora vem do middleware/rateLimit.ts (rateLimiters.ai) — single source
+// of truth. Antes era redefinido inline aqui, duplicando a config de middleware/rateLimit.ts
+// e divergindo no formato de resposta (message vs handler→errorHandler envelope). O preset
+// `ai` usa handler que delega ao errorHandler global, produzindo o envelope padronizado
+// { success:false, error:{ code:'RATE_LIMIT', message, details:{retryAfter,limit} } }.
+import { rateLimiters, clientIpKey } from './middleware/rateLimit';
 
 const app = express();
 
@@ -95,6 +109,17 @@ const globalLimiter = rateLimit({
     message: { error: 'Too many requests. Please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
+    // Chave pelo IP do CLIENTE REAL (CF-Connecting-IP). Atrás do túnel, req.ip é o IP do túnel
+    // (mesmo p/ todos) → os 500/15min viravam um bucket global compartilhado. Agora cada cliente
+    // tem o seu. Ver clientIpKey em middleware/rateLimit.ts.
+    keyGenerator: clientIpKey,
+    // Isenta o RESOLVE de deeplink (GET /api/ai/prefill) do limite global. É uma ação crítica de
+    // UM clique (abrir o form pré-preenchido pelo agente), já protegida por login + token HMAC
+    // assinado — logo, rate-limitá-la não agrega segurança. Sem isto, quando o orçamento por-IP
+    // de 500/15min esgota (agravado por clientes atrás do túnel que compartilham 1 IP), o resolve
+    // toma 429 e o MODAL do deeplink não abre (falha “silenciosa” — o dono via só a lista). O
+    // aiLimiter já pula GETs; este é o único limiter que pegava o /prefill.
+    skip: (req) => req.method === 'GET' && req.path === '/api/ai/prefill',
 });
 
 // /health rate limiter (#1415) — endpoint é PÚBLICO e isento de auth (atrás de túnel Cloudflare
@@ -108,15 +133,10 @@ const globalLimiter = rateLimit({
 // Só limita os POSTs caros (generate-reply*, analyze): os GETs em /ai/* são leves e
 // FREQUENTES — polling do job (GET /jobs/:id a cada 2.5s) e do feed (GET /agent/activity).
 // Sem o skip, um job longo estoura 20/min e derruba o chat com 429 (issue #320).
-// O limiter global (500/15min) continua cobrindo os GETs como backstop.
-const aiLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 20, // 20 AI requests per minute
-    message: { error: 'AI rate limit exceeded. Please wait before trying again.' },
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => req.method === 'GET'
-});
+// #1566: preset importado de middleware/rateLimit.ts (rateLimiters.ai) — 20/1min, skip GET,
+// handler que delega ao errorHandler (envelope padronizado). Removida a definição inline
+// duplicada; agora o teste em aiRoutes.rateLimit.test.ts valida a MESMA instância usada em prod.
+const aiLimiter = rateLimiters.ai;
 
 // Banking limiter (sensitive operations)
 const bankingLimiter = rateLimit({
@@ -127,14 +147,11 @@ const bankingLimiter = rateLimit({
     legacyHeaders: false
 });
 
-// Scheduler limiter (message scheduling)
-const schedulerLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 30,
-    message: { error: 'Scheduler rate limit exceeded. Please wait.' },
-    standardHeaders: true,
-    legacyHeaders: false
-});
+// Scheduler rate limit (#1567): aplicado direto no router `schedulerRoutes`
+// via `router.use` que pula GETs (GETs são polling leve — limitá-los quebraria
+// a UI). O preset `rateLimiters.scheduler` (10/1min, bucket por IP) está em
+// `middleware/rateLimit.ts` (single source of truth) — ver teste
+// `schedulerRoutes.test.ts` (AC #1567: 11ª chamada POST → 429).
 
 // Strict limiter for auth (login attempts)
 const authLimiter = rateLimit({
@@ -194,7 +211,8 @@ import { previewWriteGuard } from './middleware/previewWriteGuard';
 app.use('/api/dolibarr', previewWriteGuard);
 app.use('/api/dolibarr', dolibarrRoutes);
 
-app.use('/api/scheduler', schedulerLimiter, schedulerRoutes);
+// #1567 — rate-limit aplicado DENTRO do router (pula GETs); ver comentário acima.
+app.use('/api/scheduler', schedulerRoutes);
 
 import webhookRoutes from './routes/webhookRoutes';
 app.use('/api/webhook', webhookRoutes);
@@ -223,6 +241,11 @@ import centrovibeRoutes from './routes/centrovibeRoutes';
 app.use('/api/centrovibe', requireDolibarrLogin, centrovibeRoutes);
 
 import integrationRoutes from './routes/integrationRoutes';
+// #1569: limiter dedicado (30/min) para endpoints de sync — evita sobrecarga no
+// Dolibarr. Montado ANTES do router e no prefixo /sync para cobrir /sync/run,
+// /sync/:entity, etc. sem afetar as demais rotas de integração (status, brain,
+// channels). O handler do preset delega via next(error) ao errorHandler global.
+app.use('/api/integration/sync', rateLimiters.sync);
 app.use('/api/integration', integrationRoutes);
 
 import uiConfigRoutes from './routes/uiConfigRoutes';
@@ -250,6 +273,13 @@ app.use('/api/agent-actions', agentActionRoutes);
 import agentConfigRoutes from './routes/agentConfigRoutes';
 app.use('/api/agent', agentConfigRoutes); // Config IA — system prompt do Marciano (#1005)
 
+// #1575: rotas de chat (SSE de eventos + cancelamento assíncrono de job). Montadas em
+// `/api/chat` — prefixo dedicado porque o SSE consome Content-Type text/event-stream
+// (incompatível com o envelope JSON do `/api/ai/jobs`). Auth via requireDolibarrLogin
+// dentro do próprio router (mesma política dos demais endpoints do agente).
+import chatRoutes from './routes/chatRoutes';
+app.use('/api/chat', chatRoutes);
+
 import systemEventsRoutes from './routes/systemEventsRoutes';
 app.use('/api/system-events', systemEventsRoutes);
 
@@ -257,6 +287,9 @@ import simulatorRoutes from './routes/simulatorRoutes';
 app.use('/api/simulator', simulatorRoutes);
 
 app.use('/api/github', githubRoutes);
+// #1561: endpoint dedicado de report. Não compartilha router com `/api/github`
+// porque tem papel distinto (persiste screenshot/html + audit log + reportId).
+app.use('/api', issueReportRoutes);
 
 // Health Check (#1042, #1415) — verifica dependências externas via healthCheckService.
 // Rate-limit dedicado (healthLimiter) impede fan-out abusivo de chamadas externas a cada hit.
@@ -305,6 +338,10 @@ import { delegationService } from './services/delegationService';
 import { taskRunnerService } from './services/taskRunnerService';
 import { gcSchedulerService } from './services/gcSchedulerService';
 if (!IS_PREVIEW) {
+    // #wa-autorecover: sweep periódico que recupera sessões de WhatsApp STOPPED (chrome morto sem
+    // disparar 'disconnected') com auth salva — sem isto o dono ficava sem QR até um restart manual.
+    sessionService.startHealthMonitor();
+
     schedulerService.startWorker();
     log.info('SchedulerService worker started');
 
@@ -398,6 +435,7 @@ const gracefulShutdown = async (signal: string) => {
 
     // 3. Destroy WhatsApp Clients (Releases Chrome processes & Ports)
     try {
+        sessionService.stopHealthMonitor(); // #wa-autorecover: para o sweep antes de destruir
         await sessionService.destroy();
     } catch (e) {
         log.error('Error destroying WhatsApp service', e);

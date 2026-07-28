@@ -91,7 +91,7 @@ export class DolibarrService extends DolibarrServiceBase {
     removeTaskContact = (taskId: string, contactRowid: string) => this.operations.removeTaskContact(taskId, contactRowid);
     listTickets = (params?: { search?: string, limit?: number }) => this.operations.listTickets(params);
     listShipments = (search?: string) => this.operations.listShipments(search);
-    listEvents = (limit?: number) => this.operations.listEvents(limit);
+    listEvents = (limit?: number, dateStart?: string, dateEnd?: string) => this.operations.listEvents(limit, dateStart, dateEnd);
     createAgendaEvent = (data: Parameters<DolibarrOperationsService['createAgendaEvent']>[0], userKey?: string) => this.operations.createAgendaEvent(data, userKey);
     listInterventions = (search?: string) => this.operations.listInterventions(search);
     updateIntervention = (

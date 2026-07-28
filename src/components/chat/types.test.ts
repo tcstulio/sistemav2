@@ -15,6 +15,8 @@ import type {
     ChatUserStatus,
     ChatChannelType,
 } from './types';
+import { agendaEventToChatMessage } from './types';
+import type { AgendaEvent } from '../../types';
 
 describe('Chat types — ChatUser', () => {
     it('aceita o objeto mínimo (id/nome/status) e id numérico', () => {
@@ -150,6 +152,17 @@ describe('Chat types — ChatReply', () => {
         expect(reply.messageId).toBe('m1');
         expect(reply.senderId).toBe('u2');
     });
+
+    it('aceita senderName opcional para exibir no banner de resposta (#1572)', () => {
+        const reply: ChatReply = {
+            messageId: 'm1',
+            content: 'contexto',
+            senderId: 'u2',
+            senderName: 'Marina',
+            createdAt: '2024-01-02T00:00:00Z',
+        };
+        expect(reply.senderName).toBe('Marina');
+    });
 });
 
 describe('Chat types — restrições de união (compile-time via tsc)', () => {
@@ -189,5 +202,98 @@ describe('Chat types — restrições de união (compile-time via tsc)', () => {
         expect(invalidReplyTo).toBeDefined();
         expect(missingContent).toBeDefined();
         expect(missingParticipants).toBeDefined();
+    });
+});
+
+describe('Chat types — ChatMessage compat Dolibarr (#1572)', () => {
+    it('aceita campos opcionais espelhando AgendaEvent (label/description/elementtype/etc.)', () => {
+        const msg: ChatMessage = {
+            id: 'ev1',
+            content: 'Olá',
+            senderId: 'u1',
+            createdAt: '2024-01-01T00:00:00Z',
+            replyTo: null,
+            label: 'Comentário em project',
+            description: 'Olá',
+            elementtype: 'project',
+            fk_element: '42',
+            date_start: 1700000000,
+            type_code: 'AC_CHAT',
+            percentage: 100,
+            _optimistic: true,
+        };
+        expect(msg.elementtype).toBe('project');
+        expect(msg.fk_element).toBe('42');
+        expect(msg.date_start).toBe(1700000000);
+        expect(msg._optimistic).toBe(true);
+    });
+
+    it('continua permitindo o objeto mínimo (campos Dolibarr ausentes)', () => {
+        const msg: ChatMessage = {
+            id: 'm1',
+            content: 'oi',
+            senderId: 'u1',
+            createdAt: '2024-01-01',
+            replyTo: null,
+        };
+        expect(msg.description).toBeUndefined();
+        expect(msg.elementtype).toBeUndefined();
+    });
+});
+
+describe('Chat types — agendaEventToChatMessage (#1572)', () => {
+    const baseEvent: AgendaEvent = {
+        id: 'ev-42',
+        ref: 'REF',
+        label: 'Comentário em project',
+        date_start: 1700000000,
+        date_end: 1700000000,
+        type_code: 'AC_CHAT',
+        percentage: 100,
+        description: 'Hello world',
+        elementtype: 'project',
+        fk_element: '12',
+        fk_user_author: 'u9',
+        user_author_name: 'Ivo',
+    };
+
+    it('mapeia campos canônicos a partir do AgendaEvent', () => {
+        const msg = agendaEventToChatMessage(baseEvent);
+        expect(msg.id).toBe('ev-42');
+        expect(msg.content).toBe('Hello world');
+        expect(msg.senderId).toBe('u9');
+        expect(msg.senderName).toBe('Ivo');
+        expect(msg.replyTo).toBeNull();
+        expect(msg.createdAt).toEqual(new Date(1700000000 * 1000));
+    });
+
+    it('preserva os campos Dolibarr para filtros, dedup, ordenação e PUT', () => {
+        const msg = agendaEventToChatMessage(baseEvent);
+        expect(msg.label).toBe('Comentário em project');
+        expect(msg.description).toBe('Hello world');
+        expect(msg.elementtype).toBe('project');
+        expect(msg.fk_element).toBe('12');
+        expect(msg.date_start).toBe(1700000000);
+        expect(msg.type_code).toBe('AC_CHAT');
+        expect(msg.percentage).toBe(100);
+    });
+
+    it('usa label quando description está ausente (fallback de content)', () => {
+        const msg = agendaEventToChatMessage({ ...baseEvent, description: undefined });
+        expect(msg.content).toBe('Comentário em project');
+    });
+
+    it('retorna content vazio quando nem description nem label existem', () => {
+        const msg = agendaEventToChatMessage({
+            ...baseEvent,
+            description: undefined,
+            label: '',
+        });
+        expect(msg.content).toBe('');
+    });
+
+    it('senderId vazio quando fk_user_author ausente', () => {
+        const msg = agendaEventToChatMessage({ ...baseEvent, fk_user_author: undefined });
+        expect(msg.senderId).toBe('');
     });
 });

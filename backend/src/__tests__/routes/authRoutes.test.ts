@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import { errorHandler } from '../../middleware/errorHandler';
 
 const mockDolibarrService = vi.hoisted(() => ({
     login: vi.fn(),
+    getUserByKey: vi.fn(),
 }));
 
 vi.mock('../../services/dolibarrService', () => ({
@@ -26,8 +28,27 @@ vi.mock('../../utils/logger', () => ({
     }),
 }));
 
-vi.mock('express-rate-limit', () => ({
-    default: vi.fn(() => (req: any, res: any, next: any) => next()),
+const mockLoginLimiter = vi.hoisted(() => {
+    const attempts = new Map<string, number>();
+    const middleware = vi.fn((req: any, res: any, next: any) => {
+        const identifier = String(req.body?.email || req.body?.login || req.body?.username || 'anon').toLowerCase();
+        const key = `${req.ip}:${identifier}`;
+        const count = (attempts.get(key) || 0) + 1;
+        attempts.set(key, count);
+        if (count > 5) {
+            return res.status(429).json({ success: false, error: { code: 'RATE_LIMIT', message: 'Too many login attempts' } });
+        }
+        return next();
+    });
+    return { middleware, reset: () => attempts.clear() };
+});
+
+vi.mock('../../middleware/rateLimit', () => ({
+    rateLimiters: {
+        login: mockLoginLimiter.middleware,
+        ai: (req: any, res: any, next: any) => next(),
+        default: (req: any, res: any, next: any) => next(),
+    },
 }));
 
 import authRoutes from '../../routes/authRoutes';
@@ -37,6 +58,7 @@ function createApp() {
     app.use(express.json());
     app.use(cookieParser());
     app.use('/api', authRoutes);
+    app.use(errorHandler);
     return app;
 }
 
@@ -45,34 +67,45 @@ describe('authRoutes', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockLoginLimiter.reset();
         app = createApp();
     });
 
     describe('POST /api/login', () => {
-        it('returns 200 with token on successful login', async () => {
+        it('returns 200 with user data and a secure httpOnly cookie without exposing the token', async () => {
             mockDolibarrService.login.mockResolvedValue({
                 token: 'test-token-123',
                 message: 'Login successful',
             });
+            mockDolibarrService.getUserByKey.mockResolvedValue({ id: 1, login: 'admin', admin: '1', email: 'admin@example.com' });
 
             const res = await request(app)
                 .post('/api/login')
                 .send({ login: 'admin', password: 'password123' });
 
             expect(res.status).toBe(200);
-            expect(res.body.success).toBe(true);
-            // login agora devolve uma proto-session opaca ('sess_' + 48 hex), não o token cru.
-            expect(res.body.apiKey).toMatch(/^sess_[a-f0-9]{48}$/);
-            expect(res.headers['set-cookie']).toBeDefined();
+            expect(res.body).toMatchObject({ success: true, data: { user: { id: 1, login: 'admin', admin: '1' } } });
+            // Retrocompat (regressão #1707): o corpo expõe o SESSION token (`sess_...`), que o frontend
+            // usa como Bearer e que resolve server-side p/ a chave real. NUNCA a chave CRUA do Dolibarr.
+            expect(typeof res.body.apiKey).toBe('string');
+            expect(res.body.apiKey).toMatch(/^sess_/);
+            expect(JSON.stringify(res.body)).not.toContain('test-token-123'); // chave crua do Dolibarr NÃO vaza
+            const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
+            expect(cookie).toContain('apiKey=');
+            expect(cookie).toContain('HttpOnly');
+            expect(cookie).toContain('Secure');
+            expect(cookie).toContain('SameSite=Strict');
+            expect(cookie).toContain('Path=/');
+            expect(cookie).toMatch(/Max-Age=\d+/);
         });
 
-        it('returns 400 when login field is missing', async () => {
+        it('returns 400 when email field is missing', async () => {
             const res = await request(app)
                 .post('/api/login')
                 .send({ password: 'password123' });
 
             expect(res.status).toBe(400);
-            expect(res.body.error).toBe('Validation Error');
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
         it('returns 400 when password field is missing', async () => {
@@ -81,16 +114,16 @@ describe('authRoutes', () => {
                 .send({ login: 'admin' });
 
             expect(res.status).toBe(400);
-            expect(res.body.error).toBe('Validation Error');
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
-        it('returns 400 when both login and password are empty strings', async () => {
+        it('returns 400 when both email and password are empty strings', async () => {
             const res = await request(app)
                 .post('/api/login')
                 .send({ login: '', password: '' });
 
             expect(res.status).toBe(400);
-            expect(res.body.error).toBe('Validation Error');
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
         it('returns 401 when credentials are invalid', async () => {
@@ -115,17 +148,42 @@ describe('authRoutes', () => {
             expect(res.status).toBe(401);
             expect(res.body.success).toBe(false);
         });
+
+        it('returns the standard 429 envelope on the sixth attempt for the same login', async () => {
+            mockDolibarrService.login.mockRejectedValue(new Error('Invalid credentials'));
+
+            for (let attempt = 0; attempt < 5; attempt++) {
+                await request(app)
+                    .post('/api/login')
+                    .send({ email: 'rate-limited@example.com', password: 'wrongpassword' });
+            }
+
+            const res = await request(app)
+                .post('/api/login')
+                .send({ email: 'rate-limited@example.com', password: 'wrongpassword' });
+
+            expect(res.status).toBe(429);
+            expect(res.body).toMatchObject({
+                success: false,
+                error: { code: 'RATE_LIMIT' },
+            });
+        });
     });
 
     describe('POST /api/logout', () => {
-        it('returns 200 and clears cookie', async () => {
+        it('returns 200 and clears the secure httpOnly cookie', async () => {
             const res = await request(app)
                 .post('/api/logout');
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(res.body.message).toBe('Logged out');
-            expect(res.headers['set-cookie']).toBeDefined();
+            const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
+            expect(cookie).toContain('apiKey=;');
+            expect(cookie).toContain('HttpOnly');
+            expect(cookie).toContain('Secure');
+            expect(cookie).toContain('SameSite=Strict');
+            expect(cookie).toContain('Path=/');
         });
     });
 

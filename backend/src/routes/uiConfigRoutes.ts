@@ -89,6 +89,9 @@ const UpdateSchema = z.object({
         maxOpusEscalationsPerDay: z.number().optional(),
         maxOpusCostUsdPerDay: z.number().optional(),
         coderEscalationModel: z.string().optional(),
+        // Modelo do coder (primário/fallback) editável na tela; charset validado no sanitizeTaskAutomation.
+        coderModel: z.string().optional(),
+        coderFallbackModel: z.string().optional(),
     }).optional(),
     // #1207: governança de ações irreversíveis — só valida forma/tipos aqui; o sanitize real
     // (clamp de threshold, filtragem de allowlist por dígitos, etc.) fica no service.

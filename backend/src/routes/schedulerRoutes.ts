@@ -1,61 +1,296 @@
-import { Router, Request, Response } from 'express';
+/**
+ * Scheduler Routes (issue #1567)
+ *
+ * Endpoints REST do scheduler. Cada write é protegido por:
+ *   1. `requireDolibarrLogin` (autenticação) — montado via `router.use`.
+ *   2. Zod (`validateBody`/`validateParams`/`validateQuery`) — falha rápido com
+ *      400 + lista de erros do Zod. Erros são propagados via `next(...)` ao
+ *      `errorHandler` global, que aplica o envelope padronizado
+ *      `{ success: false, error: { code: 'VALIDATION_ERROR', details: [...] } }`.
+ *   3. `schedulerLimiter` (rate-limit 10/1min, bucket por IP) — aplicado SÓ em
+ *      POST/PUT/DELETE via wrapper `router.use` que pula GETs. Preset reaproveitado
+ *      de `middleware/rateLimit.ts` (single source of truth).
+ *
+ * Anti-injection de template (#1567): `templateId` precisa existir ANTES da
+ * renderização (`assertTemplateExistsOrThrow`). `renderTemplate` escapa HTML e
+ * remove `{{...}}` recursivo no valor, impedindo injeção de novos placeholders.
+ */
+
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { schedulerService } from '../services/schedulerService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
-import { validateBody } from '../middleware/validation';
-import { config } from '../config/env';
+import { validateBody, validateParams, validateQuery } from '../middleware/validation';
+import { rateLimiters } from '../middleware/rateLimit';
 import { createLogger } from '../utils/logger';
+import { NotFoundError, ValidationError } from '../middleware/errorHandler';
 
 const log = createLogger('Scheduler');
 const router = Router();
 
-// Protect all scheduler routes
+// `schedulerLimiter` é o MESMO preset de `middleware/rateLimit.ts`
+// (10/1min, bucket por IP, handler que delega via `next(error)`).
+const schedulerLimiter = rateLimiters.scheduler;
+
+// Auth: todas as rotas exigem login Dolibarr
 router.use(requireDolibarrLogin);
 
-// Broadcast: limita destinatários (anti-spam em massa) via cap configurável.
-const BroadcastSchema = z.object({
-    sessionId: z.string().min(1),
-    chatIds: z.array(z.string().min(1))
-        .min(1, 'chatIds não pode ser vazio')
-        .max(config.schedulerMaxBroadcast, `Máximo de ${config.schedulerMaxBroadcast} destinatários por broadcast`),
-    message: z.string().min(1),
-    scheduledAt: z.union([z.string(), z.number()]).optional(),
-    delayBetween: z.number().int().min(0).optional(),
-    channel: z.enum(['whatsapp', 'email']).optional(),
-    subject: z.string().optional(),
+// Rate-limit: aplicado só em writes (#1567) — GETs não consomem cota
+router.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+        return next();
+    }
+    return schedulerLimiter(req, res, next);
 });
 
-// --- Schedule a single message ---
+// ===========================================
+// Zod Schemas (#1567)
+// ===========================================
 
-router.post('/schedule', async (req: Request, res: Response) => {
-    try {
-        const { chatId, sessionId, message, scheduledAt, type, metadata, channel, subject } = req.body;
+/**
+ * `scheduledAt` aceita ISO-string, timestamp numérico, OU offset relativo
+ * (`+5m`, `+1h`, `+2d`). O parser completo fica em `parseScheduledAt` no
+ * runtime; aqui o Zod só valida o envelope (string ou número).
+ */
+const ScheduledAtSchema = z.union([
+    z.string().refine(
+        (v) => v.startsWith('+')
+            ? /^\+\d+(m|h|d)$/.test(v)
+            : !Number.isNaN(new Date(v).getTime()),
+        { message: 'scheduledAt inválido (use ISO, timestamp ou +Nm/+Nh/+Nd)' }
+    ),
+    z.number().int().positive(),
+]);
 
-        if (!chatId || !sessionId || !message) {
-            return res.status(400).json({ error: 'Missing required fields: chatId, sessionId, message' });
+/** ID de rota — cobre IDs gerados pelo service (`msg_<ts>_<rand>`, `tpl_<ts>`, etc). */
+const IdParamSchema = z.object({
+    id: z.string().min(1, 'id é obrigatório').max(200),
+});
+
+const SessionIdSchema = z.string().min(1, 'sessionId é obrigatório').max(200);
+
+const TemplateIdSchema = z.union([
+    z.string().uuid(),
+    z.string().regex(/^tpl(?:_|-)[A-Za-z0-9_-]+$/, 'templateId inválido'),
+]);
+
+/**
+ * Broadcast (#1567): `recipients` é o nome canônico na API; `chatIds` é aceito
+ * como alias legado para preservar compatibilidade com clientes existentes
+ * (sem versionamento de rota — apenas o campo). O cap é 100 com mensagem
+ * EXATA exigida pelo AC. `templateId` é validado pelo store (anti-injection)
+ * antes de qualquer renderização — vide `resolveTemplateOrThrow` abaixo.
+ *
+ * Ordem de precedência: se AMBOS forem enviados, `recipients` vence
+ * (`chatIds` é apenas fallback). O campo é normalizado no `.transform()`
+ * final — o handler sempre vê `recipients` populado.
+ */
+const BroadcastRecipientsField = z.array(z.string().min(1))
+    .min(1, 'recipients não pode ser vazio')
+    .max(100, 'Máximo de 100 destinatários por chamada');
+
+const BroadcastSchema = z.object({
+    sessionId: SessionIdSchema,
+    recipients: BroadcastRecipientsField.optional(),
+    chatIds: BroadcastRecipientsField.optional(),
+    message: z.string().min(1).max(4096),
+    templateId: TemplateIdSchema.optional(),
+    scheduledAt: ScheduledAtSchema.optional(),
+    delayBetween: z.number().int().min(0).max(60_000).optional(),
+    channel: z.enum(['whatsapp', 'email']).optional(),
+    subject: z.string().max(500).optional(),
+})
+    .refine(
+        (data) => data.recipients !== undefined || data.chatIds !== undefined,
+        { message: 'recipients (ou chatIds legado) é obrigatório', path: ['recipients'] },
+    )
+    .transform((data) => ({
+        ...data,
+        recipients: data.recipients ?? data.chatIds!,
+    }));
+
+const ScheduleSchema = z.object({
+    chatId: z.string().min(1).max(200),
+    sessionId: SessionIdSchema,
+    message: z.string().min(1).max(4096),
+    scheduledAt: ScheduledAtSchema.optional(),
+    type: z.enum(['once', 'reminder', 'broadcast', 'confirmation']).optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
+    channel: z.enum(['whatsapp', 'email']).optional(),
+    subject: z.string().max(500).optional(),
+});
+
+const ConfirmationSchema = z.object({
+    chatId: z.string().min(1).max(200),
+    sessionId: SessionIdSchema,
+    message: z.string().min(1).max(4096),
+    timeoutMinutes: z.number().int().min(1).max(7 * 24 * 60).optional(),
+    onConfirm: z.string().max(1000).optional(),
+    onReject: z.string().max(1000).optional(),
+});
+
+const ReminderSchema = z.object({
+    chatId: z.string().min(1).max(200),
+    sessionId: SessionIdSchema,
+    message: z.string().min(1).max(4096),
+    firstSendAt: ScheduledAtSchema.optional(),
+    interval: z.number().int().min(1).max(10_000),
+    unit: z.enum(['minutes', 'hours', 'days']),
+});
+
+/** Template CRUD (#604) — mantém `category`, `channel`, `subject` legados. */
+const TemplateCreateSchema = z.object({
+    name: z.string().min(1).max(120),
+    content: z.string().min(1).max(4096),
+    category: z.enum(['reminder', 'news', 'confirmation', 'general']).optional(),
+    channel: z.enum(['whatsapp', 'email']).optional(),
+    subject: z.string().max(500).optional(),
+    variables: z.array(z.string().min(1).max(80)).optional(),
+});
+
+const TemplateUpdateSchema = TemplateCreateSchema.partial();
+
+const SendTemplateSchema = z.object({
+    templateId: TemplateIdSchema,
+    chatId: z.string().min(1).max(200),
+    sessionId: SessionIdSchema,
+    variables: z.record(z.string(), z.string()).optional(),
+    scheduledAt: ScheduledAtSchema.optional(),
+});
+
+const ImportCsvSchema = z.object({
+    csvContent: z.string().min(1).max(5 * 1024 * 1024),
+    sessionId: SessionIdSchema,
+    message: z.string().min(1).max(4096),
+    scheduledAt: ScheduledAtSchema.optional(),
+    delayBetween: z.number().int().min(0).max(60_000).optional(),
+});
+
+const PendingQuerySchema = z.object({
+    sessionId: z.string().min(1).max(200).optional(),
+});
+
+const HistoryQuerySchema = z.object({
+    sessionId: z.string().min(1).max(200).optional(),
+    status: z.enum(['pending', 'sent', 'cancelled', 'failed']).optional(),
+    limit: z.string().regex(/^\d+$/).transform(Number).optional(),
+});
+
+const EmptyQuerySchema = z.object({}).strict();
+
+/**
+ * Cron job schema (#1567): cron expression POSIX de 5 campos
+ * (min hour day month dow). Cada campo aceita estrela ou
+ * lista/intervalo. O regex é estrito (sem espaços extras, sem
+ * ranges inválidos — node-cron/crontab faz o parse semântico).
+ *
+ * Exportado como constante para que rotas de cron que venham a ser
+ * adicionadas possam usar validateBody(CronSchema) direto. Sem
+ * rota correspondente no router hoje (não há feature de cron-jobs
+ * persistente ainda); a definição fica aqui para casar com a
+ * especificação da issue #1567 e servir de contrato.
+ */
+export const cronSchema = z.object({
+    name: z.string().min(1).max(120),
+    cron: z.string().regex(
+        /^(\*|[0-9,/*-]+)\s+(\*|[0-9,/*-]+)\s+(\*|[0-9,/*-]+)\s+(\*|[0-9,/*-]+)\s+(\*|[0-9,/*-]+)$/,
+        { message: 'cron deve ser uma expressão POSIX de 5 campos (min hour day month dow)' },
+    ),
+    action: z.string().min(1).max(120),
+    payload: z.record(z.string(), z.any()),
+});
+
+export const CronSchema = cronSchema;
+
+// ===========================================
+// Helpers
+// ===========================================
+
+/**
+ * Converte `scheduledAt` em timestamp ms — aceita ISO, número, OU offset
+ * relativo (`+5m`, `+1h`, `+2d`). Erros viram `ValidationError` (envelope
+ * padronizado) em vez de 500.
+ */
+function parseScheduledAt(value: unknown, fallback?: number): number {
+    const fallbackMs = fallback ?? Date.now();
+
+    if (value === undefined || value === null || value === '') {
+        return fallbackMs;
+    }
+
+    if (typeof value === 'number') {
+        if (!Number.isFinite(value) || value <= 0) {
+            throw new ValidationError('scheduledAt inválido: número deve ser > 0', [
+                { field: 'scheduledAt', message: 'timestamp deve ser positivo' },
+            ]);
         }
+        return value;
+    }
 
-        // Parse scheduledAt (can be ISO string, timestamp, or relative like "+5m", "+1h")
-        let scheduleTime: number;
-        if (typeof scheduledAt === 'string' && scheduledAt.startsWith('+')) {
-            // Relative time: +5m, +1h, +2d
-            const match = scheduledAt.match(/^\+(\d+)([mhd])$/);
+    if (typeof value === 'string') {
+        if (value.startsWith('+')) {
+            const match = value.match(/^\+(\d+)([mhd])$/);
             if (!match) {
-                return res.status(400).json({ error: 'Invalid relative time format. Use +5m, +1h, +2d' });
+                throw new ValidationError(
+                    'Formato relativo inválido. Use +5m, +1h ou +2d',
+                    [{ field: 'scheduledAt', message: 'formato relativo inválido' }],
+                );
             }
             const [, num, unit] = match;
-            let ms = parseInt(num);
+            let ms = parseInt(num, 10);
             if (unit === 'h') ms *= 60;
             if (unit === 'd') ms *= 60 * 24;
             ms *= 60 * 1000;
-            scheduleTime = Date.now() + ms;
-        } else if (typeof scheduledAt === 'string') {
-            scheduleTime = new Date(scheduledAt).getTime();
-        } else if (typeof scheduledAt === 'number') {
-            scheduleTime = scheduledAt;
-        } else {
-            scheduleTime = Date.now(); // Send immediately
+            return Date.now() + ms;
         }
+        const parsed = new Date(value).getTime();
+        if (Number.isNaN(parsed)) {
+            throw new ValidationError('scheduledAt inválido (ISO esperado)', [
+                { field: 'scheduledAt', message: 'string ISO inválida' },
+            ]);
+        }
+        return parsed;
+    }
+
+    throw new ValidationError('scheduledAt deve ser string, número ou null', [
+        { field: 'scheduledAt', message: 'tipo não suportado' },
+    ]);
+}
+
+/**
+ * Garante que `templateId` (opcional) existe no store (anti-injection
+ * #1567). Retorna o template resolvido para uso atômico (uma única
+ * chamada ao service), evitando race entre `templateExists` e `getTemplate`
+ * — se o id sumir entre o check e o get, lançar `ValidationError` em vez de
+ * cair silenciosamente na `message` crua.
+ */
+function resolveTemplateOrThrow(templateId: unknown): { id: string; content: string } | null {
+    if (templateId === undefined || templateId === null || templateId === '') return null;
+    if (typeof templateId !== 'string') {
+        throw new ValidationError('templateId inválido', [
+            { field: 'templateId', message: 'deve ser string' },
+        ]);
+    }
+    const tpl = schedulerService.getTemplate(templateId);
+    if (!tpl) {
+        throw new ValidationError(
+            'Template não encontrado — verifique o templateId e tente novamente',
+            [{ field: 'templateId', message: 'templateId não existe no store' }],
+        );
+    }
+    return { id: tpl.id, content: tpl.content };
+}
+
+// ===========================================
+// ROTAS
+// ===========================================
+
+// --- Schedule a single message ---
+
+router.post('/schedule', validateBody(ScheduleSchema), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { chatId, sessionId, message, scheduledAt, type, metadata, channel, subject } = req.body as z.infer<typeof ScheduleSchema>;
+        const scheduleTime = parseScheduledAt(scheduledAt);
 
         const msg = schedulerService.scheduleMessage({
             chatId,
@@ -65,359 +300,342 @@ router.post('/schedule', async (req: Request, res: Response) => {
             message,
             scheduledAt: scheduleTime,
             type: type || 'once',
-            metadata
+            metadata,
         });
 
         res.json({
             success: true,
             data: msg,
-            scheduledFor: new Date(scheduleTime).toISOString()
+            scheduledFor: new Date(scheduleTime).toISOString(),
         });
-
     } catch (error: any) {
-        log.error('Schedule error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: error.message });
+        log.error('Schedule error', { error: error?.message, stack: error?.stack });
+        next(error);
     }
 });
 
-// --- Schedule broadcast to multiple contacts ---
+// --- Schedule broadcast to multiple contacts (#1567) ---
 
-router.post('/broadcast', validateBody(BroadcastSchema), async (req: Request, res: Response) => {
+router.post('/broadcast', validateBody(BroadcastSchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { sessionId, chatIds, message, scheduledAt, delayBetween, channel, subject } = req.body;
+        const {
+            sessionId,
+            recipients,
+            message,
+            templateId,
+            scheduledAt,
+            delayBetween,
+            channel,
+            subject,
+        } = req.body as z.infer<typeof BroadcastSchema>;
 
-        let scheduleTime: number | undefined;
-        if (scheduledAt) {
-            scheduleTime = typeof scheduledAt === 'string' ? new Date(scheduledAt).getTime() : scheduledAt;
-        }
+        // #1567 — anti-injection: resolve o template atomicamente (uma única
+        // chamada ao service). Se `templateId` foi enviado, sobrescreve a
+        // `message` crua pelo conteúdo do template (sem variáveis — broadcast
+        // não aceita, por design).
+        const resolvedTemplate = resolveTemplateOrThrow(templateId);
+        const finalMessage = resolvedTemplate ? resolvedTemplate.content : message;
+
+        const scheduleTime = parseScheduledAt(scheduledAt);
 
         const messages = await schedulerService.scheduleBroadcast({
             sessionId,
-            chatIds,
+            chatIds: recipients, // service ainda chama `chatIds` internamente — `recipients` é o nome canônico na API (#1567)
             channel,
             subject,
-            message,
+            message: finalMessage,
             scheduledAt: scheduleTime,
-            delayBetween: delayBetween || 3000
+            delayBetween: delayBetween || 3000,
         });
 
         res.json({
             success: true,
             count: messages.length,
             broadcastId: messages[0]?.metadata?.broadcastId,
-            data: messages
+            data: messages,
         });
-
     } catch (error: any) {
-        log.error('Broadcast error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: error.message });
+        log.error('Broadcast error', { error: error?.message, stack: error?.stack });
+        next(error);
     }
 });
 
 // --- Schedule confirmation request ---
 
-router.post('/confirmation', async (req: Request, res: Response) => {
+router.post('/confirmation', validateBody(ConfirmationSchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { chatId, sessionId, message, timeoutMinutes, onConfirm, onReject } = req.body;
-
-        if (!chatId || !sessionId || !message) {
-            return res.status(400).json({ error: 'Missing required fields: chatId, sessionId, message' });
-        }
+        const { chatId, sessionId, message, timeoutMinutes, onConfirm, onReject } = req.body as z.infer<typeof ConfirmationSchema>;
+        const timeout = timeoutMinutes || 60;
 
         const msg = schedulerService.scheduleConfirmation({
             chatId,
             sessionId,
             message,
-            timeoutMinutes: timeoutMinutes || 60,
+            timeoutMinutes: timeout,
             onConfirm,
-            onReject
+            onReject,
         });
 
         res.json({
             success: true,
             data: msg,
-            expiresAt: new Date(Date.now() + (timeoutMinutes || 60) * 60 * 1000).toISOString()
+            expiresAt: new Date(Date.now() + timeout * 60 * 1000).toISOString(),
         });
-
     } catch (error: any) {
-        log.error('Confirmation error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: error.message });
+        log.error('Confirmation error', { error: error?.message, stack: error?.stack });
+        next(error);
     }
 });
 
 // --- Schedule recurring reminder ---
 
-router.post('/reminder', async (req: Request, res: Response) => {
+router.post('/reminder', validateBody(ReminderSchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { chatId, sessionId, message, firstSendAt, interval, unit } = req.body;
-
-        if (!chatId || !sessionId || !message || !interval || !unit) {
-            return res.status(400).json({
-                error: 'Missing required fields: chatId, sessionId, message, interval, unit (minutes|hours|days)'
-            });
-        }
-
-        if (!['minutes', 'hours', 'days'].includes(unit)) {
-            return res.status(400).json({ error: 'Invalid unit. Use: minutes, hours, or days' });
-        }
-
-        let scheduleTime = Date.now();
-        if (firstSendAt) {
-            scheduleTime = typeof firstSendAt === 'string' ? new Date(firstSendAt).getTime() : firstSendAt;
-        }
+        const { chatId, sessionId, message, firstSendAt, interval, unit } = req.body as z.infer<typeof ReminderSchema>;
+        const scheduleTime = parseScheduledAt(firstSendAt);
 
         const msg = schedulerService.scheduleReminder({
             chatId,
             sessionId,
             message,
             firstSendAt: scheduleTime,
-            recurrence: { interval, unit }
+            recurrence: { interval, unit },
         });
 
         res.json({
             success: true,
             data: msg,
-            recurrence: { interval, unit }
+            recurrence: { interval, unit },
         });
-
     } catch (error: any) {
-        log.error('Reminder error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: error.message });
+        log.error('Reminder error', { error: error?.message, stack: error?.stack });
+        next(error);
     }
 });
 
 // --- Get pending messages ---
 
-router.get('/pending', (req: Request, res: Response) => {
+router.get('/pending', validateQuery(PendingQuerySchema), (req: Request, res: Response, next: NextFunction) => {
     try {
-        const sessionId = req.query.sessionId as string;
+        const { sessionId } = req.query as unknown as z.infer<typeof PendingQuerySchema>;
         const pending = schedulerService.getPending(sessionId);
 
         res.json({
+            success: true,
             count: pending.length,
-            data: pending
+            data: pending,
         });
-
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
 // --- Get message history ---
 
-router.get('/history', (req: Request, res: Response) => {
+router.get('/history', validateQuery(HistoryQuerySchema), (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { sessionId, status, limit } = req.query;
+        const { sessionId, status, limit } = req.query as unknown as z.infer<typeof HistoryQuerySchema>;
 
         const history = schedulerService.getHistory({
-            sessionId: sessionId as string,
+            sessionId,
             status: status as any,
-            limit: limit ? parseInt(limit as string) : 50
+            limit: limit ? Number(limit) : 50,
         });
 
         res.json({
+            success: true,
             count: history.length,
-            data: history
+            data: history,
         });
-
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
 // --- Cancel a scheduled message ---
 
-router.delete('/:id', (req: Request, res: Response) => {
+router.delete('/:id', validateParams(IdParamSchema), (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { id } = req.params;
+        const { id } = req.params as z.infer<typeof IdParamSchema>;
         const success = schedulerService.cancelMessage(id);
 
-        if (success) {
-            res.json({ success: true, message: `Message ${id} cancelled` });
-        } else {
-            res.status(404).json({ error: 'Message not found or already processed' });
+        if (!success) {
+            return next(new NotFoundError('Mensagem não encontrada ou já processada'));
         }
 
+        res.json({ success: true, data: { id, cancelled: true } });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
 // --- Get stats ---
 
-router.get('/stats', (req: Request, res: Response) => {
+router.get('/stats', validateQuery(EmptyQuerySchema), (_req: Request, res: Response, next: NextFunction) => {
     try {
         const stats = schedulerService.getStats();
-        res.json(stats);
-
+        res.json({ success: true, data: stats });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
-// --- Templates ---
+// --- Templates (CRUD #604) ---
 
-router.post('/templates', (req: Request, res: Response) => {
+router.post('/templates', validateBody(TemplateCreateSchema), (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { name, content, category, channel, subject } = req.body;
-
-        if (!name || !content) {
-            return res.status(400).json({ error: 'Missing required fields: name, content' });
-        }
+        const { name, content, category, channel, subject } = req.body as z.infer<typeof TemplateCreateSchema>;
 
         const template = schedulerService.createTemplate({ name, content, category, channel, subject });
         res.json({ success: true, data: template });
-
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
-router.get('/templates', (req: Request, res: Response) => {
+router.get('/templates', validateQuery(EmptyQuerySchema), (_req: Request, res: Response, next: NextFunction) => {
     try {
         const templates = schedulerService.getTemplates();
-        res.json({ count: templates.length, data: templates });
-
+        res.json({ success: true, count: templates.length, data: templates });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
-router.put('/templates/:id', (req: Request, res: Response) => {
+router.put('/templates/:id', validateParams(IdParamSchema), validateBody(TemplateUpdateSchema), (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { id } = req.params;
-        const { name, content, category, channel, subject } = req.body;
-        const updated = schedulerService.updateTemplate(id, { name, content, category, channel, subject });
-        if (updated) {
-            res.json({ success: true, data: updated });
-        } else {
-            res.status(404).json({ error: 'Template not found' });
+        const { id } = req.params as z.infer<typeof IdParamSchema>;
+        const updates = req.body as z.infer<typeof TemplateUpdateSchema>;
+
+        const updated = schedulerService.updateTemplate(id, updates);
+        if (!updated) {
+            return next(new NotFoundError('Template não encontrado'));
         }
+
+        res.json({ success: true, data: updated });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
-router.delete('/templates/:id', (req: Request, res: Response) => {
+router.delete('/templates/:id', validateParams(IdParamSchema), (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { id } = req.params;
+        const { id } = req.params as z.infer<typeof IdParamSchema>;
         const success = schedulerService.deleteTemplate(id);
 
-        if (success) {
-            res.json({ success: true });
-        } else {
-            res.status(404).json({ error: 'Template not found' });
+        if (!success) {
+            return next(new NotFoundError('Template não encontrado'));
         }
 
+        res.json({ success: true, data: { id, deleted: true } });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
-// --- Send using template ---
+// --- Send using template (#1567 anti-injection) ---
 
-router.post('/send-template', async (req: Request, res: Response) => {
+router.post('/send-template', validateBody(SendTemplateSchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { templateId, chatId, sessionId, variables, scheduledAt } = req.body;
+        const { templateId, chatId, sessionId, variables, scheduledAt } = req.body as z.infer<typeof SendTemplateSchema>;
 
-        if (!templateId || !chatId || !sessionId) {
-            return res.status(400).json({ error: 'Missing required fields: templateId, chatId, sessionId' });
+        // #1567 — templateId precisa existir (anti-injection): uma única
+        // chamada ao service cobre validação + renderização.
+        // `renderTemplate` escapa variáveis e remove recursão de `{{...}}`
+        // (payload do cliente não consegue injetar novos placeholders nem HTML).
+        const rendered = schedulerService.renderTemplate(templateId, variables || {});
+        if (!rendered) {
+            return next(new ValidationError(
+                'Não foi possível renderizar o template',
+                [{ field: 'templateId', message: 'templateId ausente ou template sem conteúdo' }],
+            ));
         }
 
-        const message = schedulerService.renderTemplate(templateId, variables || {});
-        if (!message) {
-            return res.status(404).json({ error: 'Template not found' });
-        }
-
-        let scheduleTime = Date.now();
-        if (scheduledAt) {
-            scheduleTime = typeof scheduledAt === 'string' ? new Date(scheduledAt).getTime() : scheduledAt;
-        }
+        const scheduleTime = parseScheduledAt(scheduledAt);
 
         const msg = schedulerService.scheduleMessage({
             chatId,
             sessionId,
-            message,
+            message: rendered,
             scheduledAt: scheduleTime,
-            metadata: { templateId, variables }
+            metadata: { templateId, variables },
         });
 
         res.json({ success: true, data: msg });
-
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Send-template error', { error: error?.message, stack: error?.stack });
+        next(error);
     }
 });
 
 // --- Import CSV for Broadcast ---
 
-router.post('/import-csv', async (req: Request, res: Response) => {
+router.post('/import-csv', validateBody(ImportCsvSchema), async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { csvContent, sessionId, message, scheduledAt, delayBetween } = req.body;
+        const { csvContent, sessionId, message, scheduledAt, delayBetween } = req.body as z.infer<typeof ImportCsvSchema>;
 
-        if (!csvContent || !sessionId || !message) {
-            return res.status(400).json({
-                error: 'Missing required fields: csvContent (string with CSV data), sessionId, message'
-            });
-        }
-
-        // Parse CSV to extract phone numbers
         const chatIds = schedulerService.parseCSVContacts(csvContent);
-
         if (chatIds.length === 0) {
-            return res.status(400).json({ error: 'No valid phone numbers found in CSV' });
+            return next(new ValidationError(
+                'Nenhum número de telefone válido encontrado no CSV',
+                [{ field: 'csvContent', message: 'CSV vazio ou sem coluna de telefone' }],
+            ));
         }
 
-        // Create broadcast
-        let scheduleTime: number | undefined;
-        if (scheduledAt) {
-            scheduleTime = typeof scheduledAt === 'string' ? new Date(scheduledAt).getTime() : scheduledAt;
+        // Defesa em profundidade: o CSV pode ter MUITOS contatos (>100). Reaplica o cap
+        // do broadcast pra que `import-csv` não escape do rate-limit por chamada.
+        if (chatIds.length > 100) {
+            return next(new ValidationError(
+                'Máximo de 100 destinatários por chamada',
+                [{ field: 'csvContent', message: `CSV contém ${chatIds.length} contatos (cap 100)` }],
+            ));
         }
+
+        const scheduleTime = parseScheduledAt(scheduledAt);
 
         const messages = await schedulerService.scheduleBroadcast({
             sessionId,
             chatIds,
             message,
             scheduledAt: scheduleTime,
-            delayBetween: delayBetween || 3000
+            delayBetween: delayBetween || 3000,
         });
 
         res.json({
             success: true,
             contactsFound: chatIds.length,
             broadcastId: messages[0]?.metadata?.broadcastId,
-            count: messages.length
+            count: messages.length,
+            data: messages,
         });
-
     } catch (error: any) {
-        log.error('CSV Import error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: error.message });
+        log.error('CSV Import error', { error: error?.message, stack: error?.stack });
+        next(error);
     }
 });
 
 // --- Broadcasts ---
 
-router.get('/broadcasts', (req: Request, res: Response) => {
+router.get('/broadcasts', validateQuery(EmptyQuerySchema), (_req: Request, res: Response, next: NextFunction) => {
     try {
         const broadcasts = schedulerService.getBroadcasts();
-        res.json({ count: broadcasts.length, data: broadcasts });
+        res.json({ success: true, count: broadcasts.length, data: broadcasts });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
-router.get('/broadcasts/:id', (req: Request, res: Response) => {
+router.get('/broadcasts/:id', validateParams(IdParamSchema), (req: Request, res: Response, next: NextFunction) => {
     try {
-        const details = schedulerService.getBroadcastDetails(req.params.id);
-        if (details) {
-            res.json(details);
-        } else {
-            res.status(404).json({ error: 'Broadcast not found' });
+        const { id } = req.params as z.infer<typeof IdParamSchema>;
+        const details = schedulerService.getBroadcastDetails(id);
+        if (!details) {
+            return next(new NotFoundError('Broadcast não encontrado'));
         }
+        res.json({ success: true, data: details });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        next(error);
     }
 });
 
 export default router;
-

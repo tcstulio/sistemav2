@@ -42,6 +42,13 @@ export class SessionService {
     private initializationLocks: Map<string, boolean> = new Map();
     private sessionStartTimes: Map<string, number> = new Map();
 
+    // #wa-autorecover: o discriminador de "usuário removeu de propósito" é a EXISTÊNCIA da pasta de
+    // auth — deleteSession (rota DELETE /sessions) apaga a pasta; o sweep então pula (não ressuscita).
+    // NÃO usamos o evento 'disconnected(LOGOUT)' p/ isso: ele dispara em desconexões TRANSITÓRIAS do
+    // WhatsApp com auth ainda VÁLIDA (visto em 21/07: sessão marcada "logout" reconectou a WORKING no
+    // start manual) — marcar loggedOut ali travava a recuperação de uma sessão perfeitamente boa.
+    private healthTimer: NodeJS.Timeout | null = null;
+
     private constructor() {
         log.info('Instantiated.');
         this.loadSessionsFromDisk();
@@ -75,8 +82,68 @@ export class SessionService {
     }
 
     private setStatus(sessionId: string, status: 'INITIALIZING' | 'SCAN_QR_CODE' | 'WORKING' | 'STOPPED' | 'STARTING') {
+        const prev = this.sessionStatus.get(sessionId);
         this.sessionStatus.set(sessionId, status);
         socketService.emit('session_status', { sessionId, status });
+        // #wa-conn-history: grava a transição no log persistente (só quando MUDA — evita o spam do QR
+        // que re-seta SCAN_QR a cada ~20s). É o histórico durável p/ debugar a instabilidade (LOGOUT).
+        if (prev !== status) this.connLog(sessionId, `STATUS ${prev || '-'} → ${status}`);
+    }
+
+    /**
+     * #wa-conn-history: histórico DURÁVEL de conexão/desconexão em backend/logs/whatsapp-connection.log.
+     * O buffer de logs em memória (500 linhas) rola em minutos por causa do QR a cada 20s, então o
+     * motivo de cada queda somia. Este arquivo (append, best-effort) preserva a linha do tempo real:
+     * transições de estado + motivo do 'disconnected' + auth_failure — o que precisamos p/ diagnosticar
+     * por que a sessão cai de WORKING (LOGOUT recorrente) em vez de adivinhar.
+     */
+    private connLog(sessionId: string, event: string) {
+        try {
+            const dir = 'logs';
+            fs.mkdirSync(dir, { recursive: true });
+            fs.appendFileSync(`${dir}/whatsapp-connection.log`, `${new Date().toISOString()} [${sessionId}] ${event}\n`, 'utf8');
+        } catch { /* best-effort — nunca quebra o fluxo da sessão */ }
+    }
+
+    /**
+     * #wa-autorecover: sweep periódico que RECUPERA sessões STOPPED com auth salva. A reconexão
+     * de hoje é só event-driven (`on('disconnected')`); quando o chrome MORRE sem disparar o evento
+     * (crash do backend, kill externo, OOM), a sessão fica STOPPED sem QR/sem reconectar até um
+     * restart manual do backend — o bug que travou o dono em 21/07 (QR não aparecia). Respeita
+     * logout deliberado (`loggedOut`): não ressuscita sessão que o usuário desconectou de propósito.
+     * PREVIEW-safe: só é ligado pelo server.ts fora de PREVIEW_MODE.
+     */
+    public startHealthMonitor() {
+        if (this.healthTimer) return;
+        const INTERVAL = Number(process.env.WHATSAPP_HEALTH_INTERVAL_MS) || 90_000;
+        this.healthTimer = setInterval(() => this.recoverStoppedSessions(), INTERVAL);
+        if (this.healthTimer.unref) this.healthTimer.unref();
+        log.info(`WhatsApp health monitor started (a cada ${Math.round(INTERVAL / 1000)}s) — auto-recover de sessões STOPPED`);
+    }
+
+    public stopHealthMonitor() {
+        if (this.healthTimer) { clearInterval(this.healthTimer); this.healthTimer = null; }
+    }
+
+    /** Recupera sessões persistidas (com pasta de auth) que estão STOPPED e não foram deslogadas. */
+    private recoverStoppedSessions() {
+        try {
+            const authPath = '.wwebjs_auth';
+            if (!fs.existsSync(authPath)) return;
+            for (const dirent of fs.readdirSync(authPath, { withFileTypes: true })) {
+                if (!dirent.isDirectory()) continue;
+                const m = dirent.name.match(/^session-(.+)$/);
+                if (!m) continue;
+                const sessionId = m[1];
+                // A pasta de auth existir = a sessão deve estar de pé (deleteSession apaga a pasta).
+                if (this.initializationLocks.get(sessionId)) continue; // já iniciando/reconectando
+                if (this.getStatus(sessionId) !== 'STOPPED') continue; // SCAN_QR/WORKING/STARTING = ok
+                log.warn(`[${sessionId}] health monitor: STOPPED com auth salva — auto-recuperando (regenera QR/reconecta).`);
+                this.startSession(sessionId).catch(err => log.error(`[${sessionId}] auto-recover falhou`, err));
+            }
+        } catch (e: any) {
+            log.warn(`recoverStoppedSessions falhou: ${e?.message || e}`);
+        }
     }
 
     private loadSessionsFromDisk() {
@@ -340,9 +407,15 @@ export class SessionService {
         if (phone && phone.includes('@lid')) {
             try {
                 const contact = await msg.getContact();
-                if (contact && contact.number) {
-                    return `${contact.number}@c.us`;
-                }
+                // @lid: `contact.number` devolve o PRÓPRIO @lid (ex.: 59936436445425), que NÃO casa o
+                // cadastro Dolibarr. O número REAL vive em `contact.id` — verificado ao vivo 22/07:
+                // id._serialized = "5511986781025@c.us", id.user = "5511986781025". Preferimos o JID
+                // @c.us serializado; senão montamos do user; fallback legado no contact.number.
+                const serialized: string | undefined = contact?.id?._serialized;
+                if (serialized && serialized.endsWith('@c.us')) return serialized;
+                const user: string | undefined = contact?.id?.user;
+                if (user && /^\d{10,15}$/.test(user)) return `${user}@c.us`;
+                if (contact && contact.number) return `${contact.number}@c.us`;
             } catch (e) { /* ignore */ }
         }
         return phone;
@@ -384,8 +457,14 @@ export class SessionService {
             }
         });
 
+        client.on('auth_failure', (msg) => {
+            log.warn(`[${sessionId}] Auth failure: ${msg}`);
+            this.connLog(sessionId, `AUTH_FAILURE ${String(msg).substring(0, 200)}`);
+        });
+
         client.on('disconnected', (reason) => {
             log.info(`[${sessionId}] Disconnected: ${reason}`);
+            this.connLog(sessionId, `DISCONNECTED reason=${reason}`);
             this.setStatus(sessionId, 'STOPPED');
 
             const nonRecoverableReasons = ['LOGOUT', 'DELETED_SESSION'];
@@ -398,6 +477,10 @@ export class SessionService {
                     }
                 }, 5000);
             }
+            // #wa-autorecover: NÃO marcamos "loggedOut" aqui — um LOGOUT do whatsapp-web.js NÃO significa
+            // que o usuário quer a sessão fora (a auth costuma seguir válida). Se o usuário REMOVER a
+            // sessão (rota DELETE), a pasta de auth some e o sweep pula naturalmente. Aqui, se a auth
+            // persistir em disco, o sweep vai reerguer (reconecta OU mostra QR p/ re-scan).
         });
 
         client.on('message_create', async msg => {
@@ -412,7 +495,11 @@ export class SessionService {
                 fromMe: msg.fromMe,
                 timestamp: Math.min(msg.timestamp, Math.floor(Date.now() / 1000)),
                 hasMedia: msg.hasMedia,
-                id: msg.id._serialized,
+                // @lid: p/ mensagens no formato novo do WhatsApp Web, `_serialized` vem UNDEFINED
+                // e o id real fica em `$1` (o mesmo do getMessages, que usa `_serialized || $1`).
+                // Sem este fallback o payload chegava com id vazio → dedup/buffer com id '' e o
+                // download de mídia recebida chamava getMessageMedia(undefined) → nunca baixava.
+                id: msg.id._serialized || (msg.id as any).$1,
                 type: msg.type,
                 // @ts-ignore
                 mimetype: (msg as any)._data?.mimetype
@@ -428,7 +515,7 @@ export class SessionService {
         client.on('message_ack', (msg, ack) => {
             socketService.emit('whatsapp_ack', {
                 sessionId,
-                messageId: msg.id._serialized,
+                messageId: msg.id._serialized || (msg.id as any).$1, // @lid: _serialized pode vir undefined
                 ack,
                 status: ack >= 3 ? 'read' : ack >= 2 ? 'delivered' : 'sent'
             });
