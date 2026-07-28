@@ -81,12 +81,15 @@ describe('authRoutes', () => {
 
             const res = await request(app)
                 .post('/api/login')
-                .send({ email: 'admin@example.com', password: 'password123' });
+                .send({ login: 'admin', password: 'password123' });
 
             expect(res.status).toBe(200);
-            expect(res.body).toEqual({ success: true, data: { user: { id: 1, login: 'admin', admin: '1' } } });
-            expect(res.body.apiKey).toBeUndefined();
-            expect(JSON.stringify(res.body)).not.toContain('test-token-123');
+            expect(res.body).toMatchObject({ success: true, data: { user: { id: 1, login: 'admin', admin: '1' } } });
+            // Retrocompat (regressão #1707): o corpo expõe o SESSION token (`sess_...`), que o frontend
+            // usa como Bearer e que resolve server-side p/ a chave real. NUNCA a chave CRUA do Dolibarr.
+            expect(typeof res.body.apiKey).toBe('string');
+            expect(res.body.apiKey).toMatch(/^sess_/);
+            expect(JSON.stringify(res.body)).not.toContain('test-token-123'); // chave crua do Dolibarr NÃO vaza
             const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
             expect(cookie).toContain('apiKey=');
             expect(cookie).toContain('HttpOnly');
@@ -108,7 +111,7 @@ describe('authRoutes', () => {
         it('returns 400 when password field is missing', async () => {
             const res = await request(app)
                 .post('/api/login')
-                .send({ email: 'admin@example.com' });
+                .send({ login: 'admin' });
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
@@ -117,7 +120,7 @@ describe('authRoutes', () => {
         it('returns 400 when both email and password are empty strings', async () => {
             const res = await request(app)
                 .post('/api/login')
-                .send({ email: '', password: '' });
+                .send({ login: '', password: '' });
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
@@ -128,7 +131,7 @@ describe('authRoutes', () => {
 
             const res = await request(app)
                 .post('/api/login')
-                .send({ email: 'admin@example.com', password: 'wrongpassword' });
+                .send({ login: 'admin', password: 'wrongpassword' });
 
             expect(res.status).toBe(401);
             expect(res.body.success).toBe(false);
@@ -140,13 +143,13 @@ describe('authRoutes', () => {
 
             const res = await request(app)
                 .post('/api/login')
-                .send({ email: 'admin@example.com', password: 'password123' });
+                .send({ login: 'admin', password: 'password123' });
 
             expect(res.status).toBe(401);
             expect(res.body.success).toBe(false);
         });
 
-        it('returns the standard 429 envelope on the sixth attempt for the same email', async () => {
+        it('returns the standard 429 envelope on the sixth attempt for the same login', async () => {
             mockDolibarrService.login.mockRejectedValue(new Error('Invalid credentials'));
 
             for (let attempt = 0; attempt < 5; attempt++) {
