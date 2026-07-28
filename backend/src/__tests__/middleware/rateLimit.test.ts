@@ -53,6 +53,7 @@ describe('rateLimiters (#1540 infrastructure)', () => {
         void rateLimiters.login;
         void rateLimiters.ai;
         void rateLimiters.banking;
+        void rateLimiters.bankingPost;
         void rateLimiters.scheduler;
         void rateLimiters.strict;
         void rateLimiters.default;
@@ -64,9 +65,9 @@ describe('rateLimiters (#1540 infrastructure)', () => {
         // é determinística e validada uma vez no describe `exports`.
     });
 
-    it('exports exactly 7 named presets (login, ai, banking, scheduler, strict, default, sync)', () => {
+    it('exports exactly 8 named presets (login, ai, banking, bankingPost, scheduler, strict, default, sync)', () => {
         const keys = Object.keys(rateLimiters).sort();
-        expect(keys).toEqual(['ai', 'banking', 'default', 'login', 'scheduler', 'strict', 'sync']);
+        expect(keys).toEqual(['ai', 'banking', 'bankingPost', 'default', 'login', 'scheduler', 'strict', 'sync']);
     });
 
     it('each preset is a function (Express middleware)', () => {
@@ -243,7 +244,7 @@ describe('rateLimiters (#1540 infrastructure)', () => {
 
     describe('sync preset (#1569 — 30/1min, Dolibarr sync overload defense)', () => {
         it('configures 1min window with max 30', () => {
-            // Ordem: [0]login, [1]ai, [2]banking, [3]scheduler, [4]strict, [5]default, [6]sync
+            // Ordem: [0]login, [1]ai, [2]banking, [3]scheduler, [4]strict, [5]default, [6]sync, [7]bankingPost
             const opts = rateLimitCalls[6];
             expect(opts.windowMs).toBe(ONE_MIN_MS);
             expect(opts.max).toBe(30);
@@ -270,6 +271,51 @@ describe('rateLimiters (#1540 infrastructure)', () => {
             expect(err.isOperational).toBe(true);
             expect(err.message).toMatch(/sync/i);
             expect(err.details).toMatchObject({ retryAfter: 60, limit: 30 });
+        });
+    });
+
+    describe('bankingPost preset (#1330 — 10/15min for bankingRoutes.ts POST writes)', () => {
+        it('configures 15min window with max 10 (AC: 11ª requisição → 429)', () => {
+            // Ordem: [0]login, [1]ai, [2]banking, [3]scheduler, [4]strict, [5]default, [6]sync, [7]bankingPost
+            const opts = rateLimitCalls[7];
+            expect(opts.windowMs).toBe(FIFTEEN_MIN_MS);
+            expect(opts.max).toBe(10);
+        });
+
+        it('does NOT skip any HTTP method (cobre todos os POSTs do arquivo)', () => {
+            const opts = rateLimitCalls[7];
+            expect(opts.skip).toBeUndefined();
+        });
+
+        it('uses standardHeaders and disables legacy headers', () => {
+            const opts = rateLimitCalls[7];
+            expect(opts.standardHeaders).toBe(true);
+            expect(opts.legacyHeaders).toBe(false);
+        });
+
+        it('handler builds RATE_LIMIT error mentioning banking POST', () => {
+            const opts = rateLimitCalls[7];
+            const next = vi.fn();
+            opts.handler({}, {}, next, opts);
+            const err = next.mock.calls[0][0];
+            expect(err.status).toBe(429);
+            expect(err.code).toBe('RATE_LIMIT');
+            expect(err.isOperational).toBe(true);
+            expect(err.message).toMatch(/banking/i);
+            expect(err.details).toMatchObject({ retryAfter: 15 * 60, limit: 10 });
+        });
+
+        // #1330 — o bucket DEVE ser chaveado por CLIENTE REAL (clientIpKey),
+        // igual a todos os outros presets. Sem isso, atrás do túnel Cloudflare
+        // o IP do túnel (idêntico p/ todos) vira a chave e um único cliente
+        // estoura o limite de TODOS os usuários de banking. Verifica-se que
+        // (1) há keyGenerator e (2) ele prefere CF-Connecting-IP sobre req.ip.
+        it('keys by real client IP via clientIpKey (CF-Connecting-IP), not the tunnel IP', () => {
+            const opts = rateLimitCalls[7];
+            expect(typeof opts.keyGenerator).toBe('function');
+            const req = { headers: { 'cf-connecting-ip': '203.0.113.42' }, ip: '10.0.0.1' };
+            const key = opts.keyGenerator(req, {} as any);
+            expect(key).toBe('203.0.113.42');
         });
     });
 
