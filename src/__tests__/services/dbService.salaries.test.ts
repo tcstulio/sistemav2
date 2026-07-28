@@ -27,7 +27,8 @@ describe('IndexedDB STORES — issue #821 (salaries)', () => {
 
     it("nome e versão do banco continuam consistentes", () => {
         expect(DB_NAME).toBe('CoolGrooveDB');
-        expect(DB_VERSION).toBe(30);
+        // #1039 bumped the schema to 31 (date_modification index).
+        expect(DB_VERSION).toBe(31);
     });
 
     it('TODO storeName declarado nos hooks está presente em STORES (regressão)', () => {

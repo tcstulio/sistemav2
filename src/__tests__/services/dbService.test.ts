@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../utils/logger', () => ({
     logger: {
@@ -6,7 +6,8 @@ vi.mock('../../utils/logger', () => ({
     },
 }));
 
-import { dbService, DB_NAME, DB_VERSION } from '../../services/dbService';
+import { dbService, DB_NAME, DB_VERSION, DATE_MODIFICATION_INDEX } from '../../services/dbService';
+import { indexedDB as fakeIndexedDB, IDBObjectStore as FDBObjectStore } from 'fake-indexeddb';
 
 // NOTE: dbService tests have complex IndexedDB mocking requirements
 // that conflict with the global test setup. Skipped pending proper fix.
@@ -374,5 +375,186 @@ describe.skip('dbService', () => {
             
             expect(result).toBe(0);
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #1039: Real IndexedDB integration tests for getLastModified().
+//
+// The legacy suite above is left untouched. These tests use fake-indexeddb to
+// exercise the `date_modification` index + reverse key cursor end-to-end:
+//   - fresh install creates the index on every store
+//   - empty store / single record / 10k records (no full-array materialization)
+//   - fallback scan path for non-indexed date fields
+//   - v31 migration preserves existing data and adds the index
+//   - migration is idempotent (guarded index creation never throws)
+// ---------------------------------------------------------------------------
+describe('getLastModified (real IndexedDB via fake-indexeddb) [#1039]', () => {
+    beforeEach(() => {
+        // dbService references the global `indexedDB`; point it at the fake.
+        dbService.dbPromise = null;
+        (globalThis as any).indexedDB = fakeIndexedDB;
+    });
+
+    afterEach(async () => {
+        vi.restoreAllMocks();
+        // Close our connection so the subsequent deleteDatabase() isn't blocked.
+        try {
+            const db = await dbService.dbPromise;
+            db?.close();
+        } catch { /* ignore */ }
+        dbService.dbPromise = null;
+        await new Promise<void>((resolve) => {
+            const req = fakeIndexedDB.deleteDatabase(DB_NAME);
+            req.onsuccess = () => resolve();
+            req.onerror = () => resolve();
+            req.onblocked = () => resolve();
+        });
+    });
+
+    it('creates the date_modification index on stores during a fresh install', async () => {
+        const db: IDBDatabase = await dbService.open();
+        const store = db.transaction('customers', 'readonly').objectStore('customers');
+        expect(store.indexNames.contains(DATE_MODIFICATION_INDEX)).toBe(true);
+    });
+
+    it('returns 0 for an empty store', async () => {
+        await dbService.open();
+        const result = await dbService.getLastModified('customers');
+        expect(result).toBe(0);
+    });
+
+    it('returns the timestamp of a single record', async () => {
+        await dbService.open();
+        await dbService.saveAll('customers', [{ id: '1', date_modification: 1234 }]);
+        const result = await dbService.getLastModified('customers');
+        expect(result).toBe(1234);
+    });
+
+    it('returns the maximum timestamp across 10k records without materializing them', async () => {
+        await dbService.open();
+        const items = Array.from({ length: 10000 }, (_, i) => ({
+            id: `c-${i}`,
+            date_modification: 1000 + i, // max == 10999
+        }));
+        await dbService.saveAll('customers', items);
+
+        // Prove the index path is taken: open the `date_modification` index and
+        // never call getAll() (i.e. never load all 10k rows into memory).
+        const getAllSpy = vi.spyOn(FDBObjectStore.prototype, 'getAll');
+        const indexSpy = vi.spyOn(FDBObjectStore.prototype, 'index');
+
+        const start = performance.now();
+        const result = await dbService.getLastModified('customers');
+        const elapsed = performance.now() - start;
+
+        expect(result).toBe(10999);
+        expect(indexSpy).toHaveBeenCalledWith(DATE_MODIFICATION_INDEX);
+        expect(getAllSpy).not.toHaveBeenCalled();
+        // Reverse key cursor => O(log n + k) instead of O(n). CI can be slow, so
+        // we allow generous headroom while still bounding the cost.
+        expect(elapsed).toBeLessThan(100);
+    });
+
+    it('falls back to a full scan for non-indexed date fields', async () => {
+        await dbService.open();
+        await dbService.saveAll('customers', [
+            { id: '1', tms: 100 },
+            { id: '2', tms: 300 },
+            { id: '3', tms: 200 },
+        ]);
+        const getAllSpy = vi.spyOn(FDBObjectStore.prototype, 'getAll');
+
+        // 'tms' is not the indexed field => must use the scan fallback.
+        const result = await dbService.getLastModified('customers', 'tms');
+
+        expect(result).toBe(300);
+        expect(getAllSpy).toHaveBeenCalled();
+    });
+
+    it('preserves existing data and adds the index when upgrading from an old schema', async () => {
+        // Pre-seed a v1 DB (a store WITHOUT the date_modification index).
+        await new Promise<void>((resolve, reject) => {
+            const req = fakeIndexedDB.open(DB_NAME, 1);
+            req.onupgradeneeded = (e: any) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains('customers')) {
+                    db.createObjectStore('customers', { keyPath: 'id' });
+                }
+            };
+            req.onsuccess = () => {
+                const db = req.result;
+                const tx = db.transaction('customers', 'readwrite');
+                tx.objectStore('customers').put({ id: 'a', date_modification: 555 });
+                tx.objectStore('customers').put({ id: 'b', date_modification: 999 });
+                tx.objectStore('customers').put({ id: 'c', date_modification: 777 });
+                tx.oncomplete = () => { db.close(); resolve(); };
+                tx.onerror = () => reject(tx.error);
+            };
+            req.onerror = () => reject(req.error);
+        });
+
+        // Upgrade to v31 via dbService (adds the index to the existing store).
+        const db: IDBDatabase = await dbService.open();
+        const store = db.transaction('customers', 'readonly').objectStore('customers');
+        expect(store.indexNames.contains(DATE_MODIFICATION_INDEX)).toBe(true);
+
+        // Data preserved and getLastModified() works through the new index.
+        const all = await dbService.getAll('customers');
+        expect(all.length).toBe(3);
+        expect(await dbService.getLastModified('customers')).toBe(999);
+    });
+
+    it('idempotent migration: re-running the guarded index creation does not throw', async () => {
+        await dbService.open();
+
+        // Close dbService's connection so a higher-version open isn't blocked.
+        const openDb: IDBDatabase = await dbService.dbPromise!;
+        openDb.close();
+        dbService.dbPromise = null;
+
+        // Force a second upgrade pass (the index already exists from the first).
+        await new Promise<void>((resolve, reject) => {
+            const req = fakeIndexedDB.open(DB_NAME, DB_VERSION + 1);
+            req.onupgradeneeded = (e: any) => {
+                try {
+                    const store = e.target.transaction.objectStore('customers');
+                    // Guard mirrors the production code (#1039): no-op if present.
+                    if (!store.indexNames.contains(DATE_MODIFICATION_INDEX)) {
+                        store.createIndex(DATE_MODIFICATION_INDEX, DATE_MODIFICATION_INDEX, { unique: false });
+                    }
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            req.onsuccess = () => { req.result.close(); resolve(); };
+            req.onerror = () => reject(req.error);
+            req.onblocked = () => reject(new Error('upgrade blocked'));
+        });
+    });
+
+    it('unguarded duplicate index creation throws (the guard is required)', async () => {
+        await dbService.open();
+        const openDb: IDBDatabase = await dbService.dbPromise!;
+        openDb.close();
+        dbService.dbPromise = null;
+
+        let threw = false;
+        await new Promise<void>((resolve) => {
+            const req = fakeIndexedDB.open(DB_NAME, DB_VERSION + 2);
+            req.onupgradeneeded = (e: any) => {
+                try {
+                    const store = e.target.transaction.objectStore('customers');
+                    // No guard -> must throw a ConstraintError (name already used).
+                    store.createIndex(DATE_MODIFICATION_INDEX, DATE_MODIFICATION_INDEX, { unique: false });
+                } catch {
+                    threw = true;
+                }
+            };
+            req.onsuccess = () => { req.result.close(); resolve(); };
+            req.onerror = () => resolve(); // transaction aborted by the throw
+            req.onblocked = () => resolve();
+        });
+        expect(threw).toBe(true);
     });
 });
