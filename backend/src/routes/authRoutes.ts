@@ -19,20 +19,20 @@ const LOGIN_COOKIE_MAX_AGE_MS = Number.isSafeInteger(configuredCookieMaxAge) && 
     ? configuredCookieMaxAge
     : DEFAULT_LOGIN_COOKIE_MAX_AGE_MS;
 
-// Issue #1541: schema restrito a email+senha. A API do Dolibarr aceita ambos
-// (login OU email) como identificador no parâmetro `login`, então aqui
-// validamos como email e encaminhamos como login para o Dolibarr —
-// transparente. Manter `login` no body expandiria superfície de ataque
-// (enumeração de usernames) e diverge do requisito da issue.
+// O identificador é o LOGIN (usuário) — é o que o formulário do webapp envia ("Usuário") e o
+// que a API do Dolibarr espera no parâmetro `login` (aceita username OU e-mail como string).
+// REGRESSÃO CORRIGIDA (#1541/#1707 exigia `email` com formato de e-mail → quebrava TODO login por
+// usuário, ex.: "tulio.silva"/"admin", que não são e-mails). Aceitamos `login` genérico; mantidas
+// as demais melhorias do #1707 (rate-limit de login, cookie httpOnly, teto de tamanho).
 const LoginSchema = z.object({
-    email: z.string().trim().email().max(255),
+    login: z.string().trim().min(1).max(255),
     password: z.string().min(1).max(1024),
 });
 
 router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req, res) => {
     try {
-        const { email, password } = req.body;
-        const identifier = email;
+        const { login, password } = req.body;
+        const identifier = login;
 
         const result = await dolibarrService.login(identifier, password);
 
@@ -53,8 +53,13 @@ router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req,
             path: '/',
         });
 
+        // RETROCOMPAT (regressão #1707): o frontend lê `apiKey` do corpo e o usa como Bearer nas
+        // próximas chamadas. O #1707 removeu o `apiKey` do JSON (só cookie httpOnly) SEM migrar o
+        // frontend → "Falha ao obter chave de API". Restauramos o `apiKey` (= sessionToken) no
+        // corpo E mantemos o cookie. A migração completa p/ auth-só-por-cookie fica como follow-up.
         res.json({
             success: true,
+            apiKey: sessionToken,
             data: { user: userData ? { id: userData.id, login: userData.login, admin: userData.admin } : null },
         });
     } catch (error: any) {
