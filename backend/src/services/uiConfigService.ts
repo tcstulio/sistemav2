@@ -12,6 +12,9 @@ import fs from 'fs';
 import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
+// #1407 — gate central de quiet-hours. `notifications/quietHours` importa SÓ tipos daqui
+// (import type, apagado em runtime), então não há ciclo de módulo em runtime.
+import { isWithinQuietWindow, getQuietHours } from './notifications/quietHours';
 
 // createLogger (não logger.child) p/ casar com o padrão de mock dos testes (todos mockam createLogger).
 const log = createLogger('UiConfigService');
@@ -724,6 +727,39 @@ export class UiConfigService {
      */
     getCobrancaCadence(): CobrancaCadenceConfig {
         return { ...this.data.notificationPolicy.cobrancaCadence };
+    }
+
+    /**
+     * Política de notificações completa (#1407): cobrança, quiet-hours por canal,
+     * staleHours e horizonte de fatura. Lido A CADA chamada (sem cache) — mudanças
+     * no PUT /api/ui-config passam a valer no próximo tick, sem restart. Retorna um
+     * espelho raso p/ o caller não mutar o estado interno por acidente. Usado pelo
+     * gate central de `notificationService` e pelos testes de enforcement.
+     */
+    getNotificationPolicy(): NotificationPolicyConfig {
+        return { ...this.data.notificationPolicy };
+    }
+
+    /**
+     * #1407 — True se `now` cai DENTRO da janela de silêncio configurada (fuso
+     * America/Sao_Paulo resolvido a partir da config, via `notifications/quietHours`).
+     *
+     * - Com `channel`: avalia só a regra daquele canal (gate por-canal do dispatch).
+     * - Sem `channel`: true se ALGUM canal habilitado estiver em silêncio (consulta
+     *   "estamos em horário silencioso?", usada por observabilidade/diagnóstico).
+     *
+     * Lê a política ao vivo por `getNotificationPolicy()` — mockar esse getter nos
+     * testes controla a janela sem precisar de arquivo/I/O (testeável isoladamente).
+     * Fail-open: regra ausente/inválida nunca bloqueia (eco do `isWithinQuietWindow`).
+     */
+    isWithinQuietHours(now: Date = new Date(), channel?: QuietHoursChannel): boolean {
+        const { quietHours } = this.getNotificationPolicy();
+        const channels: readonly QuietHoursChannel[] = channel ? [channel] : QUIET_HOURS_CHANNELS;
+        for (const ch of channels) {
+            const rule = getQuietHours(quietHours, ch);
+            if (rule && isWithinQuietWindow(now, rule)) return true;
+        }
+        return false;
     }
 
     /** Aplica apenas campos válidos (sanitiza tamanho e valida a cor). Retorna a config final. */
