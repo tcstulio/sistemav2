@@ -10,7 +10,7 @@ import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
 import { requireDolibarrLogin, requireAdmin, isAdmin } from '../middleware/authMiddleware';
-import { validateBody, validatedBody } from '../middleware/validation';
+import { validateBody, validatedBody, validateParams, validatedParams } from '../middleware/validation';
 import { created, fail, ok, success } from '../utils/apiResponse';
 import { asyncHandler } from '../utils/asyncHandler';
 import { NotFoundError } from '../middleware/errorHandler';
@@ -121,6 +121,31 @@ const documentUpdateSchema = documentCreateSchema
     });
 
 type SkipApprovalFields = (req: Request, data: Record<string, unknown>) => DocumentAuditFields;
+
+// ===== Route param schemas =====
+// Substituem a validação inline (com `as any`) dos GETs por `validateParams`,
+// mantendo consistência com o resto do arquivo e fechando o type-safety gap
+// apontado pelo judge (#1544): nenhum `as` cast, enum validado pelo Zod.
+
+const VALID_DOC_TYPES = ['invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'] as const;
+
+const BoletoPreviewParamSchema = z.object({
+    banco: z.enum(['inter', 'itau']),
+    nossoNumero: z.string().min(1),
+}).strict();
+
+const InvoicePreviewParamSchema = z.object({
+    invoiceId: z.string().min(1),
+}).strict();
+
+const CustomerPhoneParamSchema = z.object({
+    thirdPartyId: z.string().min(1),
+}).strict();
+
+const EntityPdfParamSchema = z.object({
+    entityType: z.enum(VALID_DOC_TYPES),
+    entityId: z.string().min(1),
+}).strict();
 
 /**
  * Guard que exige admin somente quando o body indica `skipApproval: true`.
@@ -275,12 +300,9 @@ router.post(
  */
 router.get(
     '/boleto/:banco/:nossoNumero/preview',
+    validateParams(BoletoPreviewParamSchema),
     asyncHandler(async (req, res) => {
-        const { banco, nossoNumero } = req.params;
-
-        if (banco !== 'inter' && banco !== 'itau') {
-            return fail(res, 'BAD_REQUEST', 'Banco inválido', 400);
-        }
+        const { banco, nossoNumero } = validatedParams(req, BoletoPreviewParamSchema)!;
 
         const pdf = await documentService.getBoletoPDF(banco, nossoNumero);
 
@@ -296,8 +318,9 @@ router.get(
  */
 router.get(
     '/invoice/:invoiceId/preview',
+    validateParams(InvoicePreviewParamSchema),
     asyncHandler(async (req, res) => {
-        const { invoiceId } = req.params;
+        const { invoiceId } = validatedParams(req, InvoicePreviewParamSchema)!;
 
         const pdf = await documentService.getInvoicePDF(invoiceId);
 
@@ -313,8 +336,9 @@ router.get(
  */
 router.get(
     '/customer/:thirdPartyId/phone',
+    validateParams(CustomerPhoneParamSchema),
     asyncHandler(async (req, res) => {
-        const { thirdPartyId } = req.params;
+        const { thirdPartyId } = validatedParams(req, CustomerPhoneParamSchema)!;
 
         const phone = await documentService.getCustomerPhone(thirdPartyId);
 
@@ -326,21 +350,11 @@ router.get(
     })
 );
 
-const VALID_DOC_TYPES = ['invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'] as const;
-
 router.get(
     '/:entityType/:entityId/pdf',
+    validateParams(EntityPdfParamSchema),
     asyncHandler(async (req, res) => {
-        const { entityType, entityId } = req.params;
-
-        if (!VALID_DOC_TYPES.includes(entityType as any)) {
-            return fail(
-                res,
-                'BAD_REQUEST',
-                `Tipo inválido: ${entityType}. Tipos: ${VALID_DOC_TYPES.join(', ')}`,
-                400
-            );
-        }
+        const { entityType, entityId } = validatedParams(req, EntityPdfParamSchema)!;
 
         const pdf = await dolibarrService.getDocumentPDF(entityType, entityId);
 

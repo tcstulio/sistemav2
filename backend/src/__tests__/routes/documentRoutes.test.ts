@@ -422,6 +422,39 @@ describe('documentRoutes', () => {
 
             expect(res.status).toBe(400);
         });
+
+        it('returns a VALIDATION_ERROR envelope for invalid banco (#1544 validateParams)', async () => {
+            const res = await request(app)
+                .get('/api/documents/boleto/invalid/123456/preview');
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(res.body.error.details).toEqual(expect.any(Array));
+        });
+    });
+
+    describe('GET /api/documents/:entityType/:entityId/pdf (#1544 validateParams)', () => {
+        it('returns 200 with a valid entityType', async () => {
+            mockDolibarrService.getDocumentPDF.mockResolvedValue(Buffer.from('PDF'));
+
+            const res = await request(app)
+                .get('/api/documents/invoice/42/pdf')
+                .set('Accept', 'application/pdf');
+
+            expect(res.status).toBe(200);
+            expect(mockDolibarrService.getDocumentPDF).toHaveBeenCalledWith('invoice', '42');
+        });
+
+        it('returns 400 VALIDATION_ERROR for an invalid entityType (no more as any)', async () => {
+            const res = await request(app)
+                .get('/api/documents/unknown/42/pdf');
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockDolibarrService.getDocumentPDF).not.toHaveBeenCalled();
+        });
     });
 
     describe('GET /api/documents/invoice/:invoiceId/preview', () => {
