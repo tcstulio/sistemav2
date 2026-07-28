@@ -112,6 +112,8 @@ export interface Task {
     // cooldown imposto pelo Planner (anti spin-loop). Opcionais — cards legados não os têm.
     roundsUsed?: number;
     planWaitUntil?: number;
+    // #escalada-ui: última escalação manual (persiste após a rodada consumir o override) → badge no card.
+    lastManualEscalation?: { model: string; at: string };
 }
 
 export interface TaskEvent {

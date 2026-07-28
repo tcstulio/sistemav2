@@ -391,6 +391,10 @@ export interface Task {
     // #escalada-manual: modelo escolhido pelo humano p/ ESTA escalada (opus|fable). Override do
     // coderEscalationModel global só nesta task; tem precedência no tryOpusCoderRound.
     coderEscalationModelOverride?: string;
+    // #escalada-ui: última escalação manual (model + quando, ISO). PERSISTE após a rodada consumir o
+    // override acima (limpo em runOpencode) → o card mostra um badge glanceável "⬆️ Opus/Fable" e o
+    // dono sabe de relance que já escalou (e pra qual modelo), sem abrir o timeline.
+    lastManualEscalation?: { model: string; at: string };
     deadlockKicks?: number; // #1455: quantas vezes o planner re-despachou esta task por estar PARADA bloqueando dependentes (teto p/ não loopar)
     // #1154 P1 item 3: crítica do Judge + feedback humano são AÇÕES a atender que DEVEM sobreviver ao wipe
     // de feedbackHistory entre fases (senão o auto-fix roda CEGO). PERSISTENTE como gateFixInstruction:
@@ -1303,6 +1307,8 @@ class TaskRunnerService {
         if (m !== 'opus' && m !== 'fable') throw new Error(`Modelo inválido: "${model}". Use 'opus' ou 'fable'.`);
         task.coderEscalationModelOverride = m;
         task.forceEscalation = true;
+        // #escalada-ui: registro PERSISTENTE (o override acima é limpo após a rodada) → badge no card.
+        task.lastManualEscalation = { model: m, at: new Date().toISOString() };
         task.error = undefined;
         const branch = task.branch || `fix-${issueNumber}`;
         task.branch = branch;

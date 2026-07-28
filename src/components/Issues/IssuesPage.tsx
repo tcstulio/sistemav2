@@ -506,6 +506,15 @@ const SortableMiniCard: React.FC<{
                 )}
                 <PrecheckBadge report={task.precheckReport} compact />
                 <TaskAutomationChips task={task} maxRoundsPerTask={maxRoundsPerTask} />
+                {task.lastManualEscalation && (
+                    <span
+                        className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 font-medium inline-flex items-center gap-0.5"
+                        title={`Escalada manual para Claude ${task.lastManualEscalation.model === 'opus' ? 'Opus' : 'Fable'} em ${new Date(task.lastManualEscalation.at).toLocaleString('pt-BR')}`}
+                        data-testid={`escalated-badge-${task.issueNumber}`}
+                    >
+                        <Sparkles size={9} /> {task.lastManualEscalation.model === 'opus' ? 'Opus' : 'Fable'}
+                    </span>
+                )}
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
             {isEpic(task) && epicProgress && (
