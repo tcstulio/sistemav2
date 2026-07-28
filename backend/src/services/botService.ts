@@ -684,6 +684,11 @@ class BotService {
             // 6. Resolve Signature & Context (Session/Account Level)
             let context = sessionSettings.autoReplyContext || "Você é um assistente virtual útil.";
 
+            // #12b — nudge contra "anuncia-e-não-executa" (o MiniMax M3 às vezes escreve "vou
+            // consultar"/"disparando list_users" e NÃO chama a tool). Instrução curta: ou chama a
+            // ferramenta de fato (e responde com o resultado REAL), ou responde direto — nunca anuncia.
+            context += `\n\n[COMPORTAMENTO] Para usar uma ferramenta, CHAME-A de fato e responda com o resultado real. NUNCA escreva que "vai"/"vou" usar, consultar ou "disparar" uma ferramenta sem executá-la — ou você a chama e traz o resultado, ou responde direto.`;
+
             // [ANTIGRAVITY] INJECT SYSTEM DATE/TIME
             const now = new Date();
             const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -761,7 +766,7 @@ class BotService {
                     const permissionProfile = await userPermissionsService.getProfile(senderIdentity.userId);
                     const permContext = await userPermissionsService.getProfileForContext(senderIdentity.userId);
                     toolCtx = { readOnly: false, userId: senderIdentity.userId, isAdmin: false, permissionProfile, turnId, pendingMedia };
-                    context += `\n\n[FUNCIONÁRIO IDENTIFICADO]\nVocê está falando com ${senderIdentity.displayName} (usuário interno, id ${senderIdentity.userId}), identificado pelo telefone.\n\n${permContext}`;
+                    context += `\n\n[FUNCIONÁRIO IDENTIFICADO]\nVocê está falando com ${senderIdentity.displayName} (usuário interno, id ${senderIdentity.userId}), identificado pelo telefone cadastrado. Trate essa identidade como CERTA (confirmada pelo cadastro) — NÃO diga "provável", "acho que", nem que a identidade foi "fixada no início da sessão".\n\n${permContext}`;
                     log.info(`Funcionário identificado no WhatsApp: ${senderIdentity.displayName} (id ${senderIdentity.userId}) — contexto com o perfil do usuário.`);
                 } catch (e: any) {
                     log.warn(`Elevação de funcionário falhou (${e?.message}) — mantendo somente-leitura.`);
