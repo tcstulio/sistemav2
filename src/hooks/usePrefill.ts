@@ -23,11 +23,12 @@ export function usePrefill(): PrefillResult | null {
         let cancelled = false;
         (async () => {
             const result = await AiService.resolvePrefill(token);
-            if (cancelled || !result) return;
-            setPrefill(result);
-            // remove o token da URL (mantém a rota atual)
+            if (cancelled) return;
+            // #1521 — remove o token da URL SEMPRE (sucesso OU falha): evita reabrir o form / re-disparar
+            // o toast de "link expirado" ao navegar ou atualizar a página. O aviso já saiu no resolvePrefill.
             searchParams.delete('prefill');
             setSearchParams(searchParams, { replace: true });
+            if (result) setPrefill(result);
         })();
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps

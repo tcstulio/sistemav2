@@ -268,6 +268,56 @@ describe('ChannelRouter', () => {
             expect(legacyMessageService.sendText).toHaveBeenCalledWith('custom-session', '5511@c.us', 'Hello');
         });
 
+        // #1658 — propagação da flag `metadata.systemNotification` do ponto institucional
+        // de envio (schedulerService/notificationService) até a `messageService.sendText`,
+        // onde a metadata é guardada no Map para que o `getMessages` (histórico do LLM) a
+        // veja. Garante que NENHUM elo intermediário descarta a flag.
+        it('#1658: propaga metadata={systemNotification:true} para legacyMessageService.sendText', async () => {
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
+
+            await channelRouter.sendWhatsApp(
+                '5511@c.us',
+                'Olá TULIO, a tarefa TK1234-5678 venceu.',
+                'default',
+                { systemNotification: true }
+            );
+
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith(
+                'default',
+                '5511@c.us',
+                'Olá TULIO, a tarefa TK1234-5678 venceu.',
+                { systemNotification: true }
+            );
+        });
+
+        it('#1658: sendWhatsApp SEM metadata continua funcionando (sem quebrar retrocompat)', async () => {
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
+
+            // chamada sem metadata — não pode quebrar nem exigir um 4º arg
+            await channelRouter.sendWhatsApp('5511@c.us', 'oi', 'default');
+
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'oi');
+        });
+
+        it('#1658: sendWhatsApp via `send` (MessagePayload) propaga metadata corretamente', async () => {
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
+
+            await channelRouter.send({
+                channel: 'whatsapp',
+                recipient: '5511@c.us',
+                content: 'Cobrança FA2601-0042',
+                sessionId: 'default',
+                metadata: { systemNotification: true },
+            });
+
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith(
+                'default',
+                '5511@c.us',
+                'Cobrança FA2601-0042',
+                { systemNotification: true }
+            );
+        });
+
         it('faz fallback para a sessão WORKING quando a primária não está pronta e a política é "first-working"', async () => {
             // #1438 — adaptado: o fallback deixou de ser incondicional; agora exige
             // `whatsappFallbackPolicy: 'first-working'` no uiConfig. Asserção equivalente
@@ -581,13 +631,77 @@ describe('ChannelRouter', () => {
             return counts;
         };
 
-        // Sanidade: o contador flagra o bypass (3º arg = sessionId) e aceita a chamada correta (2 args),
-        // inclusive multi-linha e com objeto interno (vírgula aninhada não conta como arg top-level).
-        it('sanidade do contador de argumentos (2 args ok, 3 args = bypass)', () => {
+        // Sanidade: o contador flagra o bypass (3º arg = sessionId NÃO-undefined) e aceita
+        // a chamada correta (2 args OU 3 args com `undefined`/3+ args com metadata opcional).
+        // #1658: inclui a 4ª posição opcional `metadata` (string raw é "undefined" ou objeto);
+        // o contador cru conta-a-como-arg se for um literal não-vazio, mas o que importa é
+        // que o 3º arg (sessionId) não tenha string literal que BYPASSE o resolveSession.
+        it('sanidade do contador de argumentos (2 args ok; bypass = 3º arg sessionId COM literal)', () => {
             expect(sendWhatsAppArgCounts(`channelRouter.sendWhatsApp(chatId, msg);`)).toEqual([2]);
+            // bypass perigoso: 3º arg é string literal → resolveSession é pulado
             expect(sendWhatsAppArgCounts(`channelRouter.sendWhatsApp(chatId, msg, 'default');`)).toEqual([3]);
+            // #1658: metadata opcional de 4ª posição → resolveSession recebe `undefined` e age normal
+            expect(sendWhatsAppArgCounts(`channelRouter.sendWhatsApp(chatId, msg, undefined, { systemNotification: true });`)).toEqual([4]);
             expect(sendWhatsAppArgCounts(`channelRouter.sendWhatsApp(\n  recipient,\n  build({a, b}),\n);`)).toEqual([2]);
             expect(sendWhatsAppArgCounts(`sem chamada aqui`)).toEqual([]);
+        });
+
+        // Para os 3 pontos institucionais, a checagem SEMÂNTICA de #1438 é: o 3º arg
+        // (sessionId), se presente, precisa ser `undefined` — qualquer string/identificador
+        // lá dentro é bypass do resolveSession (não passa pela config primária nem pela
+        // política de fallback). Usamos uma análise mais inteligente: extraímos o 3º SEGMENTO
+        // top-level e checamos que ele seja literalmente `undefined`.
+        const thirdArgIsUndefined = (code: string): { hasCall: boolean; allUndefined: boolean } => {
+            const marker = 'channelRouter.sendWhatsApp(';
+            const out: { hasCall: boolean; allUndefined: boolean } = { hasCall: false, allUndefined: true };
+            let from = 0;
+            for (;;) {
+                const idx = code.indexOf(marker, from);
+                if (idx === -1) break;
+                out.hasCall = true;
+                from = idx + marker.length;
+                let depth = 1;
+                let str = '';
+                let seg = '';
+                const segs: string[] = [];
+                for (let i = from; i < code.length && depth > 0; i++) {
+                    const ch = code[i];
+                    if (str) {
+                        seg += ch;
+                        if (ch === str && code[i - 1] !== '\\') str = '';
+                        continue;
+                    }
+                    if (ch === '"' || ch === "'" || ch === '`') { str = ch; seg += ch; continue; }
+                    if (ch === '(' || ch === '[' || ch === '{') { depth++; seg += ch; continue; }
+                    if (ch === ')' || ch === ']' || ch === '}') {
+                        depth--;
+                        if (depth === 0) break;
+                        seg += ch;
+                        continue;
+                    }
+                    if (ch === ',' && depth === 1) { segs.push(seg); seg = ''; continue; }
+                    seg += ch;
+                }
+                segs.push(seg);
+                // 3º arg (índice 2) é o sessionId. Se houve 3 ou mais args E o 3º não
+                // for literalmente `undefined` (ignorando whitespace), é bypass.
+                if (segs.length >= 3 && segs[2].trim() !== 'undefined') {
+                    out.allUndefined = false;
+                }
+            }
+            return out;
+        };
+
+        // Sanidade do novo teste semântico
+        it('sanidade da checagem semântica de sessionId (3º arg = undefined)', () => {
+            expect(thirdArgIsUndefined(`channelRouter.sendWhatsApp(chatId, msg);`))
+                .toEqual({ hasCall: true, allUndefined: true });
+            expect(thirdArgIsUndefined(`channelRouter.sendWhatsApp(chatId, msg, undefined, meta);`))
+                .toEqual({ hasCall: true, allUndefined: true });
+            expect(thirdArgIsUndefined(`channelRouter.sendWhatsApp(chatId, msg, 'default');`))
+                .toEqual({ hasCall: true, allUndefined: false });
+            expect(thirdArgIsUndefined(`channelRouter.sendWhatsApp(chatId, msg, mySession);`))
+                .toEqual({ hasCall: true, allUndefined: false });
         });
 
         const SOURCES = [
@@ -597,13 +711,15 @@ describe('ChannelRouter', () => {
         ] as const;
 
         for (const src of SOURCES) {
-            it(`${src.file} (${src.fn}) chama channelRouter.sendWhatsApp SEM sessionId explícito (2 args)`, () => {
-                const counts = sendWhatsAppArgCounts(readSrc(src.file));
+            it(`${src.file} (${src.fn}) chama channelRouter.sendWhatsApp SEM sessionId explícito (3º arg undefined ou ausente)`, () => {
+                const check = thirdArgIsUndefined(readSrc(src.file));
                 // (a) existe ao menos uma chamada ao router (não faz bypass via legacyMessageService)
-                expect(counts.length).toBeGreaterThan(0);
-                // (b) NENHUMA chamada passa o 3º arg (sessionId) — senão resolveSession seria pulado
-                //     e a política de fallback ignorada (#1438). 2 args = (chatId, content).
-                for (const n of counts) expect(n).toBeLessThanOrEqual(2);
+                expect(check.hasCall).toBe(true);
+                // (b) NENHUMA chamada passa sessionId real — se 3º arg existir, é literalmente
+                //     `undefined` (sinalizando "use o resolveSession com a config persistida").
+                //     Senão, resolveSession é chamado com sessionId=undefined e age normalmente.
+                //     Isso preserva a política de fallback de #1438.
+                expect(check.allUndefined).toBe(true);
             });
         }
     });

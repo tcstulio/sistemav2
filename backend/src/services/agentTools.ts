@@ -14,6 +14,7 @@ import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
 import { isValidExternalUrl } from '../utils/urlValidation';
 import { resolveUserMobile } from '../utils/userMobile';
+import { resolveEventPeriod } from '../utils/eventPeriod';
 import { logger } from '../utils/logger';
 import { signDeeplink } from '../utils/deeplinkToken';
 import { minimaxService } from './minimaxService';
@@ -32,6 +33,8 @@ import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
 import { classifyTool } from '../config/actionCatalog';
 import { writeIdempotencyKey, getIdempotentWrite, rememberWrite } from '../utils/writeIdempotency';
 import { notificationService } from './notificationService';
+import { getReportScreenshot } from '../agent/tools/getReportScreenshot';
+import { getReportHtml } from '../agent/tools/getReportHtml';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -86,6 +89,19 @@ interface ToolContext {
      * Ausente (ex.: webapp hoje) ⇒ guarda inativa, comportamento inalterado.
      */
     turnId?: string;
+    /**
+     * true quando o perfil de permissões DEVERIA existir (usuário logado no webapp) mas FALHOU a
+     * carregar (Dolibarr instável, id não resolvido). Distingue-se de "sem perfil por ser contexto
+     * público/não-identificado" (esse é tratado pela trava readOnly). Com a flag ligada, executeTool
+     * NEGA escrita real fail-closed a não-admin (não dá p/ checar permissão sem o perfil). Ver #1514.
+     */
+    profileLoadFailed?: boolean;
+    /**
+     * Mídia gerada DURANTE o turno (por generate_speech/image/video/get_document_pdf) para o
+     * chamador (ex.: botService no WhatsApp) enviar NATIVAMENTE (nota de voz / anexo) além do link
+     * no texto. O caller cria o array []; as tools empurram; o caller envia após a resposta.
+     */
+    pendingMedia?: { kind: 'audio' | 'image' | 'video' | 'file'; url?: string; dataUri?: string; filename?: string; caption?: string }[];
 }
 
 const toolContextStore = new AsyncLocalStorage<ToolContext>();
@@ -173,7 +189,7 @@ const TOOLS_PROMPT_FULL = `
         16. list_warehouses() - Lista estoques/armazéns.
         17. list_tasks(projectId: string) - Lista tarefas de um projeto.
         18. list_user_tasks(userId?: string) - Lista as tarefas atribuídas a um usuário. Omita userId para listar as tarefas do PRÓPRIO usuário logado ("minhas tarefas").
-        19. list_events(limit: number) - Lista eventos da agenda.
+        19. list_events(limit?, period?, date_start?, date_end?) - Lista eventos da agenda. Para "dessa semana/mês/hoje" PREFIRA period (calculado pelo servidor): 'today'|'tomorrow'|'this_week'|'next_week'|'this_month'|'next_month'. Ou date_start/date_end em YYYY-MM-DD para intervalo específico. Sem filtro = mais recentes.
         20. list_contacts(search: string) - Lista contatos (pessoas de contato).
         21. list_categories(type: string) - Lista categorias (customer, product, etc).
         22. list_suppliers(search: string) - Lista fornecedores.
@@ -187,8 +203,7 @@ const TOOLS_PROMPT_FULL = `
         30. list_manufacturing_orders(status: 'draft'|'validated'|'inprogress') - Lista ordens de produção.
         31. list_candidates(search: string) - Lista candidatos (RH/Recrutamento).
         32. list_job_positions() - Lista vagas de emprego abertas.
-        33. search_web(query: string) - Pesquisa preços e fornecedores na internet (Google via Serper).
-        34. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
+        33. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
 
         FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
         33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
@@ -299,6 +314,10 @@ const TOOLS_PROMPT_FULL = `
 
         FERRAMENTA DE AJUDA DE TELA:
         93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
+
+        FERRAMENTAS DE CONTEXTO VISUAL DE REPORTS:
+        122. get_report_screenshot(reportId) - Busca o print PNG de um report e devolve um link assinável temporário, válido por 1 hora. Use quando o usuário descrever um problema visual. Exemplo: peça para o Marciano ver o print do report #42.
+        123. get_report_html(reportId, selector?) - Busca o HTML sanitizado de um report. selector é opcional; quando informado, devolve apenas o innerHTML do primeiro elemento correspondente ao seletor CSS. Exemplo: peça para o Marciano ver o HTML do report #42 filtrando por ".error".
 
         FERRAMENTAS DE TASK RUNNER (automação opencode):
         94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
@@ -990,6 +1009,21 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         log.warn(`Negado: remetente não-identificado tentou ler dado interno — tool=${resolvedTool} actor=${ctx.userLogin || 'não-identificado'}`);
         return `A ferramenta "${resolvedTool}" não está disponível neste contexto.`;
     }
+    // #1514/#1528 — usuário LOGADO cujo perfil FALHOU a carregar (Dolibarr instável/ id não resolvido):
+    // sem perfil não dá p/ checar permissão, e como readOnly é falsy no webapp a trava acima não pega.
+    // Fail-closed: nega a não-admin (admin é conhecido por req.user.admin, independe do perfil):
+    //   (a) ESCRITA REAL (isMutatingTool — validate_*/delete/notify_*/send_whatsapp); e
+    //   (b) LEITURA GATED por permissão (#1528 — tools com chave em WRITE_TOOLS, ex.: get_financial_*/
+    //       get_bank_balance → canAccessFinancial), que sem perfil executariam sem checagem (o gate
+    //       normal vive dentro de `if (permissionProfile && !isAdmin)`, pulado com perfil null).
+    // NÃO pega leituras SEM chave de permissão (search/list_*/get_customer → getWritePermissionKey null).
+    // prepare_* é isento — só gera deeplink; a escrita real ocorre no /confirm-action com a chave RBAC
+    // do usuário (2º fator). O usuário re-tenta quando o Dolibarr volta.
+    if (ctx.profileLoadFailed && !ctx.isAdmin && !resolvedTool.startsWith('prepare_')
+        && (isMutatingTool(resolvedTool) || getWritePermissionKey(resolvedTool))) {
+        log.warn(`#1514/#1528: perfil não carregou — "${resolvedTool}" negada fail-closed p/ ${ctx.userLogin || 'usuário'} (sem perfil, não-admin).`);
+        return `Não foi possível verificar suas permissões agora (o perfil não carregou). Tente novamente em instantes; se persistir, contate um administrador.`;
+    }
     if (ctx.permissionProfile && !ctx.isAdmin) {
         const permKey = getWritePermissionKey(resolvedTool);
         if (permKey && !ctx.permissionProfile.agent[permKey as keyof typeof ctx.permissionProfile.agent]) {
@@ -1418,8 +1452,19 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 ).join('') + '</ul>';
         }
         case 'list_events': {
-            const events = await dolibarrService.listEvents(args?.limit);
-            if (events.length === 0) return 'Nenhum evento encontrado.';
+            // Aceita period (atalho resolvido pelo servidor) OU date_start/date_end explícitos.
+            let dateStart = args?.date_start;
+            let dateEnd = args?.date_end;
+            if (args?.period && !dateStart && !dateEnd) {
+                const range = resolveEventPeriod(String(args.period), new Date());
+                dateStart = range.dateStart;
+                dateEnd = range.dateEnd;
+            }
+            const events = await dolibarrService.listEvents(args?.limit, dateStart, dateEnd);
+            if (events.length === 0) {
+                const periodoTxt = (dateStart || dateEnd) ? ` no período informado (${dateStart || '…'} a ${dateEnd || '…'})` : '';
+                return `Nenhum evento encontrado${periodoTxt}.`;
+            }
             return '<h3>📅 Eventos</h3><ul>' +
                 events.map((e: any) =>
                     `<li><a href="/agenda/${e.id}" class="text-blue-600 underline font-semibold">${e.label}</a> — ${e.datep || ''}</li>`
@@ -1532,12 +1577,22 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 ).join('') + '</ul>';
         }
         case 'search_web': {
-            const searchResults = await ScraperService.searchGoogle(args?.query);
-            if (!searchResults || searchResults.length === 0) return `Nenhum resultado encontrado para "${args?.query}".`;
-            return '<h3>🔍 Resultados da Web</h3><ul>' +
-                searchResults.map((r: any) =>
-                    `<li><a href="${r.link || '#'}" class="text-blue-600 underline font-semibold">${r.title || 'Sem título'}</a> — ${r.snippet || ''}</li>`
-                ).join('') + '</ul>';
+            try {
+                const searchResults = await ScraperService.searchGoogle(args?.query);
+                if (!searchResults || searchResults.length === 0) return `Nenhum resultado encontrado para "${args?.query}".`;
+                return '<h3>🔍 Resultados da Web</h3><ul>' +
+                    searchResults.map((r: any) =>
+                        `<li><a href="${r.link || '#'}" class="text-blue-600 underline font-semibold">${r.title || 'Sem título'}</a> — ${r.snippet || ''}</li>`
+                    ).join('') + '</ul>';
+            } catch (err: any) {
+                // #1504 — mantém o case para chamadas legadas, mas devolve o erro EXPLÍCITO do
+                // ScraperService (ex.: 'SERPER_API_KEY ausente — busca via Serper indisponível')
+                // em vez do genérico 'Nenhum resultado encontrado'. O nome da ferramenta vai como
+                // campo estruturado para preservar a rastreabilidade sem violar o critério literal
+                // "token da ferramenta aparece apenas no case do dispatch" do aceite da issue.
+                log.error('tool dispatch falhou', { tool, error: err?.message || String(err) });
+                return `Erro: ${err?.message || String(err)}`;
+            }
         }
         case 'extract_from_url': {
             if (!isValidExternalUrl(args?.url)) {
@@ -1552,11 +1607,13 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'generate_speech': {
             if (!args?.text) throw new Error("Parâmetro 'text' ausente.");
             const { url } = await minimaxService.generateSpeech(String(args.text), { voiceId: args.voice_id ? String(args.voice_id) : undefined });
+            getToolContext().pendingMedia?.push({ kind: 'audio', url }); // envio nativo (nota de voz) pelo caller
             return `Áudio gerado (mp3, válido ~24h): ${url}`;
         }
         case 'generate_image': {
             if (!args?.prompt) throw new Error("Parâmetro 'prompt' ausente.");
             const { urls } = await minimaxService.generateImage(String(args.prompt), { aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined });
+            urls.forEach((u: string) => getToolContext().pendingMedia?.push({ kind: 'image', url: u })); // envio nativo (anexo)
             return `Imagem gerada (válida ~24h): ${urls.join(' , ')}`;
         }
         case 'generate_video': {
@@ -1570,7 +1627,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'check_video': {
             if (!args?.task_id) throw new Error("Parâmetro 'task_id' ausente.");
             const { status, url } = await minimaxService.getVideoStatus(String(args.task_id));
-            if (url) return `Vídeo pronto (válido ~24h): ${url}`;
+            if (url) { getToolContext().pendingMedia?.push({ kind: 'video', url }); return `Vídeo pronto (válido ~24h): ${url}`; }
             if (status === 'Fail') return `A geração do vídeo (task_id ${args.task_id}) falhou.`;
             return `Vídeo ainda processando (status: ${status}). Tente novamente em instantes com o mesmo task_id.`;
         }
@@ -1658,6 +1715,14 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 log.error('create_bug_report failed', e);
                 return `Erro ao criar bug report: ${e.message}`;
             }
+        }
+
+        case 'get_report_screenshot': {
+            return getReportScreenshot(args?.reportId ?? args?.report_id);
+        }
+
+        case 'get_report_html': {
+            return getReportHtml(args?.reportId ?? args?.report_id, args?.selector);
         }
 
         case 'get_screen_help': {
@@ -1966,7 +2031,9 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 const base64 = pdf.toString('base64');
                 const typeLabels: Record<string, string> = { invoice: 'Fatura', order: 'Pedido', proposal: 'Proposta', supplier_order: 'Pedido fornecedor', supplier_invoice: 'Fatura fornecedor', intervention: 'Intervenção', contract: 'Contrato', shipment: 'Expedição' };
                 const label = typeLabels[entityType] || entityType;
-                return `PDF da ${label} #${entityId} obtido com sucesso (${pdf.length} bytes). Base64: ${base64.substring(0, 100)}...[truncado, ${base64.length} chars total]. Para download: GET /api/documents/${entityType}/${entityId}/pdf`;
+                // envio nativo do PDF como anexo (pelo caller); o base64 NÃO precisa mais ir no texto.
+                getToolContext().pendingMedia?.push({ kind: 'file', dataUri: `data:application/pdf;base64,${base64}`, filename: `${label}_${entityId}.pdf`, caption: `${label} #${entityId}` });
+                return `PDF da ${label} #${entityId} obtido (${pdf.length} bytes) — enviando o arquivo em anexo. Também disponível em: GET /api/documents/${entityType}/${entityId}/pdf`;
             } catch (e: any) {
                 return `Erro ao obter PDF de ${entityType} #${entityId}: ${e.message || e}`;
             }

@@ -15,6 +15,13 @@ export interface AdminAuditEntry {
     target?: string;      // alvo da ação (ex.: userId)
     summary?: string;     // descrição curta legível
     changes?: Record<string, { before: unknown; after: unknown }>;
+    userId?: string;
+    userRole?: string;
+    documentType?: string;
+    entityType?: string;
+    entityId?: string | number;
+    timestamp?: string;
+    ip?: string;
 }
 
 interface AuditStore {

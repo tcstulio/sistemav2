@@ -83,6 +83,33 @@ describe('WhatsAppService', () => {
 
             expect(result).toEqual([]);
         });
+
+        it('#envelope-fix: desembrulha a resposta padronizada { success, data:[...] } (#1568)', async () => {
+            const sessions = [{ id: 'default', status: 'WORKING', me: { id: '5511999999999@c.us', pushName: 'T' } }];
+            // o backend agora responde envelopado — antes o service fazia .map num objeto e retornava []
+            mockAxios.get.mockResolvedValue({ data: { success: true, data: sessions } });
+
+            const result = await WhatsAppService.getAccounts();
+
+            expect(result).toHaveLength(1);
+            expect(result[0].status).toBe('connected');
+        });
+    });
+
+    describe('getConversations (envelope)', () => {
+        it('desembrulha { success, data:[...] } e mapeia as conversas', async () => {
+            const chats = [{ id: '5511@c.us', name: 'Cliente', timestamp: 1700000000, unreadCount: 2 }];
+            mockAxios.get.mockResolvedValue({ data: { success: true, data: chats } });
+            const result = await WhatsAppService.getConversations('default');
+            expect(result).toHaveLength(1);
+            expect(result[0].customerName).toBe('Cliente');
+        });
+        it('forma CRUA (não-envelopada) ainda funciona (backward-compat)', async () => {
+            const chats = [{ id: '5511@c.us', name: 'Cliente' }];
+            mockAxios.get.mockResolvedValue({ data: chats });
+            const result = await WhatsAppService.getConversations('default');
+            expect(result).toHaveLength(1);
+        });
     });
 
     describe('createSession', () => {

@@ -171,18 +171,22 @@ describe('bankingRoutes', () => {
         });
     });
 
+    // Chave de API bem-formada (alfanumérica, 32 chars) — exigida pelo guard
+    // validateUserApiKey (#1542) quando o header DOLAPIKEY está presente.
+    const VALID_API_KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+
     describe('POST /api/banking/reconcile/toggle — #630 persistence', () => {
         it('returns 200 and success:true when reconcileBankLine succeeds', async () => {
             mockDolibarrService.reconcileBankLine.mockResolvedValue(true);
             const res = await request(app)
                 .post('/api/banking/reconcile/toggle')
-                .set('DOLAPIKEY', 'test-key')
+                .set('DOLAPIKEY', VALID_API_KEY)
                 .send({ accountId: 'acc1', lineId: 'line1', reconciled: true });
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(mockDolibarrService.reconcileBankLine).toHaveBeenCalledWith(
-                'acc1', 'line1', true, 'test-key'
+                'acc1', 'line1', true, VALID_API_KEY
             );
         });
 
@@ -227,6 +231,72 @@ describe('bankingRoutes', () => {
                 .send({ accountId: 'acc1', lineId: 'line1', reconciled: true });
 
             expect(res.status).toBe(500);
+        });
+    });
+
+    describe('userApiKey header validation (#1542)', () => {
+        it('returns 401 with INVALID_API_KEY when DOLAPIKEY is malformed', async () => {
+            const res = await request(app)
+                .post('/api/banking/balance/calculate')
+                .set('DOLAPIKEY', 'short-key!')
+                .send({ initialBalance: 1000, transactions: [] });
+
+            expect(res.status).toBe(401);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('INVALID_API_KEY');
+        });
+
+        it('returns 401 when DOLAPIKEY has a valid length but unsafe charset', async () => {
+            const res = await request(app)
+                .post('/api/banking/balance/calculate')
+                .set('DOLAPIKEY', 'a'.repeat(20) + ' spaces here 12')
+                .send({ initialBalance: 1000, transactions: [] });
+
+            expect(res.status).toBe(401);
+            expect(res.body.error.code).toBe('INVALID_API_KEY');
+        });
+
+        it('accepts a well-formed 32-char alphanumeric DOLAPIKEY', async () => {
+            const res = await request(app)
+                .post('/api/banking/balance/calculate')
+                .set('DOLAPIKEY', VALID_API_KEY)
+                .send({ initialBalance: 1000, transactions: [] });
+
+            expect(res.status).toBe(200);
+        });
+
+        it('allows requests without the header (falls back to session auth)', async () => {
+            const res = await request(app)
+                .post('/api/banking/balance/calculate')
+                .send({ initialBalance: 1000, transactions: [] });
+
+            expect(res.status).toBe(200);
+        });
+    });
+
+    describe('Zod validation rejects malformed payloads (#1542)', () => {
+        it('rejects non-number initialBalance with 400', async () => {
+            const res = await request(app)
+                .post('/api/banking/balance/calculate')
+                .send({ initialBalance: 'muito', transactions: [] });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects non-array transactions on insights/cash-flow with 400', async () => {
+            const res = await request(app)
+                .post('/api/banking/insights/cash-flow')
+                .send({ accounts: [], transactions: 'nope' });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects non-boolean reconciled on reconcile/toggle with 400', async () => {
+            const res = await request(app)
+                .post('/api/banking/reconcile/toggle')
+                .send({ accountId: 'acc1', lineId: 'line1', reconciled: 'yes' });
+
+            expect(res.status).toBe(400);
         });
     });
 });

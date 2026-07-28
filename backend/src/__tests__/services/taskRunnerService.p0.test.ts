@@ -54,7 +54,7 @@ describe('#1154 P0-1 — segurança: token do GitHub só p/ hosts confiáveis (a
 describe('#1154 P0-2 — timer-bomba do worktreeLock: caminho FELIZ não dispara efeitos colaterais', () => {
     beforeEach(() => {
         svc.stopPolling?.();
-        svc.worktreeLock = Promise.resolve();
+        svc.worktreeLocks = new Map(); // #slot-lock: lock keyed por slot.root (era Promise única)
         svc.store = { tasks: {} };
         svc.sweepOrphanedOpencode = vi.fn(async () => false);
         svc.cleanStaleLocks = vi.fn();
@@ -71,7 +71,7 @@ describe('#1154 P0-2 — timer-bomba do worktreeLock: caminho FELIZ não dispara
         svc.store.tasks = { 42: { issueNumber: 42, status: 'running' } };
 
         // Aquisição no caminho FELIZ (prev já resolvido) — roda o fn e libera.
-        await svc.withWorktreeLock('exec #42', async () => 'ok');
+        await svc.withWorktreeLock('exec #42', { id: 1, root: '/tmp/wt', dataDir: null }, async () => 'ok');
 
         // Avança MUITO além do watchdog (3h05). Sem o clearTimeout, o setTimeout dispararia AQUI.
         await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000);

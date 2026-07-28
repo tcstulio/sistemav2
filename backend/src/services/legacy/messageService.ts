@@ -1,10 +1,28 @@
 import { sessionService } from './sessionService';
 import { AudioTranscoder } from '../../utils/audioTranscoder';
 import { MessageMedia } from 'whatsapp-web.js';
+import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../../utils/logger';
 
 const log = createLogger('MessageService');
+
+/**
+ * #1658 — TTL da metadata das mensagens enviadas (24h). Notificações de cobrança/lembrete
+ * normalmente recebem resposta em minutos/horas; manter a flag por 1 dia cobre o cenário
+ * completo do chat 59936436445425@lid (3 notificações → "oi" do usuário) até o final do
+ * expediente. Sem TTL, o Map cresceria para sempre em produção — o scheduler dispara
+ * recorrências diárias por usuário. Valor fixo + persistência > Map eterno em memória.
+ */
+const METADATA_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Caminho do store durável (sobrevive a restart — antes só vivia no Map do singleton). */
+const METADATA_FILE = path.join(__dirname, '../../../data/sent_message_metadata.json');
+
+interface StoredMetadata {
+    metadata: Record<string, any>;
+    sentAt: number;
+}
 
 /**
  * @deprecated Use channelRouter or moltbotGateway instead.
@@ -12,14 +30,107 @@ const log = createLogger('MessageService');
  */
 export class MessageService {
     private static instance: MessageService;
+    private readonly sentMessageMetadata = new Map<string, StoredMetadata>();
 
-    private constructor() { }
+    private constructor() {
+        this.loadMetadataFromDisk();
+    }
 
     public static getInstance(): MessageService {
         if (!MessageService.instance) {
             MessageService.instance = new MessageService();
         }
         return MessageService.instance;
+    }
+
+    /**
+     * #1658 — Persiste a metadata em disco para sobreviver a restart (nodemon, deploy, OOM).
+     * Sem isso, o filtro por `metadata.systemNotification` vira inútil depois de qualquer
+     * reinício, voltando a depender só do regex fallback (frágil a mudanças de template).
+     * Carrega só entradas não-expiradas — entradas velhas no disco viram lixo na primeira
+     * leitura e são descartadas (ver `loadMetadataFromDisk`). Falha de leitura é fail-soft:
+     * começa com Map vazio (a queda é só pra FRESCOS, scheduler continua emitindo).
+     */
+    private loadMetadataFromDisk(): void {
+        try {
+            if (!fs.existsSync(METADATA_FILE)) return;
+            const raw = fs.readFileSync(METADATA_FILE, 'utf-8');
+            const data = JSON.parse(raw) as Record<string, StoredMetadata>;
+            const now = Date.now();
+            let skipped = 0;
+            for (const [id, entry] of Object.entries(data || {})) {
+                if (!entry || typeof entry.sentAt !== 'number' || typeof entry.metadata !== 'object' || entry.metadata === null) {
+                    skipped++;
+                    continue;
+                }
+                if (now - entry.sentAt >= METADATA_TTL_MS) {
+                    skipped++;
+                    continue;
+                }
+                this.sentMessageMetadata.set(id, entry);
+            }
+            if (skipped > 0) {
+                log.info(`[#1658] loadMetadataFromDisk: descartadas ${skipped} entrada(s) expirada(s)/inválida(s) do disco.`);
+            }
+            log.info(`[#1658] loadMetadataFromDisk: ${this.sentMessageMetadata.size} entrada(s) ativa(s) carregada(s).`);
+        } catch (e: any) {
+            log.warn(`[#1658] loadMetadataFromDisk falhou (fail-soft): ${e?.message}`);
+        }
+    }
+
+    /**
+     * #1658 — Grava assincronamente para não bloquear o sendText. Usa escrita atômica
+     * (.tmp + rename) para evitar corrupção se o processo morrer no meio. Falha de
+     * escrita é fail-soft (o Map em memória continua válido até o próximo restart).
+     */
+    private saveMetadataToDisk(): void {
+        try {
+            const dir = path.dirname(METADATA_FILE);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const obj: Record<string, StoredMetadata> = {};
+            const now = Date.now();
+            for (const [id, entry] of this.sentMessageMetadata.entries()) {
+                if (now - entry.sentAt < METADATA_TTL_MS) {
+                    obj[id] = entry;
+                }
+            }
+            const tmp = METADATA_FILE + '.tmp';
+            fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf-8');
+            fs.renameSync(tmp, METADATA_FILE);
+        } catch (e: any) {
+            log.warn(`[#1658] saveMetadataToDisk falhou (fail-soft): ${e?.message}`);
+        }
+    }
+
+    /**
+     * #1658 — Remove preguiçosamente entradas expiradas na hora de LER. Mantém o Map
+     * enxuto sem precisar de timer global (que sobreviveria a testes por nada). Chamada
+     * automaticamente em `getMessages` (único caminho de leitura).
+     */
+    private evictExpiredMetadata(): void {
+        const now = Date.now();
+        let removed = 0;
+        for (const [id, entry] of this.sentMessageMetadata.entries()) {
+            if (now - entry.sentAt >= METADATA_TTL_MS) {
+                this.sentMessageMetadata.delete(id);
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            // Persiste o estado póstumo para não trazer os "mortos" de volta no próximo load
+            this.saveMetadataToDisk();
+        }
+    }
+
+    /**
+     * #1658 — SÓ TESTES: zera a metadata de mensagens enviadas. Idêntico a
+     * `__resetMessageDedupForTests` — usado pelo botService.test para isolar
+     * o tracker entre testes (cada teste é livre pra setar as suas notificações
+     * sem vazar pro próximo).
+     */
+    public __resetSentMessageMetadataForTests(): void {
+        this.sentMessageMetadata.clear();
+        try { if (fs.existsSync(METADATA_FILE)) fs.unlinkSync(METADATA_FILE); } catch { /* ignore */ }
     }
 
     private getClient(sessionId: string) {
@@ -33,10 +144,20 @@ export class MessageService {
         return chatId.includes('@') ? chatId : `${chatId}@c.us`;
     }
 
-    async sendText(sessionId: string, chatId: string, text: string) {
+    async sendText(sessionId: string, chatId: string, text: string, metadata?: Record<string, any>) {
         const client = this.getClient(sessionId);
         const msg = await client.sendMessage(this.formatChatId(chatId), text);
-        return { id: msg.id._serialized, timestamp: msg.timestamp };
+        const id = msg.id._serialized;
+        // #1658 — persiste o metadata com TTL + em disco. `id` usado pelo `getMessages`:
+        // os ids do wwebjs são estáveis (mesma mensagem = mesmo id dentro de uma sessão
+        // e através de reinício enquanto a msg existir no chat). Vale para as próximas
+        // ~12h, suficiente para a próxima mensagem do usuário acionar o filtro.
+        if (metadata) {
+            const entry: StoredMetadata = { metadata, sentAt: Date.now() };
+            this.sentMessageMetadata.set(id, entry);
+            this.saveMetadataToDisk();
+        }
+        return { id, timestamp: msg.timestamp };
     }
 
     async sendFile(sessionId: string, chatId: string, fileData: string, filename: string, caption?: string) {
@@ -165,20 +286,30 @@ export class MessageService {
 
         const messages = await chat.fetchMessages({ limit });
 
-        const mappedMessages = await Promise.all(messages.map(async (m: any) => ({
-            id: m.id._serialized || (m.id as any).$1,
-            body: m.body,
-            fromMe: m.fromMe,
-            timestamp: Math.min(m.timestamp, Math.floor(Date.now() / 1000)),
-            hasMedia: m.hasMedia,
-            ack: m.ack,
-            sender: m.fromMe ? 'agent' : 'user',
-            senderName: await this.resolveSenderName(client, m),
-            status: m.ack >= 3 ? 'read' : m.ack >= 2 ? 'delivered' : 'sent',
-            type: m.type,
-            mimetype: m._data?.mimetype
-        })));
-        
+        // #1658 — expurga entradas expiradas UMA vez por chamada (não por item). Custo
+        // ≈ O(n) onde n = notificações ainda vivas — em produção n é pequeno (algumas
+        // dezenas) e o ganho é manter o disco enxuto (sem reescrita eterna).
+        this.evictExpiredMetadata();
+
+        const mappedMessages = await Promise.all(messages.map(async (m: any) => {
+            const messageId = m.id._serialized || (m.id as any).$1;
+            const stored = this.sentMessageMetadata.get(messageId);
+            return {
+                id: messageId,
+                body: m.body,
+                fromMe: m.fromMe,
+                timestamp: Math.min(m.timestamp, Math.floor(Date.now() / 1000)),
+                hasMedia: m.hasMedia,
+                ack: m.ack,
+                sender: m.fromMe ? 'agent' : 'user',
+                senderName: await this.resolveSenderName(client, m),
+                status: m.ack >= 3 ? 'read' : m.ack >= 2 ? 'delivered' : 'sent',
+                type: m.type,
+                mimetype: m._data?.mimetype,
+                metadata: stored?.metadata,
+            };
+        }));
+
         return mappedMessages.sort((a, b) => a.timestamp - b.timestamp);
     }
 
@@ -193,21 +324,76 @@ export class MessageService {
 
     async getMessageMedia(sessionId: string, messageId: string) {
         const client = this.getClient(sessionId);
+        const dbg: string[] = [];
         try {
-            const msg = await client.getMessageById(messageId);
+            // getMessageById costuma FALHAR para ids @lid (formato novo do WhatsApp Web) → retorna
+            // null/lança, e o download de mídia recebida (imagem/áudio) dava "Media not found".
+            let msg: any = await Promise.resolve(client.getMessageById(messageId)).catch((e: any) => { dbg.push(`getMessageById threw: ${e?.message}`); return null; });
+            dbg.push(`primary msg=${msg ? 'found' : 'null'} hasMedia=${msg?.hasMedia}`);
+            // Fallback @lid: acha a mensagem PELA CONVERSA. Resolve o chat IGUAL ao getMessages
+            // (getChatById → getContactById.getChat()) — só getChatById falha p/ @lid. fetchMessages
+            // já funciona p/ @lid (é o que o getMessages usa). Casa pelo id serializado.
+            if (!msg || !msg.hasMedia) {
+                const chatId = this.chatIdFromMessageId(messageId);
+                dbg.push(`fallback chatId=${chatId}`);
+                if (chatId) {
+                    const chat = await this.resolveChat(client, chatId);
+                    dbg.push(`chat=${chat ? 'resolved' : 'null'}`);
+                    if (chat) {
+                        const msgs: any[] = await Promise.resolve(chat.fetchMessages({ limit: 50 })).catch((e: any) => { dbg.push(`fetchMessages threw: ${e?.message}`); return []; });
+                        dbg.push(`fetched=${msgs.length}`);
+                        const found = msgs.find((m: any) => (m?.id?._serialized || m?.id?.$1) === messageId);
+                        dbg.push(`found=${found ? 'yes' : 'no'} foundHasMedia=${found?.hasMedia}`);
+                        if (found) msg = found;
+                    }
+                }
+            }
             if (msg && msg.hasMedia) {
-                const media = await msg.downloadMedia();
-                if (media) {
+                const media = await Promise.resolve(msg.downloadMedia()).catch((e: any) => { dbg.push(`downloadMedia threw: ${e?.message}`); return null; });
+                dbg.push(`downloadMedia=${media ? `ok ${media.mimetype}` : 'null'}`);
+                if (media && media.data) {
                     return {
                         data: Buffer.from(media.data, 'base64'),
                         contentType: media.mimetype
                     };
                 }
             }
-        } catch (e) {
+            this.mediaDebug(messageId, dbg);
+        } catch (e: any) {
+            dbg.push(`OUTER threw: ${e?.message}`);
+            this.mediaDebug(messageId, dbg);
             log.error('Error fetching media', e);
         }
         return null;
+    }
+
+    /** Resolve o chat IGUAL ao getMessages: getChatById, e se falhar (ex.: @lid) getContactById.getChat(). */
+    private async resolveChat(client: any, chatId: string): Promise<any> {
+        const formatted = this.formatChatId(chatId);
+        let chat = await Promise.resolve(client.getChatById(formatted)).catch(() => null);
+        if (!chat) {
+            const contact = await Promise.resolve(client.getContactById(formatted)).catch(() => null);
+            if (contact) chat = await Promise.resolve(contact.getChat()).catch(() => null);
+        }
+        return chat;
+    }
+
+    /** Diagnóstico best-effort do download de mídia (o pino vai p/ stdout, não p/ arquivo legível). */
+    private mediaDebug(messageId: string, steps: string[]): void {
+        try {
+            const file = 'logs/media-debug.log';
+            // Cap de tamanho: só loga FALHAS de download (raro agora que a mídia funciona), mas sem
+            // teto o arquivo cresceria indefinidamente. Se passar de ~256KB, recomeça do zero.
+            try { if (fs.existsSync(file) && fs.statSync(file).size > 256 * 1024) fs.writeFileSync(file, ''); } catch { /* ignore */ }
+            const line = `${new Date().toISOString()} ${messageId} :: ${steps.join(' | ')}\n`;
+            fs.appendFileSync(file, line);
+        } catch { /* best-effort */ }
+    }
+
+    /** Extrai o chatId de um message id serializado. Ex.: "false_59936@lid_3EB0..." → "59936@lid". */
+    private chatIdFromMessageId(messageId: string): string | null {
+        const m = String(messageId).match(/^(?:true|false)_(.+?@(?:lid|c\.us|g\.us|s\.whatsapp\.net|broadcast))_/);
+        return m ? m[1] : null;
     }
 }
 

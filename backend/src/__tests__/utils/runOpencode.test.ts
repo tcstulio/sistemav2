@@ -26,7 +26,8 @@ vi.mock('../../utils/logger', () => ({
 
 import { spawn } from 'child_process';
 import { runOpencode, KILL_GRACE_MS } from '../../utils/runOpencode';
-import { killTree, killByImageName, listPidsByName } from '../../utils/processTree';
+import { killTree, killByImageName, listPidsByName, killOpencodeOrphans } from '../../utils/processTree';
+import { OPENCODE_ORPHAN_NEEDLES } from '../../utils/gcWorktrees';
 
 /** Filho fake: EventEmitter com pid + streams stdout/stderr. Controlamos quando 'exit' dispara. */
 class FakeChild extends EventEmitter {
@@ -45,6 +46,7 @@ describe('runOpencode — robustez do kill (#644)', () => {
         // kill "falha": resolve ok=false (nunca mata de fato) — reproduz o "Command failed" do taskkill.
         vi.mocked(killTree).mockResolvedValue({ ok: false, signal: 'taskkill failed: Command failed', durationMs: 10, alreadyDead: false });
         vi.mocked(killByImageName).mockResolvedValue(undefined);
+        vi.mocked(killOpencodeOrphans).mockResolvedValue({ killed: [], errors: [], confirmedGone: true, discriminated: true });
         vi.mocked(listPidsByName).mockResolvedValue([]);
     });
     afterEach(() => {
@@ -66,7 +68,9 @@ describe('runOpencode — robustez do kill (#644)', () => {
         // watcher (500ms) detecta o kill -> tenta matar + agenda o forceKillTimer.
         await vi.advanceTimersByTimeAsync(600);
         expect(killTree).toHaveBeenCalledWith(12345);
-        expect(killByImageName).toHaveBeenCalledWith('opencode.exe');
+        // #kill-per-slot: backstop agora é por-needle (killOpencodeOrphans), NÃO o /IM cego (killByImageName).
+        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES, [], []);
+        expect(killByImageName).not.toHaveBeenCalled();
 
         // kill falhou (mock) e NUNCA emitimos 'exit' (órfão vivo). A promise ainda NÃO settlou.
         let settled = false;
@@ -80,6 +84,25 @@ describe('runOpencode — robustez do kill (#644)', () => {
         await expect(p).rejects.toThrow(/liberando a cadeia|kill/i);
         // childPid limpo (não deixa rastro p/ um próximo kill mirar em PID reciclado).
         expect(task.childPid).toBeUndefined();
+    });
+
+    it('#parallel: backstop de kill passa os protectNeedles (poupa coders vizinhos)', async () => {
+        const child = new FakeChild();
+        vi.mocked(spawn).mockReturnValue(child as any);
+        const task = makeTask();
+
+        // getter das runs vizinhas vivas (resolvido no instante do backstop).
+        const p = runOpencode('opencode run "..."', '/cwd', task, 60_000, undefined, {
+            protectNeedles: () => ['[tr-run:7-222]', '[tr-run:9-333]'],
+        });
+        p.catch(() => { /* handler antecipado */ });
+        await vi.advanceTimersByTimeAsync(0);
+        task.killRequested = true;
+        await vi.advanceTimersByTimeAsync(600);
+        // o backstop poupa os vizinhos vivos (4º arg = protectNeedles resolvidos).
+        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES, [], ['[tr-run:7-222]', '[tr-run:9-333]']);
+        await vi.advanceTimersByTimeAsync(KILL_GRACE_MS + 100);
+        await expect(p).rejects.toThrow(/liberando a cadeia|kill/i);
     });
 
     it('settla normalmente quando o kill bem-sucedido faz o filho emitir exit', async () => {
@@ -125,6 +148,10 @@ describe('runOpencode — robustez do kill (#644)', () => {
         await vi.advanceTimersByTimeAsync(5_100);
 
         await expect(p).rejects.toThrow(/timeout/i);
+        // #kill-per-slot: o backstop do timeout também é por-needle, não o /IM cego.
+        expect(killTree).toHaveBeenCalledWith(12345);
+        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES, [], []);
+        expect(killByImageName).not.toHaveBeenCalled();
     });
 
     it('não settle duas vezes (exit + forceKillTimer competindo)', async () => {
@@ -145,5 +172,40 @@ describe('runOpencode — robustez do kill (#644)', () => {
 
         // Resolveu uma única vez (rejeição pelo exit), sem lançar "already settled".
         await expect(p).rejects.toThrow(/killed/i);
+    });
+});
+
+describe('runOpencode — env override (PR-1 slot-2 XDG_DATA_HOME)', () => {
+    beforeEach(() => vi.mocked(spawn).mockClear()); // mock.calls acumula entre testes
+    afterEach(() => vi.restoreAllMocks());
+
+    it('SEM opts.env → spawn NÃO recebe a chave `env` (herda process.env — byte-idêntico ao de hoje)', async () => {
+        const child = new FakeChild();
+        vi.mocked(spawn).mockReturnValue(child as any);
+
+        const p = runOpencode('opencode run "x"', '/cwd', makeTask(), 60_000);
+        child.emit('exit', 0, null);
+        await expect(p).resolves.toBe('');
+
+        const spawnOpts = vi.mocked(spawn).mock.calls[0][2] as any;
+        expect('env' in spawnOpts).toBe(false); // chave ausente → filho herda process.env
+    });
+
+    it('COM opts.env → spawn recebe { ...process.env, ...opts.env } (XDG mesclado, process.env preservado)', async () => {
+        const child = new FakeChild();
+        vi.mocked(spawn).mockReturnValue(child as any);
+        process.env.__RUNOPENCODE_SENTINEL = 'keep';
+
+        const p = runOpencode('opencode run "x"', '/cwd', makeTask(), 60_000, undefined, {
+            env: { XDG_DATA_HOME: 'C:/tmp/slot2-xdg' },
+        });
+        child.emit('exit', 0, null);
+        await expect(p).resolves.toBe('');
+
+        const spawnOpts = vi.mocked(spawn).mock.calls[0][2] as any;
+        expect(spawnOpts.env.XDG_DATA_HOME).toBe('C:/tmp/slot2-xdg'); // override aplicado
+        expect(spawnOpts.env.__RUNOPENCODE_SENTINEL).toBe('keep');    // process.env preservado
+
+        delete process.env.__RUNOPENCODE_SENTINEL;
     });
 });

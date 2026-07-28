@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SupplierList } from '../../components/SupplierList';
-import type { ThirdParty, SupplierInvoice } from '../../types';
+import { DolibarrService } from '../../services/dolibarrService';
+import { toast } from 'sonner';
+import type { ThirdParty, SupplierInvoice, SupplierOrder, Product, Warehouse } from '../../types';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -292,5 +294,153 @@ describe('SupplierList', () => {
         await waitFor(() => {
             expect(screen.getByText('Sem projeto')).toBeTruthy();
         });
+    });
+});
+
+describe('SupplierList — Recepção de fornecedor (#1582)', () => {
+    const approvedOrder: SupplierOrder = {
+        id: 'ord1',
+        ref: 'PO-0001',
+        socid: 'sup1',
+        date_creation: Math.floor(new Date('2024-06-01').getTime() / 1000),
+        total_ttc: 1000,
+        statut: '2', // Aprovado → botão "Receber" visível
+        lines: [{ id: 'l1', parent_id: 'ord1', label: 'Item A', description: '', qty: 5, vat_rate: 0, subprice: 200, total_ht: 1000, total_ttc: 1000, fk_product: 'prod1' }],
+    };
+
+    const product: Product = {
+        id: 'prod1',
+        ref: 'P-001',
+        label: 'Parafuso',
+        type: '0',
+        price: 0,
+    };
+
+    const warehouse: Warehouse = {
+        id: 'wh1',
+        label: 'Almoxarifado Central',
+        statut: '1',
+    };
+
+    async function openReceptionModal() {
+        const {
+            useSuppliers,
+            useSupplierOrders,
+            useProducts,
+            useWarehouses,
+        } = await import('../../hooks/dolibarr');
+
+        vi.mocked(useSuppliers).mockReturnValue({
+            data: [supplierAlpha],
+            refetch: vi.fn(),
+        } as any);
+        vi.mocked(useSupplierOrders).mockReturnValue({
+            data: [approvedOrder],
+        } as any);
+        vi.mocked(useProducts).mockReturnValue({
+            data: [product],
+        } as any);
+        vi.mocked(useWarehouses).mockReturnValue({
+            data: [warehouse],
+        } as any);
+
+        const user = userEvent.setup();
+        render(<SupplierList />);
+
+        await user.click(screen.getByText('Fornecedor Alpha'));
+        await user.click(screen.getByRole('button', { name: /Pedidos/i }));
+        await user.click(screen.getByText('Receber'));
+
+        // Modal de recepção aberto com qty inicial = 1
+        await waitFor(() => {
+            expect(screen.getByText('Receber Itens')).toBeTruthy();
+        });
+
+        return user;
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('apagar o campo de qty envia 0 (não NaN) ao backend e não emite toast de erro', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const user = await openReceptionModal();
+
+        const qtyInput = screen.getByLabelText('Quantidade') as HTMLInputElement;
+        // Garante que começa com o valor padrão (1)
+        expect(qtyInput.value).toBe('1');
+
+        // Apaga o campo completamente
+        await user.clear(qtyInput);
+        // Sanitização: e.target.value === '' → qty = 0 (input controlado re-renderiza para "0")
+        expect(qtyInput.value).toBe('0');
+
+        // Confirma o recibo
+        await user.click(screen.getByText('Confirmar Recibo'));
+
+        await waitFor(() => {
+            expect(DolibarrService.createStockCorrection).toHaveBeenCalledWith(
+                expect.anything(),
+                expect.objectContaining({ qty: 0 })
+            );
+        });
+
+        // Nenhum toast de erro deve ser disparado
+        expect(toast.error).not.toHaveBeenCalled();
+        // Nenhum NaN no console
+        const nanLogs = errorSpy.mock.calls.filter((call) =>
+            JSON.stringify(call).includes('NaN')
+        );
+        expect(nanLogs).toHaveLength(0);
+        errorSpy.mockRestore();
+    });
+
+    it('valor positivo continua sendo persistido normalmente', async () => {
+        const user = await openReceptionModal();
+
+        const qtyInput = screen.getByLabelText('Quantidade') as HTMLInputElement;
+        await user.clear(qtyInput);
+        await user.type(qtyInput, '7');
+
+        expect(qtyInput.value).toBe('7');
+
+        await user.click(screen.getByText('Confirmar Recibo'));
+
+        await waitFor(() => {
+            expect(DolibarrService.createStockCorrection).toHaveBeenCalledWith(
+                expect.anything(),
+                expect.objectContaining({ qty: 7 })
+            );
+        });
+    });
+
+    it('digitar texto não-numérico no campo qty cai no fallback 0 (sem NaN)', async () => {
+        // O caminho `parseInt('abc') || 0` (NaN fallback) é coberto em unidade
+        // por `src/__tests__/utils/sanitizeQtyInput.test.ts` — não dá para
+        // exercitá-lo via DOM porque o jsdom sanitiza 'abc' → '' em
+        // <input type="number">, fazendo o handler entrar no ramo
+        // `value === '' ? 0 : ...` antes de chegar em parseInt. Aqui só
+        // verificamos que o efeito final (qty persistido = 0, sem NaN no
+        // body) se mantém após uma tentativa de injeção programática.
+        const user = await openReceptionModal();
+
+        const qtyInput = screen.getByLabelText('Quantidade') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: 'abc' } });
+
+        // O input controlado re-renderiza para '0' (sanitização → empty string → 0)
+        expect(qtyInput.value).toBe('0');
+
+        await user.click(screen.getByText('Confirmar Recibo'));
+
+        await waitFor(() => {
+            expect(DolibarrService.createStockCorrection).toHaveBeenCalled();
+        });
+        const call = vi.mocked(DolibarrService.createStockCorrection).mock.calls.at(-1);
+        expect(call).toBeDefined();
+        const sentQty = (call![1] as any).qty;
+        expect(Number.isNaN(sentQty)).toBe(false);
+        expect(Number.isFinite(sentQty)).toBe(true);
+        expect(sentQty).toBe(0);
     });
 });

@@ -30,6 +30,19 @@ export interface TaskAutomationConfig {
     /** Modelo do Juiz (LLM-as-judge). Vazio = cadeia do chat (MiniMax). Ex.: 'sonnet'/'opus'/'haiku' =
      * juiz roda no Claude Code CLI (gate independente do coder), com fallback pra cadeia do chat. */
     judgeModel?: string;
+    /** Modelo PRIMÁRIO do coder (opencode). Vazio = herda o env/default do opencode. Ex.:
+     * 'zai-coding-plan/glm-5.2', 'minimax/MiniMax-M3'. Troca sem restart. */
+    coderModel?: string;
+    /** Modelo de FALLBACK do coder (429/timeout do primário). Vazio = herda o env. */
+    coderFallbackModel?: string;
+    /** Escalada do coder p/ o Claude FORTE quando o coder barato empaca. GASTA $ real. */
+    opusEscalationEnabled?: boolean;
+    /** Teto de escaladas Claude por dia (anti-loop). */
+    maxOpusEscalationsPerDay?: number;
+    /** Teto de CUSTO $ das escaladas Claude por dia (guarda-corpo contra gasto descontrolado). */
+    maxOpusCostUsdPerDay?: number;
+    /** Modelo da escalada AUTOMÁTICA. 'fable' = mais capaz (~2x); 'opus' = mais econômico. */
+    coderEscalationModel?: string;
 }
 
 // #1204 — Kill-switches globais das automações de fundo. Default true = nada muda.

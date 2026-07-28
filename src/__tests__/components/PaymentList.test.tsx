@@ -210,3 +210,52 @@ describe('PaymentList — cliente, evento e clique (#556)', () => {
         expect(screen.getByText('Cliente e Evento')).toBeInTheDocument();
     });
 });
+
+// ---------------------------------------------------------------------------
+// #1579 — total do rodapé não exibe NaN quando pagamento vem sem amount
+// ---------------------------------------------------------------------------
+describe('PaymentList — total sem NaN (#1579)', () => {
+    it('exibe R$ 0,00 no total quando um pagamento não tem amount', () => {
+        const paymentsWithoutAmount = [
+            { id: 1, ref: 'PAY-NO-AMOUNT', date_payment: '2024-01-15', mode_id: 2 },
+            { id: 2, ref: 'PAY-WITH-AMOUNT', date_payment: '2024-01-16', amount: 200, mode_id: 4 },
+        ];
+        vi.mocked(usePayments).mockReturnValue({
+            data: paymentsWithoutAmount,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+            error: null,
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = render(<PaymentList />);
+
+        // Sem NaN no rodapé — pagamento sem amount vira 0
+        expect(container.textContent).not.toContain('NaN');
+        // Total = 200 (apenas o pagamento válido)
+        expect(container.textContent).toContain(formatCurrency(200));
+    });
+
+    it('soma apenas itens válidos quando mistura pagamentos com e sem amount', () => {
+        const mixedPayments = [
+            { id: 1, ref: 'PAY-100', date_payment: '2024-01-15', amount: 100, mode_id: 2 },
+            { id: 2, ref: 'PAY-NULL', date_payment: '2024-01-16', mode_id: 4 }, // sem amount
+            { id: 3, ref: 'PAY-300', date_payment: '2024-01-17', amount: 300, mode_id: 6 },
+        ];
+        vi.mocked(usePayments).mockReturnValue({
+            data: mixedPayments,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+            error: null,
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = render(<PaymentList />);
+
+        expect(container.textContent).not.toContain('NaN');
+        // 100 + 300 = 400
+        expect(container.textContent).toContain(formatCurrency(400));
+    });
+});

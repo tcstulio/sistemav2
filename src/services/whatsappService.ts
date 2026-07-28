@@ -15,6 +15,15 @@ import { logger } from '../utils/logger';
 
 const log = logger.child('WhatsApp');
 
+// #envelope-fix: o backend padronizou as respostas de /api/whatsapp p/ `{ success, data }` (#1568).
+// Este service lia `response.data` CRU → quebrou (ex.: `.map` num objeto → catch → lista vazia; a UI
+// de sessões/conversas ficou em branco). `unwrapWa` desembrulha SE for o envelope; senão devolve o
+// payload cru — compatível com respostas ainda não-envelopadas (nenhuma regressão em qualquer forma).
+function unwrapWa<T = any>(response: { data: any }): T {
+    const b = response?.data;
+    return (b && typeof b === 'object' && !Array.isArray(b) && 'success' in b && 'data' in b) ? b.data : b;
+}
+
 // Helper to convert File to Base64
 const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -73,7 +82,7 @@ export const WhatsAppService = {
     getAccounts: async (): Promise<WhatsAppAccount[]> => {
         try {
             const response = await axios.get<WahaSession[]>(`${config.WHATSAPP_API_URL}/sessions`, { headers: getHeaders() });
-            const sessions = response.data;
+            const sessions = unwrapWa<WahaSession[]>(response);
 
             return sessions.map((s) => ({
                 id: s.id,
@@ -103,7 +112,7 @@ export const WhatsAppService = {
     getConversations: async (sessionId: string = 'default'): Promise<WhatsAppConversation[]> => {
         try {
             const response = await axios.get<WahaChat[]>(`${config.WHATSAPP_API_URL}/conversations?sessionId=${sessionId}`, { headers: getHeaders() });
-            const rawChats = response.data;
+            const rawChats = unwrapWa<any[]>(response);
 
             return rawChats.map((c: any) => {
                 const serializedId = typeof c.id === 'object' ? c.id._serialized : c.id;
@@ -133,7 +142,7 @@ export const WhatsAppService = {
         try {
             const encodedChatId = encodeURIComponent(conversationId);
             const response = await axios.get<WahaMessage[]>(`${config.WHATSAPP_API_URL}/messages/${encodedChatId}?sessionId=${sessionId}`, { headers: getHeaders() });
-            const rawMsgs = response.data;
+            const rawMsgs = unwrapWa<WahaMessage[]>(response);
 
             return rawMsgs.map((m) => {
                 const isAgent = m.fromMe;
@@ -198,11 +207,11 @@ export const WhatsAppService = {
                 reader.onerror = reject;
             });
 
-            const data = (await axios.post(`${config.WHATSAPP_API_URL}/send-voice`, {
+            const data = unwrapWa<any>(await axios.post(`${config.WHATSAPP_API_URL}/send-voice`, {
                 chatId: conversationId,
                 fileData: base64,
                 sessionId
-            }, { headers: getHeaders() })).data;
+            }, { headers: getHeaders() }));
 
             const msgId = (typeof data.id === 'object' && data.id._serialized) ? data.id._serialized : (data.id || `temp_${Date.now()}`);
 
@@ -225,12 +234,12 @@ export const WhatsAppService = {
         try {
             const base64 = await fileToBase64(file);
 
-            const data = (await axios.post(`${config.WHATSAPP_API_URL}/send-file`, {
+            const data = unwrapWa<any>(await axios.post(`${config.WHATSAPP_API_URL}/send-file`, {
                 chatId: conversationId,
                 fileData: base64,
                 filename: file.name,
                 sessionId
-            }, { headers: getHeaders() })).data;
+            }, { headers: getHeaders() }));
 
             const msgId = (typeof data.id === 'object' && data.id._serialized) ? data.id._serialized : (data.id || `temp_${Date.now()}`);
 
@@ -261,7 +270,7 @@ export const WhatsAppService = {
     getUserSettings: async () => {
         try {
             const response = await axios.get(`${config.WHATSAPP_API_URL}/store`, { headers: getHeaders() });
-            return response.data?.mySettings || {};
+            return unwrapWa<any>(response)?.mySettings || {};
         } catch (e) {
             log.error('Failed to get user settings', e);
             throw e;
@@ -271,7 +280,7 @@ export const WhatsAppService = {
     getSessionSettings: async (sessionId: string) => {
         try {
             const response = await axios.get(`${config.WHATSAPP_API_URL}/settings/session/${sessionId}`, { headers: getHeaders() });
-            return response.data;
+            return unwrapWa(response);
         } catch (e) {
             log.error('Failed to get session settings', e);
             throw e;
@@ -283,7 +292,7 @@ export const WhatsAppService = {
             // Encode chatID!
             const encoded = encodeURIComponent(chatId);
             const response = await axios.get(`${config.WHATSAPP_API_URL}/settings/chat/${encoded}`, { headers: getHeaders() });
-            return response.data;
+            return unwrapWa(response);
         } catch (e) {
             log.error('Failed to get chat settings', e);
             throw e;
@@ -306,7 +315,7 @@ export const WhatsAppService = {
     getProfile: async (sessionId: string = 'default'): Promise<WhatsAppProfile> => {
         try {
             const response = await axios.get(`${config.WHATSAPP_API_URL}/profile?sessionId=${sessionId}`, { headers: getHeaders() });
-            return response.data;
+            return unwrapWa(response);
         } catch (e) {
             handleApiError('Failed to get profile', e);
             throw e;
@@ -370,7 +379,7 @@ export const WhatsAppService = {
                 `${config.WHATSAPP_API_URL}/check-number/${phoneNumber}?sessionId=${sessionId}`,
                 { headers: getHeaders() }
             );
-            return response.data;
+            return unwrapWa(response);
         } catch (e) {
             handleApiError('Failed to check number', e);
             throw e;

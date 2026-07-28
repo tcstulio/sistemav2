@@ -12,6 +12,7 @@ import SetupWizard from './SetupWizard';
 import { MainLayout } from './Layout/MainLayout';
 
 import NotFound from './NotFound';
+import { LegacySingularNewRedirect } from './LegacySingularNewRedirect';
 import { DolibarrConfig } from '../types';
 
 // Lazy imports - Route components loaded on demand
@@ -314,6 +315,8 @@ const App: React.FC = () => {
                         <Route path="/simulator" element={<ViewWrapper Component={Simulator} viewId="simulator" />} />
                         <Route path="/centrovibe" element={<ViewWrapper Component={CentroVibeManager} viewId="centrovibe" />} />
                         <Route path="/dunning" element={<Dunning />} />
+                        {/* #1521 — redirect de rota legacy SINGULAR (/task/new → /tasks/new), preservando ?prefill= */}
+                        <Route path="/:entity/new" element={<LegacySingularNewRedirect />} />
                         <Route path="*" element={<NotFound />} />
                     </Route>
                 </Routes>

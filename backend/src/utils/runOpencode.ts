@@ -1,7 +1,8 @@
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import pidusage from 'pidusage';
-import { killTree, killByImageName, listPidsByName } from './processTree';
+import { killTree, killOpencodeOrphans, listPidsByName } from './processTree';
+import { OPENCODE_ORPHAN_NEEDLES } from './gcWorktrees';
 import { logger } from './logger';
 
 const log = logger.child('TaskRunner');
@@ -65,13 +66,26 @@ export function runOpencode(
     task: RunOpencodeTask,
     timeoutMs: number,
     onSample?: (sample: CpuMemSample) => void,
+    // #parallel (red-team Fable P0): getter dos needles das OUTRAS runs VIVAS. Os backstops deste util
+    // (kill/timeout) chamam killOpencodeOrphans SEM discriminar slot — com 2 coders, matariam o vizinho
+    // (o coder do outro slot casa RUN_MARKER_PREFIX). Passando os protectNeedles, o backstop poupa os
+    // vizinhos vivos e mata só o órfão DESTE run. É um GETTER (não valor): resolvido no instante do
+    // backstop (cancel/timeout pode disparar muito depois do dispatch, com o conjunto de runs mudado).
+    // Em serial não é passado → protect vazio → comportamento byte-idêntico ao de hoje.
+    // #parallel env: `opts.env` é mesclado sobre `process.env` no spawn (ex.: XDG_DATA_HOME do slot-2
+    // p/ isolar o opencode.db). AUSENTE (slot-1) → nenhuma chave `env` é passada → o filho herda
+    // `process.env` exatamente como hoje (byte-idêntico). Presente → { ...process.env, ...opts.env }.
+    opts?: { protectNeedles?: () => string[]; env?: Record<string, string> },
 ): Promise<string> {
     return new Promise((resolve, reject) => {
+        const spawnEnv = opts?.env ? { ...process.env, ...opts.env } : undefined;
         const child: ChildProcess = spawn(GIT_BASH, ['-lc', command], {
             cwd,
             detached: process.platform !== 'win32',
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
+            // Só injeta `env` quando há override — senão omite a chave p/ herdar process.env (byte-safe).
+            ...(spawnEnv ? { env: spawnEnv } : {}),
         });
         task.childPid = child.pid;
 
@@ -103,9 +117,12 @@ export function runOpencode(
                 if (pid) {
                     killTree(pid).catch(() => { /* logged inside */ });
                 }
-                // Backstop sem-enumeração: garante a morte do opencode mesmo se a árvore do bash já
-                // se quebrou (órfão) ou se o Get-Process/WMI falha sob carga. Run é serializado.
-                killByImageName('opencode.exe').catch(() => { /* ignore */ });
+                // Backstop de órfão (árvore do bash quebrada): mata o opencode DESTA run por needle,
+                // sem atingir um opencode manual/vizinho. killTree(child.pid) já cobre o caminho normal
+                // (taskkill /T é recursivo); aqui pegamos o órfão. #parallel: protectNeedles poupa os
+                // coders VIZINHOS vivos (Fase 2). Enum-fail SEM proteção ativa cai no /IM via fallback
+                // (cobertura #335 mantida); COM proteção ativa, o killOpencodeOrphans aborta estrito.
+                killOpencodeOrphans('opencode', OPENCODE_ORPHAN_NEEDLES, [], opts?.protectNeedles?.() ?? []).catch(() => { /* ignore */ });
                 // ⚠️ SETTLE FORÇADO (#644): se o kill falhar e o filho NUNCA emitir 'exit', a
                 // promise ficaria pendurada para sempre → execChain congela → pendingExecs preso.
                 // Após a grace, força o settle para a cadeia avançar (pendingExecs-- e autoPlayNext).
@@ -163,8 +180,10 @@ export function runOpencode(
             finish(new Error(`opencode timeout (${Math.round(timeoutMs / 1000)}s)${tail ? ` — últimas linhas do output:\n${tail}` : ''}`));
             if (child.pid) killTree(child.pid).catch(() => { /* ignore */ });
             // Backstop: mata o opencode na FONTE do timeout p/ não virar órfão (causa do ciclo
-            // vicioso no #335). taskkill /IM não enumera, então funciona mesmo sob carga.
-            killByImageName('opencode.exe').catch(() => { /* ignore */ });
+            // vicioso no #335) — por needle, poupando opencode manual/vizinho. Enum-fail sem proteção
+            // ativa cai no /IM via fallback do killOpencodeOrphans (cobertura #335 mantida). #parallel:
+            // protectNeedles poupa os coders vizinhos vivos.
+            killOpencodeOrphans('opencode', OPENCODE_ORPHAN_NEEDLES, [], opts?.protectNeedles?.() ?? []).catch(() => { /* ignore */ });
         }, timeoutMs);
 
         child.on('exit', (code, signal) => {

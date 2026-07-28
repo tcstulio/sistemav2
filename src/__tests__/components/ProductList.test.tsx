@@ -394,6 +394,155 @@ describe('ProductList — #633 campos do Dolibarr nos formulários', () => {
 });
 
 // ============================================================
+// #1581 — inputs numéricos em ProductList não devem enviar NaN
+// ao payload quando o usuário apaga o campo. parseFloat('') = NaN
+// virava "R$ NaN" no detalhe e payload inválido ao backend.
+// ============================================================
+describe('ProductList — #1581 sanitização de inputs numéricos (NaN)', () => {
+    const baseProducts: Product[] = [
+        { id: '1', ref: 'PRD-001', label: 'Produto Alpha', type: '0', price: 100, stock_reel: 10, tosell: '1', tobuy: '1' },
+    ];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(DolibarrService.createProduct).mockResolvedValue({ id: '99' } as any);
+        vi.mocked(DolibarrService.updateProduct).mockResolvedValue({} as any);
+        // Re-estabelece o mock (outros describes podem ter sobrescrito)
+        vi.mocked(useProductsMock).mockReturnValue({
+            data: baseProducts,
+            isLoading: false,
+        } as any);
+        vi.mocked(useCategoriesMock).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSuppliers).mockReturnValue({ data: [] } as any);
+    });
+
+    it('apagar o campo Preço no modal de criação envia 0 (não NaN) no payload', async () => {
+        const user = userEvent.setup();
+        render(<ProductList />);
+
+        await user.click(screen.getByText('Novo'));
+
+        await user.type(screen.getByPlaceholderText('PRD-001'), 'PRD-NAN');
+        await user.type(screen.getByPlaceholderText('Nome do Produto'), 'Produto Sem Preco');
+
+        const priceInput = screen.getByLabelText('Preço') as HTMLInputElement;
+        // Default é 0; apaga o campo
+        await user.clear(priceInput);
+
+        await user.click(screen.getByText('Criar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.createProduct).toHaveBeenCalledTimes(1);
+        });
+
+        const payload = vi.mocked(DolibarrService.createProduct).mock.calls[0][1] as any;
+        expect(Number.isNaN(payload.price)).toBe(false);
+        expect(payload.price).toBe(0);
+    });
+
+    it('valor válido de Preço continua funcionando normalmente (#1581)', async () => {
+        const user = userEvent.setup();
+        render(<ProductList />);
+
+        await user.click(screen.getByText('Novo'));
+
+        await user.type(screen.getByPlaceholderText('PRD-001'), 'PRD-OK');
+        await user.type(screen.getByPlaceholderText('Nome do Produto'), 'Produto OK');
+
+        const priceInput = screen.getByLabelText('Preço') as HTMLInputElement;
+        await user.clear(priceInput);
+        await user.type(priceInput, '199.90');
+
+        await user.click(screen.getByText('Criar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.createProduct).toHaveBeenCalledTimes(1);
+        });
+
+        const payload = vi.mocked(DolibarrService.createProduct).mock.calls[0][1] as any;
+        expect(payload.price).toBe(199.9);
+    });
+
+    it('apagar o campo Preço no modal de edição envia 0 (não NaN) no payload', async () => {
+        const user = userEvent.setup();
+        const { container } = render(<ProductList />);
+
+        // Seleciona Produto Alpha
+        await user.click(screen.getByText('Produto Alpha'));
+
+        const pencilSvg = container.querySelector('svg.lucide-pencil');
+        const editBtn = pencilSvg!.closest('button')!;
+        await user.click(editBtn);
+
+        await waitFor(() => expect(screen.getByText('Salvar')).toBeInTheDocument());
+
+        const priceInput = screen.getByLabelText('Preço') as HTMLInputElement;
+        // Preço default = 100; apaga o campo
+        await user.clear(priceInput);
+
+        await user.click(screen.getByText('Salvar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.updateProduct).toHaveBeenCalledTimes(1);
+        });
+
+        const payload = vi.mocked(DolibarrService.updateProduct).mock.calls[0][2] as any;
+        expect(Number.isNaN(payload.price)).toBe(false);
+        expect(payload.price).toBe(0);
+    });
+
+    it('digitar valor não-numérico no Preço não resulta em NaN no payload', async () => {
+        const user = userEvent.setup();
+        render(<ProductList />);
+
+        await user.click(screen.getByText('Novo'));
+
+        await user.type(screen.getByPlaceholderText('PRD-001'), 'PRD-NUM');
+        await user.type(screen.getByPlaceholderText('Nome do Produto'), 'Produto Num');
+
+        const priceInput = screen.getByLabelText('Preço') as HTMLInputElement;
+        await user.clear(priceInput);
+        // input type=number rejeita caracteres não numéricos, mas a
+        // sanitização garante fallback 0 se o estado for populado com NaN.
+        await user.type(priceInput, 'abc');
+
+        await user.click(screen.getByText('Criar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.createProduct).toHaveBeenCalled();
+        });
+        const payload = vi.mocked(DolibarrService.createProduct).mock.calls[0][1] as any;
+        expect(Number.isNaN(payload.price)).toBe(false);
+    });
+
+    it('detalhe do produto exibe R$ 0,00 (não R$ NaN) quando preço é apagado e salvo', async () => {
+        const user = userEvent.setup();
+        const { container } = render(<ProductList />);
+
+        await user.click(screen.getByText('Produto Alpha'));
+
+        const pencilSvg = container.querySelector('svg.lucide-pencil');
+        const editBtn = pencilSvg!.closest('button')!;
+        await user.click(editBtn);
+
+        await waitFor(() => expect(screen.getByText('Salvar')).toBeInTheDocument());
+
+        const priceInput = screen.getByLabelText('Preço') as HTMLInputElement;
+        await user.clear(priceInput);
+
+        await user.click(screen.getByText('Salvar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.updateProduct).toHaveBeenCalled();
+        });
+
+        // Garante ausência de NaN em qualquer texto visível
+        const allText = document.body.textContent || '';
+        expect(allText).not.toContain('NaN');
+    });
+});
+
+// ============================================================
 // #566 — separar insumos x aluguel por categoria (id=174)
 // ============================================================
 

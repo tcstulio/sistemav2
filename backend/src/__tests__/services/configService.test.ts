@@ -1,4 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as atomicWriteMod from '../../utils/atomicWrite';
+
+vi.mock('../../utils/atomicWrite', async (importOriginal) => {
+    const actual = (await importOriginal()) as typeof atomicWriteMod;
+    return {
+        ...actual,
+        atomicWriteSync: vi.fn(actual.atomicWriteSync),
+    };
+});
 
 vi.mock('../../config/env', () => ({
     config: {
@@ -262,5 +271,71 @@ describe('configService isRunWithChainEnabled (#787)', () => {
         process.env.NODE_ENV = 'development';
         const mod = await import('../../services/configService');
         expect(mod.configService.isRunWithChainEnabled()).toBe(true);
+    });
+});
+
+// =============================================================================
+// Issue #1541 — filesystem safety: setConfig NUNCA escreve em .env
+// =============================================================================
+// Estes testes isolam o configService REAL e inspecionam `atomicWriteSync`
+// (mockado no nível deste arquivo como `vi.fn(...)`) para garantir:
+//   1. nenhum write é feito em arquivo cujo path contenha ".env"
+//   2. o write é feito em `config/runtime.json` (sugestão da issue),
+//      NÃO `data/config.json`
+// Como `atomicWriteSync` é a ÚNICA função de persistência do configService,
+// cobrir o spy nela cobre o requisito de "fs.watch em teste ou mock do fs"
+// da issue (#1541 critério #1).
+describe('configService — filesystem safety (#1541: never writes to .env)', () => {
+    let atomicWriteMock: ReturnType<typeof vi.fn>;
+    let realConfigService: any;
+
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        vi.resetModules();
+        const awMod = await import('../../utils/atomicWrite');
+        atomicWriteMock = vi.mocked(awMod.atomicWriteSync);
+        const mod = await import('../../services/configService');
+        realConfigService = mod.configService;
+    });
+
+    function recordedPaths(): string[] {
+        return atomicWriteMock.mock.calls.map((c: any[]) => String(c[0]));
+    }
+
+    it('setConfig NUNCA escreve em arquivo .env (qualquer path contendo ".env")', () => {
+        realConfigService.setConfig('googleApiKey', 'secret-key-abc');
+        realConfigService.setConfig('zaiApiKey', 'another-key');
+        realConfigService.setConfig('minimaxApiKey', 'third-key');
+        realConfigService.setConfig('geminiModel', 'gemini-2.0-flash');
+
+        const paths = recordedPaths();
+        // Sanity: houve write
+        expect(paths.length).toBeGreaterThan(0);
+        // Segurança: nenhum path com ".env" (case-insensitive, basename OU path inteiro)
+        for (const p of paths) {
+            expect(p.toLowerCase()).not.toContain('.env');
+        }
+    });
+
+    it('setConfig persiste em config/runtime.json (não em data/config.json nem .env)', () => {
+        realConfigService.setConfig('localLlmUrl', 'http://localhost:9999');
+
+        const paths = recordedPaths();
+        expect(paths.length).toBeGreaterThanOrEqual(1);
+        // O path destino deve ser `config/runtime.json` (sugestão da issue),
+        // NÃO `data/config.json`. Verifica normalizando separadores Windows.
+        const runtimeWrite = paths.find((p) => p.replace(/\\/g, '/').endsWith('config/runtime.json'));
+        expect(runtimeWrite).toBeDefined();
+        // E definitivamente NÃO em `data/config.json` (local antigo)
+        const legacyWrite = paths.find((p) => p.replace(/\\/g, '/').endsWith('data/config.json'));
+        expect(legacyWrite).toBeUndefined();
+    });
+
+    it('setConfig rejeita chave que tenta tocar em .env (defesa em profundidade — duas camadas)', () => {
+        // chave EXATAMENTE ".env" → bloqueado
+        expect(() => realConfigService.setConfig('.env', 'foo')).toThrow(/cannot target \.env/);
+        // chave CONTENDO ".env" → bloqueado
+        expect(() => realConfigService.setConfig('api.env_key', 'foo')).toThrow(/cannot target \.env/);
+        expect(() => realConfigService.setConfig('MY.ENV.KEY', 'foo')).toThrow(/cannot target \.env/);
     });
 });
