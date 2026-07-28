@@ -1170,6 +1170,10 @@ describe('BotService', () => {
                 const ctx = (aiService.generateReply as any).mock.calls[0][1];
                 expect(ctx).toContain('FUNCIONÁRIO IDENTIFICADO');
                 expect(ctx).toContain('Túlio Silva');
+                // #12a — instrução de confiança na identidade (mata o "provável"/"fixada na sessão")
+                expect(ctx).toContain('Trate essa identidade como CERTA');
+                // #12b — nudge "chame a tool, não anuncie" está presente no contexto (todos os casos)
+                expect(ctx).toContain('[COMPORTAMENTO]');
             });
 
             it('flag DESLIGADA: funcionário identificado continua somente-leitura', async () => {
