@@ -5,7 +5,7 @@
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { z } from 'zod';
+import { z, ZodSchema } from 'zod';
 import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
@@ -64,6 +64,18 @@ function auditSkipApproval(req: Request, fields: DocumentAuditFields, allowed: b
     });
 }
 
+/**
+ * Reduz um valor `unknown` (vindo de `Record<string, unknown>` no guard de
+ * skip-approval) para `string | number | undefined`. Usado para extrair
+ * `entityId` / `documentId` dos bodies validados pelos 3 schemas — `as`
+ * aqui seria desnecessário porque o narrowing via `typeof` produz o mesmo
+ * tipo de saída e mantém o type-checker feliz.
+ */
+function pickEntityId(value: unknown): string | number | undefined {
+    if (typeof value === 'string' || typeof value === 'number') return value;
+    return undefined;
+}
+
 // ===== Schemas de Validação =====
 
 const SendDocumentSchema = z.object({
@@ -108,20 +120,46 @@ const documentUpdateSchema = documentCreateSchema
         }
     });
 
-type SkipApprovalData = {
-    skipApproval?: boolean;
-    documentType?: string;
-    entityType?: string;
-    entityId?: string | number;
-    documentId?: string | number;
-};
+type SkipApprovalFields = (req: Request, data: Record<string, unknown>) => DocumentAuditFields;
 
-type SkipApprovalFields = (req: Request, data: SkipApprovalData) => DocumentAuditFields;
-
-function requireAdminForSkipApproval(getFields: SkipApprovalFields) {
+/**
+ * Guard que exige admin somente quando o body indica `skipApproval: true`.
+ *
+ * O schema é genérico e tipado via `validatedBody(req, schema)` — o source
+ * do dado é a superfície `req.validated.body` (populada pelo middleware
+ * `validateBody` que sempre roda antes). Sem `as` casts: o narrowing
+ * estrutural via `'skipApproval' in data` (TypeScript type-guard) cobre os
+ * 3 schemas usados com este guard (documentCreateSchema,
+ * documentUpdateSchema, SendDocumentSchema), e `getFields` recebe o body
+ * cru como `Record<string, unknown>` (acesso seguro por chave — campos
+ * que faltarem caem nos fallbacks `|| 'unknown'`).
+ *
+ * Ordem dos middlewares na chain: validateBody → este guard → handler.
+ */
+function requireAdminForSkipApproval<S extends ZodSchema>(
+    schema: S,
+    getFields: SkipApprovalFields
+) {
     return (req: Request, res: Response, next: NextFunction) => {
-        const data = (req.body || {}) as SkipApprovalData;
-        if (data.skipApproval !== true) return next();
+        const data = validatedBody(req, schema);
+        if (!data) {
+            return fail(res, 'BAD_REQUEST', 'Corpo da requisição inválido', 400);
+        }
+        // `validateBody` rodou antes deste middleware — `data` é o output do
+        // schema. Os 3 schemas usados (documentCreateSchema, documentUpdateSchema,
+        // SendDocumentSchema) são object schemas, mas o generic `S extends
+        // ZodSchema` pode ser primitivo, então primeiro garantimos que é um
+        // objeto antes do narrowing via `in`. Após os guards, `data` é
+        // `object & { skipApproval: true }` — compatível com
+        // `Record<string, unknown>` sem cast adicional.
+        if (
+            typeof data !== 'object' ||
+            data === null ||
+            !('skipApproval' in data) ||
+            data.skipApproval !== true
+        ) {
+            return next();
+        }
 
         const allowed = isAdmin(req);
         auditSkipApproval(req, getFields(req, data), allowed);
@@ -132,11 +170,14 @@ function requireAdminForSkipApproval(getFields: SkipApprovalFields) {
 router.post(
     '/',
     validateBody(documentCreateSchema),
-    requireAdminForSkipApproval((_req, data) => ({
-        documentType: data.documentType || 'unknown',
-        entityType: data.entityType || 'unknown',
-        entityId: data.entityId ?? 'unknown',
-    })),
+    requireAdminForSkipApproval(
+        documentCreateSchema,
+        (_req, data) => ({
+            documentType: typeof data.documentType === 'string' ? data.documentType : 'unknown',
+            entityType: typeof data.entityType === 'string' ? data.entityType : 'unknown',
+            entityId: pickEntityId(data.entityId) ?? 'unknown',
+        })
+    ),
     asyncHandler(async (req, res) => {
         const data = validatedBody(req, documentCreateSchema);
         if (!data) {
@@ -149,11 +190,14 @@ router.post(
 router.put(
     '/:id',
     validateBody(documentUpdateSchema),
-    requireAdminForSkipApproval((req, data) => ({
-        documentType: data.documentType || 'unknown',
-        entityType: data.entityType || 'unknown',
-        entityId: data.entityId ?? req.params.id ?? 'unknown',
-    })),
+    requireAdminForSkipApproval(
+        documentUpdateSchema,
+        (req, data) => ({
+            documentType: typeof data.documentType === 'string' ? data.documentType : 'unknown',
+            entityType: typeof data.entityType === 'string' ? data.entityType : 'unknown',
+            entityId: pickEntityId(data.entityId) ?? req.params.id ?? 'unknown',
+        })
+    ),
     asyncHandler(async (req, res) => {
         const data = validatedBody(req, documentUpdateSchema);
         if (!data) {
@@ -170,11 +214,17 @@ router.put(
 router.post(
     '/send',
     validateBody(SendDocumentSchema),
-    requireAdminForSkipApproval((_req, data) => ({
-        documentType: data.documentType || 'unknown',
-        entityType: data.documentType === 'boleto' ? 'bank-slip' : data.documentType || 'unknown',
-        entityId: data.documentId ?? 'unknown',
-    })),
+    requireAdminForSkipApproval(
+        SendDocumentSchema,
+        (_req, data) => {
+            const docType = typeof data.documentType === 'string' ? data.documentType : 'unknown';
+            return {
+                documentType: docType,
+                entityType: docType === 'boleto' ? 'bank-slip' : docType,
+                entityId: pickEntityId(data.documentId) ?? 'unknown',
+            };
+        }
+    ),
     asyncHandler(async (req, res) => {
         const data = validatedBody(req, SendDocumentSchema);
         if (!data) {
