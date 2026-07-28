@@ -16,7 +16,7 @@ vi.mock('axios', () => ({ default: mockAxios, ...mockAxios }));
 
 // pdfText: extração de PDF recebido. Mock p/ oráculos determinísticos (o require lazy do
 // pdf-parse não é alcançável por spy — mockar o módulo inteiro é o caminho, ver memória).
-const mockPdf = vi.hoisted(() => ({ extractPdfText: vi.fn() }));
+const mockPdf = vi.hoisted(() => ({ extractPdfText: vi.fn(), extractPdfPageImages: vi.fn(async () => [] as string[]) }));
 vi.mock('../../utils/pdfText', () => mockPdf);
 
 vi.mock('../../services/aiService', () => ({
@@ -452,10 +452,25 @@ describe('BotService', () => {
             expect(String(lastUser.parts)).toContain('Conteúdo extraído do PDF');
         });
 
-        it('PDF sem texto extraível (só-imagem) → NÃO descarta, avisa que não leu', async () => {
+        it('PDF-scan (sem texto): renderiza as páginas e manda p/ a VISÃO (OCR)', async () => {
+            // ORÁCULO #9: PDF digitalizado (sem camada de texto) → extractPdfText='' → renderiza as
+            // páginas como imagem e injeta em incomingImages (a visão descreve/faz OCR).
             (messageService.getMessages as any).mockResolvedValue([]);
             (messageService.getMessageMedia as any).mockResolvedValue({ data: Buffer.from('%PDF-'), contentType: 'application/pdf' });
-            mockPdf.extractPdfText.mockResolvedValue(''); // scan/imagem → sem texto
+            mockPdf.extractPdfText.mockResolvedValue(''); // scan → sem texto
+            mockPdf.extractPdfPageImages.mockResolvedValue(['data:image/png;base64,AAA', 'data:image/png;base64,BBB']);
+            (aiService.generateReply as any).mockResolvedValue('O boleto digitalizado vence em 16/07.');
+            await botService.processMessage(createMessage({ type: 'document', hasMedia: true, mimetype: 'application/pdf', body: '', id: 'pdfscan' }));
+            expect(mockPdf.extractPdfPageImages).toHaveBeenCalledTimes(1);
+            const imgArg = (aiService.generateReply as any).mock.calls[0][2]; // 3º arg = imagens p/ visão
+            expect(imgArg).toEqual(['data:image/png;base64,AAA', 'data:image/png;base64,BBB']);
+        });
+
+        it('PDF sem texto E sem render → NÃO descarta, avisa que não leu', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (messageService.getMessageMedia as any).mockResolvedValue({ data: Buffer.from('%PDF-'), contentType: 'application/pdf' });
+            mockPdf.extractPdfText.mockResolvedValue('');
+            mockPdf.extractPdfPageImages.mockResolvedValue([]); // render também falhou
             (aiService.generateReply as any).mockResolvedValue('recebi seu documento, mas não consegui ler o texto');
             await botService.processMessage(createMessage({ type: 'document', hasMedia: true, mimetype: 'application/pdf', body: '', id: 'pdf2' }));
             expect(aiService.generateReply).toHaveBeenCalledTimes(1); // não descartado
