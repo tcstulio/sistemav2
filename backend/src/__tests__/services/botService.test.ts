@@ -660,13 +660,20 @@ describe('BotService', () => {
             );
         });
 
-        it('ignores non-confirm response in confirmation context', async () => {
-            (schedulerService.checkConfirmation as any).mockReturnValue({
-                messageId: 'm1', callback: 'cb',
-            });
-
+        it('resposta NÃO-confirm em contexto de confirmação → cai no processamento normal (responde)', async () => {
+            // Antes este teste afirmava silêncio, mas isso era um ARTEFATO: 'maybe' (nem sim nem não)
+            // NÃO dá return no bloco de confirmação → cai no fluxo normal. Como o generateReply não
+            // era mockado (=> undefined), `replyResult.text` lançava e o catch engolia em silêncio.
+            // Com a REDE DE SEGURANÇA isso viraria recado de erro; o certo é mockar o LLM: o bot
+            // processa 'maybe' normalmente e responde (em produção generateReply sempre retorna válido).
+            (schedulerService.checkConfirmation as any).mockReturnValue({ messageId: 'm1', callback: 'cb' });
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockResolvedValue('resposta normal');
+            (dolibarrService.getThirdPartyByPhone as any).mockResolvedValue(null);
+            (sessionService.sendTyping as any).mockResolvedValue(undefined);
             await botService.processMessage(createMessage({ body: 'maybe' }));
-            expect(messageService.sendText).not.toHaveBeenCalled();
+            expect(aiService.generateReply).toHaveBeenCalled();
+            expect(String((messageService.sendText as any).mock.calls[0][2])).toContain('resposta normal');
         });
 
         it('handles active chatbot flow', async () => {
@@ -892,6 +899,44 @@ describe('BotService', () => {
 
             await botService.processMessage(createMessage({ body: 'Hello' }));
 
+        });
+
+        // ===== Rede de segurança: bot NUNCA fica mudo numa falha do LLM =====
+        it('rede de segurança: falha NÃO-cota do LLM (ex.: 1211/400) → bot avisa em 1:1 (não fica MUDO)', async () => {
+            // ORÁCULO: o dono viu o bot SUMIR quando o LLM deu 1211 (não reconhecido como cota).
+            // Agora manda um recado técnico genérico em vez de silêncio. Antes: sendText não era chamado.
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockRejectedValue(new Error('HTTP 400 {"error":{"code":"1211","message":"Unknown Model"}}'));
+            (dolibarrService.getThirdPartyByPhone as any).mockResolvedValue(null);
+            (sessionService.sendTyping as any).mockResolvedValue(undefined);
+            await botService.processMessage(createMessage({ body: 'quem sou eu?', id: 'nq1' }));
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+            expect(String((messageService.sendText as any).mock.calls[0][2])).toMatch(/problema técnico|não consegui/i);
+        });
+
+        it('capacidade: falha por COTA (Token Plan/429) → recado de "sem capacidade" (não o técnico genérico)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockRejectedValue(new Error('HTTP 429 Token Plan usage limit reached: purchase Credits'));
+            (dolibarrService.getThirdPartyByPhone as any).mockResolvedValue(null);
+            (sessionService.sendTyping as any).mockResolvedValue(undefined);
+            await botService.processMessage(createMessage({ body: 'quem sou eu?', id: 'nq2' }));
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+            expect(String((messageService.sendText as any).mock.calls[0][2])).toMatch(/sem capacidade/i);
+        });
+
+        it('rede de segurança: falha do LLM em GRUPO NÃO gera recado (não polui grupo)', async () => {
+            (storeService.getChatSettings as any).mockReturnValue({
+                autoReplyEnabled: undefined,
+                groupSettings: { llmEnabled: true, burstHandling: { enabled: false, threshold: 3 }, messageCounter: 0 },
+            });
+            (storeService.getSessionSettings as any).mockReturnValue({ autoReply: false, historyLimit: 10, autoReplyContext: '' });
+            (schedulerService.getActiveFlow as any).mockReturnValue(null);
+            (schedulerService.checkConfirmation as any).mockReturnValue(null);
+            (schedulerService.checkFlowTrigger as any).mockReturnValue(null);
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockRejectedValue(new Error('AI down'));
+            await botService.processMessage(createMessage({ body: 'oi bot', id: 'nq3', from: 'grupo@g.us' }));
+            expect(messageService.sendText).not.toHaveBeenCalled(); // grupo: sem recado de erro
         });
 
         it('uses chat override for autoReply', async () => {

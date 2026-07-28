@@ -410,6 +410,7 @@ class BotService {
 
     /** Processa UMA mensagem (já desduplicada/idade-checada no enfileiramento). Serializado por chat. */
     private async runOne(message: any, key: string) {
+        let replied = false; // resposta principal já enviada? (guarda a rede de segurança do catch)
         try {
             const msgId = messageId(message);
 
@@ -751,6 +752,7 @@ class BotService {
             await sleep(1500); // Reduced to 1.5s since real typing is now shown
 
             await messageService.sendText(sessionId, chatId, finalMessage);
+            replied = true; // resposta principal saiu → catch NÃO deve mandar recado de erro
             log.info(`Auto-reply sent to ${chatId}`);
             // Registra a RESPOSTA do bot no buffer (SÓ após envio OK). É ISTO que faltava no
             // getMessages e causava o re-despejo: agora a conversa em memória tem pergunta→resposta,
@@ -801,23 +803,27 @@ class BotService {
 
         } catch (error: any) {
             log.error(`Process Error: ${error.message}`);
-            // Degradação graciosa: quando a falha é por CAPACIDADE de IA (cota do provedor
-            // esgotada — GLM 1310, MiniMax "usage limit", 429/1211 sob esgotamento), avisa o
-            // usuário em vez de ficar em SILÊNCIO. Sem isso, durante um esgotamento o bot não
-            // responde nada e a pessoa não sabe por quê. Só para 1:1 (não polui grupo) e só
-            // p/ erro de cota (outros erros seguem silenciosos, como antes, p/ não confundir).
+            // REDE DE SEGURANÇA: nunca ficar MUDO. Se a resposta principal ainda NÃO saiu, avisa o
+            // usuário em vez de sumir (o dono via o bot "não responder"). Duas mensagens:
+            //  • CAPACIDADE (cota do provedor: GLM 1310, MiniMax "usage limit"/"Token Plan", 429) →
+            //    recado de "sem capacidade, tente mais tarde".
+            //  • QUALQUER outra falha não reconhecida (ex.: MiniMax 1211, GLM 400) → recado técnico
+            //    genérico. ANTES o bot só falava no caso de cota e SUMIA em todo o resto.
+            // Só 1:1 (não polui grupo). Se `replied`, a resposta já foi enviada → não manda nada.
             try {
-                const detail = error?.response?.data?.error?.message || error?.message || '';
-                if (isQuotaError(detail) || quotaStatus().exhausted) {
+                if (!replied) {
+                    const detail = error?.response?.data?.error?.message || error?.message || '';
                     const chatId = message?.from;
                     const sessionId = message?.sessionId;
                     if (chatId && sessionId && !String(chatId).endsWith('@g.us')) {
-                        await messageService.sendText(sessionId, chatId,
-                            'No momento estou sem capacidade de IA para responder 🛰️ É temporário (limite do provedor). Pode tentar de novo mais tarde.');
+                        const msg = (isQuotaError(detail) || quotaStatus().exhausted)
+                            ? 'No momento estou sem capacidade de IA para responder 🛰️ É temporário (limite do provedor). Pode tentar de novo mais tarde.'
+                            : 'Tive um problema técnico agora e não consegui responder 🛠️ Pode mandar de novo, por favor?';
+                        await messageService.sendText(sessionId, chatId, msg);
                     }
                 }
             } catch (notifyErr: any) {
-                log.warn(`Falha ao enviar aviso de degradação graciosa: ${notifyErr?.message}`);
+                log.warn(`Falha ao enviar aviso de erro do bot: ${notifyErr?.message}`);
             }
         }
     }
