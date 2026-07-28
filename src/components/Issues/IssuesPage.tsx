@@ -395,6 +395,9 @@ const FeedbackModal: React.FC<{
 const EscalateMenu: React.FC<{ task: Task; onAction: (action: string, task: Task, extra?: string) => void }> = ({ task, onAction }) => (
     <details className="relative inline-block">
         <summary
+            // #escalada-ui: o clique no <summary> vazava pro onClick do card (onHistory) → abria o modal
+            // de detalhe POR CIMA do dropdown. Igual aos outros botões de ação, corta a propagação.
+            onClick={(e) => e.stopPropagation()}
             className="list-none cursor-pointer inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-violet-500 text-white hover:bg-violet-600 transition-colors select-none"
             title="Rodar o coder forte (Claude) AGORA nesta task, no modelo escolhido"
         >
