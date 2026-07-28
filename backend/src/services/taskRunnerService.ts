@@ -1004,9 +1004,11 @@ class TaskRunnerService {
         if (!Array.isArray(task.events)) task.events = [];
         const evt: TaskEvent = { ts: new Date().toISOString(), type, message, meta };
         task.events.push(evt);
-        // #1154 P2 item 20: cap a timeline (loops de auto-fix/resume podem gerar centenas de eventos; a
-        // listagem devolve TUDO a cada 10s). Preserva os mais recentes.
-        const EVENTS_CAP = 500;
+        // #compact-store: cap MUITO menor. Era 500 → o tasks.json inchou a 60MB (eventos judge_score
+        // carregam a review inteira no meta, ~10KB cada), e como save() reescreve o arquivo INTEIRO a
+        // cada evento, os saves ficaram lentos e passaram a contender (redo travando com HTTP 000) +
+        // deixaram o robô lento em tudo. 80 eventos recentes bastam p/ o timeline da UI.
+        const EVENTS_CAP = 80;
         if (task.events.length > EVENTS_CAP) task.events.splice(0, task.events.length - EVENTS_CAP);
         this.save();
         // Mapeia para os tipos visuais que a UI ja conhece (info/success/warn/error/ai).
@@ -1032,6 +1034,37 @@ class TaskRunnerService {
                 // Cleanup: killRequested=true de um restart anterior (child morreu junto).
                 for (const t of Object.values(this.store.tasks)) {
                     if (!Array.isArray(t.events)) t.events = [];
+                    // #compact-store: compactação histórica no load — o store inchou a 60MB (500 eventos/
+                    // task; metas de judge_score ~10KB) → saves lentos, contenção, redo travando. Terminais
+                    // guardam pouco (não re-executam); demais guardam o timeline recente. Eventos ANTIGOS
+                    // (além dos 8 mais recentes) perdem o meta pesado e têm a msg longa truncada.
+                    const evCap = ['merged', 'rejected', 'rejected_precheck', 'cancelled'].includes(t.status) ? 12
+                        : t.status === 'failed' ? 25 : 80;
+                    if (t.events.length > evCap) t.events.splice(0, t.events.length - evCap);
+                    const keepMetaFrom = Math.max(0, t.events.length - 8);
+                    t.events = t.events.map((e: any, i: number) => {
+                        const message = typeof e.message === 'string' && e.message.length > 1500
+                            ? e.message.slice(0, 1500) + '…[truncado]' : e.message;
+                        let meta = e.meta;
+                        if (i < keepMetaFrom && meta && JSON.stringify(meta).length > 800) meta = { _pruned: true };
+                        return { ...e, message, meta };
+                    });
+                    // #compact-store: cpuMemSamples RAW era o MAIOR vilão (~23MB; merged acumulava 177k
+                    // amostras). Só a última amostra (heartbeat/watchdog) e o `metrics` agregado importam
+                    // pós-run. Ativas guardam as últimas 60; o resto guarda 3.
+                    if (Array.isArray(t.cpuMemSamples)) {
+                        const active = ['running', 'reviewing', 'fixing', 'pending'].includes(t.status);
+                        const smpCap = active ? 60 : 3;
+                        if (t.cpuMemSamples.length > smpCap) t.cpuMemSamples = t.cpuMemSamples.slice(-smpCap);
+                    }
+                    // #compact-store: o `diff` de tentativas antigas é grande (~5MB). Mantém as 2 últimas
+                    // inteiras, trunca o resto (o diff antigo já foi consumido pela síntese/juiz).
+                    if (Array.isArray(t.attempts) && t.attempts.length > 2) {
+                        const keepFull = t.attempts.length - 2;
+                        t.attempts = t.attempts.map((a: any, i: number) =>
+                            (i < keepFull && typeof a.diff === 'string' && a.diff.length > 600)
+                                ? { ...a, diff: a.diff.slice(0, 600) + '…[truncado]' } : a);
+                    }
                     if (!t.phase) t.phase = 'done';
                     if (!Array.isArray(t.attempts)) t.attempts = [];
                     if (!t.kind) t.kind = 'task';
