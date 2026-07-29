@@ -98,6 +98,19 @@ describe('approvalRoutes', () => {
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
 
+        it('passes validated query filters through to the service', async () => {
+            mockApprovalService.getPendingActions.mockResolvedValue([]);
+
+            const res = await request(app).get('/api/approvals/pending?type=pagar_boleto&banco=inter&status=pending');
+
+            expect(res.status).toBe(200);
+            expect(mockApprovalService.getPendingActions).toHaveBeenCalledWith({
+                type: 'pagar_boleto',
+                banco: 'inter',
+                status: 'pending',
+            });
+        });
+
         it('returns 500 when service throws', async () => {
             mockApprovalService.getPendingActions.mockRejectedValue(new Error('Database error'));
 
@@ -133,6 +146,21 @@ describe('approvalRoutes', () => {
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('parses and maps valid date and limit params to the service', async () => {
+            mockApprovalService.getActionHistory.mockResolvedValue([]);
+
+            const res = await request(app).get('/api/approvals/history?startDate=2024-01-01&endDate=2024-12-31&status=executed&limit=50');
+
+            expect(res.status).toBe(200);
+            expect(mockApprovalService.getActionHistory).toHaveBeenCalledWith({
+                type: undefined,
+                status: 'executed',
+                startDate: new Date('2024-01-01'),
+                endDate: new Date('2024-12-31'),
+                limit: 50,
+            });
         });
 
         it('returns 500 when service throws', async () => {
