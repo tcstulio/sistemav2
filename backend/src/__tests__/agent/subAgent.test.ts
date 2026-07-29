@@ -11,7 +11,7 @@
  *
  * `runAgentLoop` é mockado — capturamos as deps injetadas para inspecionar o executor gateado.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // Mock do agentLoop: captura (opts, deps) e devolve um AgentLoopResult controlado.
 const runAgentLoopMock = vi.fn();
@@ -42,6 +42,18 @@ import {
     MAX_SUBAGENT_MAX_ITERATIONS,
     SUBAGENT_SUMMARY_MAX_CHARS,
 } from '../../agent/subAgent';
+
+// Cache do TOOLS_PROMPT real do dispatcher: o módulo `services/agentTools` é um monolito de
+// ~2400 linhas cujo import em cascade (clientes HTTP, DB, etc.) demora >5s. Carregar UMA vez em
+// `beforeAll` (com timeout explícito) evita que cada `it` pague esse custo e flakeshe no limite
+// padrão de 5s do vitest. Padrão espelhado de channelRouter.test.ts (vi.importActual em beforeAll).
+let REAL_TOOLS_PROMPT = '';
+beforeAll(async () => {
+    const real = await vi.importActual<typeof import('../../services/agentTools')>(
+        '../../services/agentTools',
+    );
+    REAL_TOOLS_PROMPT = real.TOOLS_PROMPT as string;
+}, 30000);
 
 function okLoop(text = 'resumo curto do sub-agente') {
     return {
@@ -97,19 +109,17 @@ describe('#1036 — DEFAULT_SUBAGENT_TOOLS: nomes canônicos do dispatcher (corr
         expect([...DEFAULT_SUBAGENT_TOOLS]).not.toContain('search_web');
     });
 
-    it('cada tool default é documentada no TOOLS_PROMPT real do dispatcher', async () => {
-        const real = await vi.importActual<typeof import('../../services/agentTools')>('../../services/agentTools');
-        const prompt = real.TOOLS_PROMPT as string;
+    it('cada tool default é documentada no TOOLS_PROMPT real do dispatcher', () => {
+        const prompt = REAL_TOOLS_PROMPT;
         for (const name of DEFAULT_SUBAGENT_TOOLS) {
             expect(prompt).toContain(name);
         }
     });
 
-    it('a tool `delegate` (#1036) está documentada no TOOLS_PROMPT (parent pode invocá-la)', async () => {
+    it('a tool `delegate` (#1036) está documentada no TOOLS_PROMPT (parent pode invocá-la)', () => {
         // Critério de aceite: "Tool pode ser invocada pelo agente pai". Para o modelo do pai
         // saber que delegate existe, ela DEVE constar do prompt de tools — senão nunca a chama.
-        const real = await vi.importActual<typeof import('../../services/agentTools')>('../../services/agentTools');
-        const prompt = real.TOOLS_PROMPT as string;
+        const prompt = REAL_TOOLS_PROMPT;
         expect(prompt).toContain('delegate');
         expect(prompt).toMatch(/sub-tarefa bem definida|sub-agente isolado/i);
     });
