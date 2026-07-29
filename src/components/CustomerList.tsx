@@ -177,7 +177,12 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
         if (!prefill || appliedPrefillRef.current === prefill) return;
         if (prefill.kind === 'create_customer') {
             appliedPrefillRef.current = prefill;
-            setCreateForm(prev => ({ ...prev, ...prefill.data }));
+            // #deeplink-client: o agente às vezes manda client='0' (Dolibarr: nem-cliente-nem-prospect),
+            // mas o form só aceita '1'|'2'|'3' → a validação quebrava ("Invalid option: expected one of
+            // 1|2|3"). Saneia: fora da faixa → '1' (cliente), que é o padrão do form.
+            const pf = { ...prefill.data };
+            if (!['1', '2', '3'].includes(String(pf.client))) pf.client = '1';
+            setCreateForm(prev => ({ ...prev, ...pf }));
             setIsCreateModalOpen(true);
             toast.info('Revise os dados e confirme o cadastro do cliente.');
         } else if (prefill.kind === 'edit_customer') {
