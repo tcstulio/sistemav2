@@ -10,7 +10,7 @@ const mockPdf = vi.hoisted(() => ({
 }));
 vi.mock('../../utils/pdfText', () => mockPdf);
 
-import { analyzePdf, defaultRenderPdfPages, runSpawn, OCR_PAGE_HINT, DEFAULT_MIN_TEXT_CHARS } from '../../services/analyzePdf';
+import { analyzePdf, defaultRenderPdfPages, runSpawn, OCR_PAGE_HINT, DEFAULT_MIN_TEXT_CHARS, DEFAULT_OCR_CONCURRENCY } from '../../services/analyzePdf';
 
 describe('analyzePdf (#1547) — fallback de OCR para PDF escaneado', () => {
     beforeEach(() => {
@@ -138,6 +138,74 @@ describe('analyzePdf (#1547) — fallback de OCR para PDF escaneado', () => {
             if (original === undefined) delete process.env.PDF_OCR_MAX_PAGES;
             else process.env.PDF_OCR_MAX_PAGES = original;
         }
+    });
+
+    it('limita a concorrência das chamadas de OCR (rate limiting do provedor de visão)', async () => {
+        mockPdf.extractPdfText.mockResolvedValue('');
+        const pages = Array.from({ length: 8 }, (_, i) => `data:image/png;base64,${i}`);
+        const renderPages = vi.fn(async () => pages);
+        let inflight = 0;
+        let maxInflight = 0;
+        const describeImage = vi.fn(async () => {
+            inflight++;
+            maxInflight = Math.max(maxInflight, inflight);
+            await new Promise((r) => setTimeout(r, 15));
+            inflight--;
+            return 'OCR';
+        });
+
+        const result = await analyzePdf(Buffer.from('%PDF-'), { describeImage, renderPages, ocrConcurrency: 3 });
+
+        // Nunca mais de 3 chamadas concorrentes ao provedor de visão (respeita o limite).
+        expect(maxInflight).toBeLessThanOrEqual(3);
+        expect(describeImage).toHaveBeenCalledTimes(8);
+        // Nenhuma página se perdeu: 8 páginas concatenadas no texto final.
+        expect(result.text.split('\n\n')).toHaveLength(8);
+    });
+
+    it('preserva a ordem das páginas no resultado mesmo com concorrência limitada', async () => {
+        mockPdf.extractPdfText.mockResolvedValue('');
+        const pages = ['A', 'B', 'C', 'D', 'E'].map((x) => `data:image/png;base64,${x}`);
+        const renderPages = vi.fn(async () => pages);
+        // Resolve em tempos decrescentes para tentar bagunçar a ordem do resultado.
+        const describeImage = vi.fn(async (b64: string) => {
+            const idx = pages.indexOf(b64);
+            await new Promise((r) => setTimeout(r, (5 - idx) * 12));
+            return b64.slice(-1);
+        });
+
+        const result = await analyzePdf(Buffer.from('%PDF-'), { describeImage, renderPages, ocrConcurrency: 5 });
+
+        expect(result.text).toBe('Página 1: A\n\nPágina 2: B\n\nPágina 3: C\n\nPágina 4: D\n\nPágina 5: E');
+    });
+
+    it('honra PDF_OCR_CONCURRENCY do ambiente quando ocrConcurrency não vem nas options', async () => {
+        const original = process.env.PDF_OCR_CONCURRENCY;
+        process.env.PDF_OCR_CONCURRENCY = '2';
+        try {
+            mockPdf.extractPdfText.mockResolvedValue('');
+            const pages = Array.from({ length: 6 }, (_, i) => `data:image/png;base64,${i}`);
+            const renderPages = vi.fn(async () => pages);
+            let inflight = 0;
+            let maxInflight = 0;
+            const describeImage = vi.fn(async () => {
+                inflight++;
+                maxInflight = Math.max(maxInflight, inflight);
+                await new Promise((r) => setTimeout(r, 15));
+                inflight--;
+                return 'OCR';
+            });
+            await analyzePdf(Buffer.from('%PDF-'), { describeImage, renderPages });
+            expect(maxInflight).toBeLessThanOrEqual(2);
+        } finally {
+            if (original === undefined) delete process.env.PDF_OCR_CONCURRENCY;
+            else process.env.PDF_OCR_CONCURRENCY = original;
+        }
+    });
+
+    it('expõe DEFAULT_OCR_CONCURRENCY como limite padrão coerente (>0 e <= maxPages)', () => {
+        expect(DEFAULT_OCR_CONCURRENCY).toBeGreaterThan(0);
+        expect(DEFAULT_OCR_CONCURRENCY).toBeLessThanOrEqual(10);
     });
 
     it('o hint OCR é um prompt focado em transcrição fiel (não resumo)', async () => {

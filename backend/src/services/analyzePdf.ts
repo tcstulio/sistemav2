@@ -16,10 +16,12 @@
  *   - PDF com texto → segue rápido, sem OCR (caminho `pdf_parse`).
  *   - Logs distinguem os dois caminhos (`pdf_parse` vs `ocr_vision`).
  *
- `describeImage`, `renderPages` e os limites são injetáveis (options) para que os testes
- sejam herméticos — a produção usa os defaults (aiService.describeImage + renderer em camadas).
+ *  `describeImage`, `renderPages` e os limites são injetáveis (options) para que os testes
+ *  sejam herméticos — a produção usa os defaults (aiService.describeImage + renderer em camadas).
+ *  O OCR das páginas corre com concorrência limitada (`ocrConcurrency`, padrão 4) para não
+ *  exceder rate limits do provedor de visão. Imports de deps opcionais são lazy via `import()`.
  */
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -33,6 +35,13 @@ export const DEFAULT_MIN_TEXT_CHARS = 50;
 
 /** Número padrão máximo de páginas a renderizar para OCR (controla custo de visão). */
 export const DEFAULT_OCR_MAX_PAGES = 10;
+
+/**
+ * Concorrência padrão das chamadas de OCR (describeImage por página). Limita requisições
+ * concorrentes ao provedor de visão para não estourar rate limits em PDFs com muitas páginas.
+ * Configurável via `PDF_OCR_CONCURRENCY`.
+ */
+export const DEFAULT_OCR_CONCURRENCY = 4;
 
 /**
  * Timeout padrão (ms) para o spawn do `pdftoppm`. Protege contra DoS em produção: um PDF
@@ -55,6 +64,11 @@ export interface AnalyzePdfOptions {
     minTextChars?: number;
     /** Limite de chars repassado a `extractPdfText` (default do pdfText). */
     maxChars?: number;
+    /**
+     * Máximo de chamadas concorrentes a `describeImage` durante o OCR (rate limiting do
+     * provedor de visão). Default: env `PDF_OCR_CONCURRENCY` ou 4.
+     */
+    ocrConcurrency?: number;
     /** Injetável p/ testes. Default: `aiService.describeImage`. */
     describeImage?: (imageBase64: string, userHint?: string) => Promise<string | null>;
     /** Injetável p/ testes. Default: renderer em camadas (pdftoppm → sharp → pdf-parse). */
@@ -77,6 +91,36 @@ function resolveMaxPages(opt?: number): number {
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_OCR_MAX_PAGES;
 }
 
+/** Resolve a concorrência de OCR (options > env > default), sempre >= 1. */
+function resolveOcrConcurrency(opt?: number): number {
+    const raw = opt ?? Number(process.env.PDF_OCR_CONCURRENCY) ?? DEFAULT_OCR_CONCURRENCY;
+    const n = Math.trunc(raw);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_OCR_CONCURRENCY;
+}
+
+/**
+ * Map com concorrência limitada: processa no máximo `limit` itens por vez, preservando a
+ * ordem dos resultados (results[i] corresponde a items[i]). Limita chamadas concorrentes ao
+ * provedor de visão durante o OCR, evitando estourar rate limits em PDFs grandes.
+ */
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    const concurrency = Math.max(1, Math.min(limit, items.length || 1));
+    let cursor = 0;
+    const run = async (): Promise<void> => {
+        while (cursor < items.length) {
+            const i = cursor++;
+            results[i] = await worker(items[i], i);
+        }
+    };
+    await Promise.all(Array.from({ length: concurrency }, () => run()));
+    return results;
+}
+
 /** Resolve o timeout de renderização (env > default), sempre >= 1000ms. */
 function resolveTimeoutMs(): number {
     const raw = Number(process.env.PDF_OCR_RENDER_TIMEOUT_MS) || DEFAULT_RENDER_TIMEOUT_MS;
@@ -90,11 +134,12 @@ function resolveTimeoutMs(): number {
 export async function analyzePdf(buffer: Buffer, options: AnalyzePdfOptions = {}): Promise<AnalyzePdfResult> {
     const minTextChars = options.minTextChars ?? DEFAULT_MIN_TEXT_CHARS;
     const maxPages = resolveMaxPages(options.maxPages);
+    const ocrConcurrency = resolveOcrConcurrency(options.ocrConcurrency);
     const renderPages = options.renderPages ?? defaultRenderPdfPages;
     const describeImage = options.describeImage ?? (async (b64: string, hint?: string) => {
-        // Lazy require: mantém o módulo testável sem carregar o aiService no import.
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { aiService } = require('./aiService');
+        // Lazy dynamic import: carrega o aiService só quando há OCR de fato (compatível com
+        // ESM e evita import/circular no carregamento do módulo), sem `require`/eslint-disable.
+        const { aiService } = await import('./aiService');
         return aiService.describeImage(b64, hint);
     });
 
@@ -113,8 +158,8 @@ export async function analyzePdf(buffer: Buffer, options: AnalyzePdfOptions = {}
         return { text: textLayer, path: 'empty' };
     }
 
-    // (3) Descreve/OCR de cada página em paralelo.
-    const descriptions = await Promise.all(pageImages.map((img) => describeImage(img, OCR_PAGE_HINT)));
+    // (3) Descreve/OCR de cada página com concorrência limitada (rate limiting do provedor).
+    const descriptions = await mapWithConcurrency(pageImages, ocrConcurrency, (img) => describeImage(img, OCR_PAGE_HINT));
 
     // (4) Concatena com índice ('Página 1: ...\n\nPágina 2: ...').
     const parts = descriptions.map((d, i) => {
@@ -156,7 +201,7 @@ export async function defaultRenderPdfPages(buffer: Buffer, maxPages: number): P
 
 /** Renderiza páginas via `pdftoppm -png` (poppler-utils). Requer o binário no PATH. */
 async function renderViaPdftoppm(buffer: Buffer, maxPages: number): Promise<string[]> {
-    if (!isCommandAvailable('pdftoppm')) return [];
+    if (!(await isCommandAvailable('pdftoppm'))) return [];
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfocr-'));
     const pdfPath = path.join(tmpDir, 'input.pdf');
     const prefix = path.join(tmpDir, 'page');
@@ -182,10 +227,11 @@ async function renderViaPdftoppm(buffer: Buffer, maxPages: number): Promise<stri
 
 /** Renderiza páginas via `sharp` (libvips c/ suporte a PDF). Requer o pacote instalado e build c/ PDF. */
 async function renderViaSharp(buffer: Buffer, maxPages: number): Promise<string[]> {
-    let sharpMod: any;
+    let sharpMod: (input: Buffer, options?: { page?: number; density?: number }) => import('sharp').SharpImage;
     try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        sharpMod = require('sharp');
+        // Dynamic import: o pacote é opcional (não é dependency) — se ausente, rejeita e
+        // retornamos [] (próxima camada assume). Evita `require` + `any` + eslint-disable.
+        sharpMod = (await import('sharp')).default;
     } catch {
         return [];
     }
@@ -203,14 +249,29 @@ async function renderViaSharp(buffer: Buffer, maxPages: number): Promise<string[
     return out;
 }
 
-function isCommandAvailable(cmd: string): boolean {
-    try {
-        const r = spawnSync(cmd, ['-v'], { stdio: 'ignore' });
-        // ENOENT = binário ausente no PATH. Qualquer outra coisa (incl. exit != 0) consideramos presente.
-        return !(r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT');
-    } catch {
-        return false;
-    }
+/**
+ * Verifica (sem bloquear o event loop) se um binário existe no PATH. Usa `spawn` assíncrono
+ * em vez de `spawnSync`: um `spawnSync` prende o loop inteiro durante a checagem, o que é
+ * custoso sob carga. ENOENT = binário ausente; qualquer outro término (incl. exit != 0)
+ * consideramos presente.
+ */
+async function isCommandAvailable(cmd: string): Promise<boolean> {
+    return new Promise((resolve) => {
+        let done = false;
+        const settle = (v: boolean): void => {
+            if (!done) {
+                done = true;
+                resolve(v);
+            }
+        };
+        try {
+            const child = spawn(cmd, ['-v'], { stdio: 'ignore' });
+            child.on('error', (err: NodeJS.ErrnoException) => settle(err?.code !== 'ENOENT'));
+            child.on('close', () => settle(true));
+        } catch {
+            settle(false);
+        }
+    });
 }
 
 /**
@@ -232,7 +293,9 @@ export function runSpawn(cmd: string, args: string[], timeoutMs: number = DEFAUL
         };
         const timer = setTimeout(() => {
             try { child.kill('SIGKILL'); } catch { /* child já encerrou */ }
-            reject(new Error(`${cmd} excedeu o tempo limite de ${timeoutMs}ms (possível DoS / PDF malformado).`));
+            // Passa pelo `finish()` para consistência: garante o flag `settled` e limpa o
+            // timer também pelo path do timeout (evita duplo settle contra close/error).
+            finish(() => reject(new Error(`${cmd} excedeu o tempo limite de ${timeoutMs}ms (possível DoS / PDF malformado).`)));
         }, timeoutMs);
         // Não impede o processo Node de encerrar.
         if (typeof (timer as { unref?: () => void }).unref === 'function') {

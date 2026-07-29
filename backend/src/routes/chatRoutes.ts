@@ -207,13 +207,13 @@ router.post(
  *
  * Diferente de /ai/analyze/pdf (que extrai E gera uma resposta do LLM), este
  * endpoint devolve SÓ o texto extraído — o agente consome o conteúdo e decide
- * como usá-lo no seu próprio fluxo.
+ * como usá-lo no seu próprio fluxo. Por isso o endpoint NÃO aceita `question`
+ * (responder à pergunta é responsabilidade do agente chamador, não daqui).
  *
  * Resposta: `{ text, path, pagesOcr? }` onde `path` é 'pdf_parse' | 'ocr_vision' | 'empty'.
  */
 const ChatAnalyzePdfSchema = z.object({
     pdf: z.string(),
-    question: z.string().optional(),
 });
 
 router.post(
