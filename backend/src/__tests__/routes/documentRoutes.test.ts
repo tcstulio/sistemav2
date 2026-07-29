@@ -70,11 +70,16 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 import documentRoutes from '../../routes/documentRoutes';
+// Sem o errorHandler global, as rotas que propagam erro via `next(...)` (e o
+// middleware `validateBody`) respondem só com status (sem envelope), quebrando
+// as asserções em `res.body.error.code/...`.
+import { errorHandler } from '../../middleware/errorHandler';
 
 function createApp() {
     const app = express();
     app.use(express.json());
     app.use('/api/documents', documentRoutes);
+    app.use(errorHandler);
     return app;
 }
 
@@ -135,6 +140,18 @@ describe('documentRoutes', () => {
                 });
 
             expect(res.status).toBe(400);
+        });
+
+        it('returns the standard VALIDATION_ERROR envelope via validateBody', async () => {
+            const res = await request(app)
+                .post('/api/documents/send')
+                .send({ documentType: 'boleto' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(res.body.error.details).toEqual(expect.any(Array));
+            expect(mockDocumentService.sendDocument).not.toHaveBeenCalled();
         });
 
         it('returns 202 when approval required', async () => {
