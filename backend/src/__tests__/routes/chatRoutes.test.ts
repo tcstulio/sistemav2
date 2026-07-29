@@ -32,6 +32,10 @@ vi.mock('../../utils/logger', () => ({
     createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() }),
 }));
 
+// #1547 — analyzePdf é o serviço de extração/OCR; mockamos p/ isolar o teste de rota.
+const mockAnalyzePdf = vi.hoisted(() => vi.fn());
+vi.mock('../../services/analyzePdf', () => ({ analyzePdf: mockAnalyzePdf }));
+
 // chatRoutes.ts usa o singleton de progressStream — para isolar os testes, trocamos pelo
 // nosso (mesmo padrão de progressStream.test.ts e aiJobService.test.ts).
 import { ProgressStream, __setProgressStreamForTesting, __resetProgressStreamForTesting } from '../../agent/progressStream';
@@ -302,6 +306,67 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             expect(body).toContain('event: cancelled');
             expect(body).toContain('Cancelado por você');
             expect(body).toContain('buscar');
+        });
+    });
+
+    describe('POST /chat/analyze-pdf (#1547 — OCR fallback de PDF)', () => {
+        beforeEach(() => {
+            mockAnalyzePdf.mockReset();
+        });
+
+        it('retorna 200 com o conteúdo extraído/OCR + metadados do caminho', async () => {
+            mockAnalyzePdf.mockResolvedValue({
+                text: 'Página 1: conteúdo OCR',
+                path: 'ocr_vision',
+                pagesOcr: 1,
+            });
+            const app = createApp(stream);
+            const res = await request(app)
+                .post('/api/chat/analyze-pdf')
+                .send({ pdf: Buffer.from('PDFBYTES').toString('base64'), question: 'resuma' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data).toEqual({
+                text: 'Página 1: conteúdo OCR',
+                path: 'ocr_vision',
+                pagesOcr: 1,
+            });
+            expect(mockAnalyzePdf).toHaveBeenCalledTimes(1);
+            expect(Buffer.isBuffer(mockAnalyzePdf.mock.calls[0][0])).toBe(true);
+        });
+
+        it('também funciona no caminho pdf_parse (sem OCR)', async () => {
+            mockAnalyzePdf.mockResolvedValue({ text: 'texto puro', path: 'pdf_parse' });
+            const app = createApp(stream);
+            const res = await request(app)
+                .post('/api/chat/analyze-pdf')
+                .send({ pdf: Buffer.from('X').toString('base64') });
+            expect(res.status).toBe(200);
+            expect(res.body.data.path).toBe('pdf_parse');
+            expect(res.body.data.pagesOcr).toBeUndefined();
+        });
+
+        it('400 quando `pdf` está ausente', async () => {
+            const app = createApp(stream);
+            const res = await request(app).post('/api/chat/analyze-pdf').send({});
+            expect(res.status).toBe(400);
+            expect(mockAnalyzePdf).not.toHaveBeenCalled();
+        });
+
+        it('400 quando `pdf` decodifica para buffer vazio', async () => {
+            const app = createApp(stream);
+            // ' ' (espaço) é base64 inválido/vazio → Buffer.from(' ','base64').length === 0
+            const res = await request(app).post('/api/chat/analyze-pdf').send({ pdf: ' ' });
+            expect(res.status).toBe(400);
+            expect(mockAnalyzePdf).not.toHaveBeenCalled();
+        });
+
+        it('exige login (requireDolibarrLogin aplicado no router)', async () => {
+            mockAnalyzePdf.mockResolvedValue({ text: '', path: 'pdf_parse' });
+            const app = createApp(stream);
+            await request(app).post('/api/chat/analyze-pdf').send({ pdf: Buffer.from('X').toString('base64') });
+            expect(mockRequireDolibarrLogin).toHaveBeenCalled();
         });
     });
 });
