@@ -897,7 +897,17 @@ const MUTATING_TOOLS = new Set([
 // roda NENHUMA tool de leitura de dado interno. Decisão do dono (2026-07-17): "nada de dado interno"
 // — o contexto do próprio cliente já vem injetado no prompt via CRM. Allowlist pública EXPLÍCITA
 // (fail-closed): hoje vazia porque toda tool de leitura expõe dado interno (usuários/banco/PII/RH).
-const PUBLIC_READONLY_ALLOWLIST = new Set<string>([]);
+// #cliente-tools (paridade bot n8n Marciano): tools que um CLIENTE identificado (readOnly, SEM
+// permissionProfile) pode usar. Estava VAZIO → o agente-cliente ficava sem NENHUMA ferramenta ("não
+// disponível" pra catálogo/agenda). SÓ entram aqui tools que NÃO vazam dados de OUTROS clientes:
+// catálogo/categorias/info-da-empresa são genéricos (não por-cliente). NÃO adicionar
+// list_invoices/list_proposals/list_events crus (vazam dados de terceiros) — esses precisam de tools
+// ESCOPADAS ao cliente (fase 2: disponibilidade de data; cotação-do-cliente).
+const PUBLIC_READONLY_ALLOWLIST = new Set<string>([
+    'list_products',      // catálogo de produtos/serviços (= BuscarCatalogoCompleto do n8n)
+    'list_categories',    // navegar por categoria
+    'get_company_info',   // dados da empresa (endereço, contato)
+]);
 
 /** True se a ferramenta escreve/dispara efeito externo (deve ser bloqueada em read-only). */
 function isMutatingTool(tool: string): boolean {
