@@ -70,7 +70,7 @@ export class AskUserInterrupt extends Error {
 
 type ToolCallListener = (tool: string, args: Record<string, any>, result: string, durationMs: number) => void;
 
-interface ToolContext {
+export interface ToolContext {
     listener: ToolCallListener | null;
     userId?: string;
     userLogin?: string;
@@ -82,6 +82,12 @@ interface ToolContext {
      * mensagens externas), onde o agente deve ser estritamente somente-leitura.
      */
     readOnly?: boolean;
+    /**
+     * Profundidade de aninhamento do agente corrente (0 = agente de topo; 1+ = sub-agente
+     * delegado via tool `delegate` #1036). Propagada pelo ToolContext (AsyncLocalStorage) para
+     * que o gate de `MAX_SUBAGENT_DEPTH` encadeie recursivamente. Ausente/undefined = 0.
+     */
+    depth?: number;
     /**
      * Identificador ESTÁVEL do "turno" lógico (ex.: msg.id do WhatsApp). Quando presente, toda
      * escrita real é idempotente por (turnId, ator, tool, args) — executa no máximo 1× mesmo que a
@@ -267,6 +273,9 @@ const TOOLS_PROMPT_FULL = `
 
         FERRAMENTA DE PESQUISA NA WEB:
         86. web_search(query) - Pesquisa na INTERNET e devolve os principais resultados (título, link e trecho). Use para informações externas ao sistema: cotações de moedas, notícias, dados de empresas/CNPJ, endereços, preços de mercado, fatos atuais. NÃO use para dados internos (clientes, faturas, tarefas — para esses use as ferramentas do sistema). Cite os links relevantes na resposta.
+
+        FERRAMENTA DE DELEGAÇÃO (sub-agente isolado):
+        124. delegate(objective, tools?, max_iterations?) - Delega uma sub-tarefa bem definida a um sub-agente isolado. O sub-agente tem contexto próprio — só o resumo volta para você. Ideal para buscas longas, cálculos repetitivos ou tarefas paralelas. objective = descrição clara e autossuficiente do que o sub-agente deve fazer (obrigatório). tools = array de nomes de ferramentas permitidas ao sub-agente (opcional; se omitido, o sub-agente só tem acesso a leitura: search, list_products, search_customer, get_customer_details, web_search). max_iterations = orçamento de iterações (opcional, padrão 5, máximo 10).
 
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
         REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
@@ -2364,6 +2373,23 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             } catch (e: any) {
                 return `Erro ao ler git log: ${e.message}`;
             }
+        }
+
+        // #1036 — delega uma sub-tarefa a um sub-agente isolado. Devolve APENAS o `summary`
+        // (string curta) produzido por runSubAgent, que vira o `[TOOL RESULT delegate]` no
+        // contexto do pai. O currentDepth é lido do ToolContext (0 no agente de topo), permitindo
+        // delegação aninhada com teto (MAX_SUBAGENT_DEPTH).
+        //
+        // Dynamic import: quebra o ciclo de módulo agentTools → delegate → subAgent → agentLoop
+        // → agentTools. `executeToolInner` já é async, então o custo é desprezível.
+        //
+        // TODO(#1036 follow-up): unificar — a tool `delegate` vive tanto neste switch
+        // (dispatcher legado) quanto no registry estruturado (`agent/tools/index.ts`). Quando
+        // as tools de ERP migrarem para o registry, `executeTool` poderá despachar via
+        // `getTool(name).execute(args)` e este case (bem como o switch gigante) deixa de existir.
+        case 'delegate': {
+            const { delegateTool } = await import('../agent/tools/delegate');
+            return delegateTool.execute(args || {});
         }
 
         // AÇÕES HITL (prepare_create_*/prepare_edit_*/prepare_batch_create) caem no dispatch genérico.
