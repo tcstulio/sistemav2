@@ -36,6 +36,26 @@ vi.mock('../../utils/logger', () => ({
 const mockAnalyzePdf = vi.hoisted(() => vi.fn());
 vi.mock('../../services/analyzePdf', () => ({ analyzePdf: mockAnalyzePdf }));
 
+// #1546 — describeVideo é o serviço de descrição de vídeo; mockamos p/ isolar a rota
+// (cobre o caminho: validar entrada → salvar temp → chamar describeVideo → limpar).
+const mockDescribeVideo = vi.hoisted(() => vi.fn());
+vi.mock('../../services/describeVideo', () => ({
+    describeVideo: mockDescribeVideo,
+    SUPPORTED_VIDEO_MIMES: ['video/mp4', 'video/quicktime'],
+}));
+
+// #1546 — mockamos o config para controlar `chatVideoMaxBytes` independentemente da env.
+// Sem isso o teste do 413 teria que enviar 21 MiB pela rota (estourando o limite default
+// de 100 KiB do body-parser do express.json() no app de teste). Aqui usamos 1 KiB como
+// limite — pequeno o bastante p/ testar com buffer pequeno, mas ainda dentro do piso
+// mínimo do config (1 MiB).
+const mockChatCfg = vi.hoisted(() => ({
+    chatVideoMaxBytes: 1024, // 1 KiB → qualquer buffer > 1 KiB cai no 413
+}));
+vi.mock('../../config/env', () => ({
+    config: mockChatCfg,
+}));
+
 // chatRoutes.ts usa o singleton de progressStream — para isolar os testes, trocamos pelo
 // nosso (mesmo padrão de progressStream.test.ts e aiJobService.test.ts).
 import { ProgressStream, __setProgressStreamForTesting, __resetProgressStreamForTesting } from '../../agent/progressStream';
@@ -367,6 +387,151 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             const app = createApp(stream);
             await request(app).post('/api/chat/analyze-pdf').send({ pdf: Buffer.from('X').toString('base64') });
             expect(mockRequireDolibarrLogin).toHaveBeenCalled();
+        });
+    });
+
+    describe('POST /chat/analyze-video (#1546 — descrição de vídeo via glm-4.6v)', () => {
+        beforeEach(() => {
+            mockDescribeVideo.mockReset();
+            mockDescribeVideo.mockResolvedValue('descrição fake do vídeo');
+            // Reseta o mock de PDF também — `analyze-pdf` describe anterior pode ter acumulado
+            // chamadas que afetam as asserções deste bloco (isolamento entre suites).
+            mockAnalyzePdf.mockReset();
+        });
+
+        it('200: processa vídeo curto (≤ limite) e devolve { text, mimeType, path:"video_url" }', async () => {
+            const app = createApp(stream);
+            // Limite mockado = 1 KiB; enviamos 512 bytes (≤ limite).
+            const video = Buffer.alloc(512, 0xab);
+            const res = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: video.toString('base64'), mimeType: 'video/mp4' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.text).toBe('descrição fake do vídeo');
+            expect(res.body.data.mimeType).toBe('video/mp4');
+            // path `video_url` distingue dos caminhos de imagem (pdf_parse/ocr_vision).
+            expect(res.body.data.path).toBe('video_url');
+
+            // describeVideo foi chamado exatamente uma vez, com filePath apontando pra um
+            // arquivo existente no disco (a rota salva o vídeo temporariamente).
+            expect(mockDescribeVideo).toHaveBeenCalledTimes(1);
+            const call = mockDescribeVideo.mock.calls[0][0];
+            expect(call.mimeType).toBe('video/mp4');
+            expect(typeof call.filePath).toBe('string');
+        });
+
+        it('aceita mimeType video/quicktime (MOV) e chama describeVideo com esse MIME', async () => {
+            const app = createApp(stream);
+            const video = Buffer.alloc(256);
+            const res = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: video.toString('base64'), mimeType: 'video/quicktime' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.mimeType).toBe('video/quicktime');
+            const call = mockDescribeVideo.mock.calls[0][0];
+            expect(call.mimeType).toBe('video/quicktime');
+            // Arquivo salvo com extensão .mov quando mime é video/quicktime.
+            expect(call.filePath.endsWith('.mov')).toBe(true);
+        });
+
+        it('413 VIDEO_TOO_LARGE quando vídeo excede o limite (env CHAT_VIDEO_MAX_BYTES)', async () => {
+            const app = createApp(stream);
+            // Limite mockado = 1 KiB; enviamos 2 KiB (acima do limite, abaixo do body-parser).
+            const big = Buffer.alloc(2048, 0xff);
+            const res = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: big.toString('base64'), mimeType: 'video/mp4' });
+
+            // #1546: status 413 (Payload Too Large) é o critério de aceite da issue — mensagem
+            // clara. O corpo JSON do erro é produzido pelo errorHandler global que NÃO está
+            // montado no app de teste (mesmo padrão dos outros testes 4xx do chatRoutes), então
+            // validamos apenas o status e o efeito colateral (describeVideo NÃO foi chamado).
+            expect(res.status).toBe(413);
+            expect(mockDescribeVideo).not.toHaveBeenCalled();
+            expect(mockAnalyzePdf).not.toHaveBeenCalled();
+        });
+
+        it('400 quando `video` está ausente', async () => {
+            const app = createApp(stream);
+            const res = await request(app).post('/api/chat/analyze-video').send({ mimeType: 'video/mp4' });
+            expect(res.status).toBe(400);
+            expect(mockDescribeVideo).not.toHaveBeenCalled();
+        });
+
+        it('400 quando `mimeType` está ausente', async () => {
+            const app = createApp(stream);
+            const res = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: Buffer.from('x').toString('base64') });
+            expect(res.status).toBe(400);
+            expect(mockDescribeVideo).not.toHaveBeenCalled();
+        });
+
+        it('400 quando `mimeType` não é um MIME de vídeo suportado', async () => {
+            const app = createApp(stream);
+            const res = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: Buffer.from('x').toString('base64'), mimeType: 'video/webm' });
+            expect(res.status).toBe(400);
+            expect(mockDescribeVideo).not.toHaveBeenCalled();
+        });
+
+        it('400 quando `video` decodifica para buffer vazio', async () => {
+            const app = createApp(stream);
+            const res = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: ' ', mimeType: 'video/mp4' });
+            expect(res.status).toBe(400);
+            expect(mockDescribeVideo).not.toHaveBeenCalled();
+        });
+
+        it('devolve { text: null } quando describeVideo falha (visão indisponível)', async () => {
+            mockDescribeVideo.mockResolvedValueOnce(null);
+            const app = createApp(stream);
+            const res = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: Buffer.alloc(64).toString('base64'), mimeType: 'video/mp4' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.text).toBeNull();
+            expect(res.body.data.mimeType).toBe('video/mp4');
+            expect(res.body.data.path).toBe('video_url');
+        });
+
+        it('exige login (requireDolibarrLogin aplicado no router)', async () => {
+            const app = createApp(stream);
+            await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: Buffer.alloc(64).toString('base64'), mimeType: 'video/mp4' });
+            expect(mockRequireDolibarrLogin).toHaveBeenCalled();
+        });
+
+        it('caminho vídeo NÃO interfere no caminho imagem/PDF (rotas separadas, mock isolado)', async () => {
+            // Garante que mockAnalyzePdf e mockDescribeVideo são independentes: o teste
+            // anterior não "contamina" este, e vice-versa.
+            const app = createApp(stream);
+            mockAnalyzePdf.mockResolvedValueOnce({ text: 'PDF', path: 'pdf_parse' });
+
+            const rPdf = await request(app)
+                .post('/api/chat/analyze-pdf')
+                .send({ pdf: Buffer.from('X').toString('base64') });
+            expect(rPdf.status).toBe(200);
+            expect(rPdf.body.data.text).toBe('PDF');
+            expect(rPdf.body.data.path).toBe('pdf_parse');
+            expect(mockDescribeVideo).not.toHaveBeenCalled();
+
+            const rVid = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: Buffer.alloc(64).toString('base64'), mimeType: 'video/mp4' });
+            expect(rVid.status).toBe(200);
+            expect(rVid.body.data.path).toBe('video_url');
+            // PDF foi chamado SÓ no request do PDF; vídeo não tocou analyzePdf.
+            expect(mockAnalyzePdf).toHaveBeenCalledTimes(1);
+            // Vídeo foi chamado SÓ no request do vídeo; PDF não tocou describeVideo.
+            expect(mockDescribeVideo).toHaveBeenCalledTimes(1);
         });
     });
 });
