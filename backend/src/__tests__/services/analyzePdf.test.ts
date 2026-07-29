@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
 
 // pdfText: mockado (igual ao botService.test) — o require lazy do pdf-parse não é alcançável
 // por spy. Aqui controlamos o que extractPdfText/extractPdfPageImages devolvem por cenário.
@@ -8,7 +10,7 @@ const mockPdf = vi.hoisted(() => ({
 }));
 vi.mock('../../utils/pdfText', () => mockPdf);
 
-import { analyzePdf, defaultRenderPdfPages, OCR_PAGE_HINT, DEFAULT_MIN_TEXT_CHARS } from '../../services/analyzePdf';
+import { analyzePdf, defaultRenderPdfPages, runSpawn, OCR_PAGE_HINT, DEFAULT_MIN_TEXT_CHARS } from '../../services/analyzePdf';
 
 describe('analyzePdf (#1547) — fallback de OCR para PDF escaneado', () => {
     beforeEach(() => {
@@ -172,5 +174,45 @@ describe('defaultRenderPdfPages (#1547) — renderer em camadas (pdftoppm → sh
         mockPdf.extractPdfPageImages.mockResolvedValue([]);
         const out = await defaultRenderPdfPages(Buffer.from('%PDF-'), 2);
         expect(out).toEqual([]);
+    });
+});
+
+describe('runSpawn (#1547) — timeout mata o child (anti-DoS em pdftoppm)', () => {
+    // Polla a existência do PID: process.kill(pid,0) lança quando o processo sumiu.
+    // Retry suaviza a race entre child.kill('SIGKILL') e o SO liberar o PID (variável entre SOs).
+    async function waitUntilGone(pid: number, tries = 20, delayMs = 50): Promise<boolean> {
+        for (let i = 0; i < tries; i++) {
+            try { process.kill(pid, 0); } catch { return true; }
+            await new Promise((r) => setTimeout(r, delayMs));
+        }
+        return false;
+    }
+
+    it('rejeita com erro de timeout e MATA o processo que trava (sem vazar / DoS)', async () => {
+        // O setup.ts global mocka `fs` — o child (processo node separado) escreve no FS real,
+        // então lemos via importActual para enxergar o que ele gravou.
+        const realFs = await vi.importActual<typeof import('fs')>('fs');
+        const marker = path.join(os.tmpdir(), `runspawn-pid-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+        // Child grava seu PID e fica "vivo" (setInterval) — simula pdftoppm hungado por PDF malformado.
+        const script = `require('fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(function(){},1000);`;
+        const t0 = Date.now();
+        await expect(runSpawn(process.execPath, ['-e', script], 1500)).rejects.toThrow(/tempo limite/i);
+        const elapsed = Date.now() - t0;
+        // Rejeitou por causa do timer (não esperou indefinidamente).
+        expect(elapsed).toBeLessThan(6000);
+
+        const pid = Number(realFs.existsSync(marker) ? realFs.readFileSync(marker, 'utf8') : '');
+        try { realFs.unlinkSync(marker); } catch { /* ignore */ }
+        expect(pid).toBeGreaterThan(0);
+        // O SIGKILL foi entregue → o processo não existe mais (DoS mitigado).
+        expect(await waitUntilGone(pid)).toBe(true);
+    }, 10_000);
+
+    it('resolve normalmente quando o processo termina antes do timeout (happy path)', async () => {
+        await expect(runSpawn(process.execPath, ['-e', 'process.exit(0)'], 10_000)).resolves.toBeUndefined();
+    });
+
+    it('rejeita com exit code != 0 quando o processo falha rápido', async () => {
+        await expect(runSpawn(process.execPath, ['-e', 'process.exit(3)'], 10_000)).rejects.toThrow(/exited 3/);
     });
 });

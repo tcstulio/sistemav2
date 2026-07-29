@@ -34,6 +34,14 @@ export const DEFAULT_MIN_TEXT_CHARS = 50;
 /** Número padrão máximo de páginas a renderizar para OCR (controla custo de visão). */
 export const DEFAULT_OCR_MAX_PAGES = 10;
 
+/**
+ * Timeout padrão (ms) para o spawn do `pdftoppm`. Protege contra DoS em produção: um PDF
+ * malformado/enorme pode fazer o processo hungar indefinidamente, prendendo o event loop
+ * e exaurindo recursos. Acima do teto, o child é morto (SIGKILL) e a renderização falha
+ * graciosamente (a próxima camada do renderer assume). Configurável via env.
+ */
+export const DEFAULT_RENDER_TIMEOUT_MS = 60_000;
+
 /** Prompt OCR focado, repassado como `userHint` ao `describeImage` para cada página. */
 export const OCR_PAGE_HINT =
     'Esta é uma página de um documento PDF digitalizado/escaneado. Faça OCR: transcreva FIELMENTE todo o texto visível (parágrafos, tabelas, listas, números, valores, datas e códigos), em português, preservando a ordem de leitura. Não comente nem resuma — devolva apenas a transcrição do conteúdo da página.';
@@ -67,6 +75,13 @@ function resolveMaxPages(opt?: number): number {
     const raw = opt ?? Number(process.env.PDF_OCR_MAX_PAGES) ?? DEFAULT_OCR_MAX_PAGES;
     const n = Math.trunc(raw);
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_OCR_MAX_PAGES;
+}
+
+/** Resolve o timeout de renderização (env > default), sempre >= 1000ms. */
+function resolveTimeoutMs(): number {
+    const raw = Number(process.env.PDF_OCR_RENDER_TIMEOUT_MS) || DEFAULT_RENDER_TIMEOUT_MS;
+    const n = Math.trunc(raw);
+    return Number.isFinite(n) && n >= 1000 ? n : DEFAULT_RENDER_TIMEOUT_MS;
 }
 
 /**
@@ -148,7 +163,9 @@ async function renderViaPdftoppm(buffer: Buffer, maxPages: number): Promise<stri
     try {
         fs.writeFileSync(pdfPath, buffer);
         // -png (saída PNG), -r 150 (DPI), -l <maxPages> (última página a renderizar).
-        await runSpawn('pdftoppm', ['-png', '-r', '150', '-l', String(maxPages), pdfPath, prefix]);
+        // Timeout (default 60s, env PDF_OCR_RENDER_TIMEOUT_MS): um PDF malformado pode fazer
+        // o pdftoppm hungar indefinidamente — matamos o child e deixamos a próxima camada assumir.
+        await runSpawn('pdftoppm', ['-png', '-r', '150', '-l', String(maxPages), pdfPath, prefix], resolveTimeoutMs());
         const re = /^page-?(\d+)\.png$/i;
         const files = fs
             .readdirSync(tmpDir)
@@ -196,11 +213,33 @@ function isCommandAvailable(cmd: string): boolean {
     }
 }
 
-function runSpawn(cmd: string, args: string[]): Promise<void> {
+/**
+ * Spawna um processo externo e aguarda seu término. `timeoutMs` (default 60s) protege
+ * contra DoS: se o child não terminar a tempo (PDF malformado que trava o pdftoppm),
+ * matamos com SIGKILL e rejeitamos — a camada de renderização seguinte assume (graceful).
+ * O `settled` flag garante que só UM de resolve/reject vença (timer vs close/error).
+ * Exportado para teste do comportamento de timeout.
+ */
+export function runSpawn(cmd: string, args: string[], timeoutMs: number = DEFAULT_RENDER_TIMEOUT_MS): Promise<void> {
     return new Promise((resolve, reject) => {
         const child = spawn(cmd, args, { stdio: 'ignore' });
-        child.on('error', reject);
-        child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+        let settled = false;
+        const finish = (fn: () => void) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            fn();
+        };
+        const timer = setTimeout(() => {
+            try { child.kill('SIGKILL'); } catch { /* child já encerrou */ }
+            reject(new Error(`${cmd} excedeu o tempo limite de ${timeoutMs}ms (possível DoS / PDF malformado).`));
+        }, timeoutMs);
+        // Não impede o processo Node de encerrar.
+        if (typeof (timer as { unref?: () => void }).unref === 'function') {
+            (timer as { unref: () => void }).unref();
+        }
+        child.on('error', (err) => finish(() => reject(err)));
+        child.on('close', (code) => finish(() => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`)))));
     });
 }
 
