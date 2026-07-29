@@ -28,6 +28,10 @@ export const config = {
     // é cobrado do saldo PaaS (pay-as-you-go). Áudio ≤30s e ≤25MB por chamada (doc oficial).
     zaiAsrBaseUrl: process.env.ZAI_ASR_BASE_URL || 'https://api.z.ai/api/paas/v4',
     zaiAsrModel: process.env.ZAI_ASR_MODEL || 'glm-asr-2512',
+    // Vídeo (#1030/#937): limite (bytes decodificados) p/ anexos de vídeo no chat. O spike
+    // #1029 confirmou glm-4.6v aceitando MP4 data URL de ≥8.48 MiB; ceiling exato indeterminado
+    // — default conservador de 10 MiB dá folga sobre o provado. Override via VIDEO_MAX_BYTES.
+    videoMaxBytes: parseInt(process.env.VIDEO_MAX_BYTES || String(10 * 1024 * 1024), 10),
     minimaxApiKey: process.env.MINIMAX_API_KEY || '',
     // Chave da ASSINATURA MiniMax (Subscription Key do Token Plan) — separada da API key
     // pay-as-you-go. Usada pelos endpoints de MÍDIA (TTS/voz/imagem/vídeo) quando presente;

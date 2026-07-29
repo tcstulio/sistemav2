@@ -37,6 +37,12 @@ vi.mock('../../services/aiService', () => ({
     aiService: mockAiService,
 }));
 
+// #1030: describeVideo é chamado pelo handler quando há anexo de vídeo. Mock evita HTTP real.
+const mockDescribeVideo = vi.hoisted(() => vi.fn());
+vi.mock('../../services/visionService', () => ({
+    describeVideo: mockDescribeVideo,
+}));
+
 vi.mock('../../services/dolibarr', () => ({
     dolibarrService: { findUserByLoginOrEmail: vi.fn(() => null) },
 }));
@@ -1366,5 +1372,106 @@ describe('#320/#1566: aiLimiter — 21ª chamada POST de AI em 1min → 429', ()
             const res = await request(app).get('/api/sessions-stats');
             expect(res.status).toBe(200);
         }
+    });
+});
+
+// =====================================================
+// #1030: anexo de vídeo no chat — describeVideo integrado ao handler (runChatReply).
+// Critérios: (a) vídeo pequeno → resposta; (b) vídeo grande → 413; (c) mime inválido → 415;
+// (d) falha transitória → degrada (chat segue); (e) regressão: imagem+pdf continuam ok.
+// =====================================================
+describe('#1030: anexo de vídeo no chat (describeVideo)', () => {
+    let app: express.Application;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockAiService.generateReply.mockResolvedValue({ text: 'Generated reply text' });
+        mockDescribeVideo.mockReset();
+        app = createApp();
+    });
+
+    it('(a) vídeo pequeno → descreve e injeta no contexto passado ao agente', async () => {
+        mockDescribeVideo.mockResolvedValueOnce('Um gato brincando com um novelo de lã.');
+
+        const res = await request(app)
+            .post('/api/generate-reply')
+            .send({ context: 'teste', video: 'AAAA', videoMimeType: 'video/mp4' });
+
+        expect(res.status).toBe(200);
+        expect(mockDescribeVideo).toHaveBeenCalledWith('AAAA', 'video/mp4');
+        expect(mockAiService.generateReply).toHaveBeenCalledTimes(1);
+        const ctx = mockAiService.generateReply.mock.calls[0][1];
+        expect(ctx).toContain('[VÍDEO ANEXADO');
+        expect(ctx).toContain('Um gato brincando com um novelo de lã.');
+    });
+
+    it('(b) vídeo acima do limite → 413 VIDEO_TOO_LARGE (não chama o agente)', async () => {
+        mockDescribeVideo.mockRejectedValueOnce(
+            Object.assign(new Error('acima do limite'), { code: 'VIDEO_TOO_LARGE', httpStatus: 413 }),
+        );
+
+        const res = await request(app)
+            .post('/api/generate-reply')
+            .send({ context: 'teste', video: 'BIG', videoMimeType: 'video/mp4' });
+
+        expect(res.status).toBe(413);
+        expect(res.body.success).toBe(false);
+        expect(res.body.error.code).toBe('VIDEO_TOO_LARGE');
+        expect(typeof res.body.error.message).toBe('string');
+        expect(res.body.error.message.length).toBeGreaterThan(0);
+        expect(mockAiService.generateReply).not.toHaveBeenCalled();
+    });
+
+    it('(c) mimeType não suportado → 415 UNSUPPORTED_VIDEO_MIME', async () => {
+        mockDescribeVideo.mockRejectedValueOnce(
+            Object.assign(new Error('mime inválido'), { code: 'UNSUPPORTED_VIDEO_MIME', httpStatus: 415 }),
+        );
+
+        const res = await request(app)
+            .post('/api/generate-reply')
+            .send({ context: 'teste', video: 'AAAA', videoMimeType: 'video/avi' });
+
+        expect(res.status).toBe(415);
+        expect(res.body.error.code).toBe('UNSUPPORTED_VIDEO_MIME');
+        expect(mockAiService.generateReply).not.toHaveBeenCalled();
+    });
+
+    it('(d) falha transitória do provedor → degrada (chat responde 200 com aviso)', async () => {
+        mockDescribeVideo.mockRejectedValueOnce(
+            Object.assign(new Error('vision down'), { code: 'VISION_CALL_FAILED', httpStatus: 502 }),
+        );
+
+        const res = await request(app)
+            .post('/api/generate-reply')
+            .send({ context: 'teste', video: 'AAAA', videoMimeType: 'video/mp4' });
+
+        expect(res.status).toBe(200);
+        expect(mockAiService.generateReply).toHaveBeenCalledTimes(1);
+        const ctx = mockAiService.generateReply.mock.calls[0][1];
+        expect(ctx).toContain('não foi possível analisá-lo');
+        expect(ctx).toContain('NÃO invente o conteúdo');
+    });
+
+    it('(e) regressão: imagem+vídeo juntos — imagem segue como imageBase64 e vídeo vai ao contexto', async () => {
+        mockDescribeVideo.mockResolvedValueOnce('descrição do vídeo.');
+
+        const res = await request(app)
+            .post('/api/generate-reply')
+            .send({ context: 'teste', image: 'IMG_B64', video: 'VID_B64', videoMimeType: 'video/mp4' });
+
+        expect(res.status).toBe(200);
+        // imagem continua sendo repassada como 3º arg (imageBase64) do generateReply.
+        const imgArg = mockAiService.generateReply.mock.calls[0][2];
+        expect(imgArg).toEqual(['IMG_B64']);
+        // descrição do vídeo injetada no contexto.
+        const ctx = mockAiService.generateReply.mock.calls[0][1];
+        expect(ctx).toContain('descrição do vídeo.');
+    });
+
+    it('sem anexo de vídeo → describeVideo NÃO é chamado (sem regressão no fluxo comum)', async () => {
+        const res = await request(app).post('/api/generate-reply').send({ context: 'teste' });
+
+        expect(res.status).toBe(200);
+        expect(mockDescribeVideo).not.toHaveBeenCalled();
     });
 });

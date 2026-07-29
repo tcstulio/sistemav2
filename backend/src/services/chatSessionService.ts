@@ -11,6 +11,8 @@ export interface ChatSessionMessage {
     timestamp: number;
     metadata?: {
         hasImage?: boolean;
+        // #1030: marca turnos com anexo de vídeo analisado via visão (glm-4.6v).
+        hasVideo?: boolean;
         toolCalls?: {
             tool: string;
             args: Record<string, any>;
