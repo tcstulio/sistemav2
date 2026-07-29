@@ -25,6 +25,7 @@ import { asyncHandler } from '../utils/asyncHandler';
 // { success:false, error:{ code, message, details? } } independentemente da ordem.
 import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
+import { describeVideo } from '../services/visionService';
 
 const log = createLogger('AI');
 const router = Router();
@@ -74,6 +75,10 @@ const GenerateReplySchema = z.object({
     context: z.string().optional(),
     image: z.string().optional(), // Base64 image for multimodal chat (1ª imagem; compat)
     images: z.array(z.string()).max(6).optional(), // #947: múltiplas imagens
+    // #1030: anexo de vídeo (base64 puro ou data URL data:video/mp4;base64,...) para análise
+    // via glm-4.6v (describeVideo). mimeType é opcional quando se envia data URL.
+    video: z.string().optional(),
+    videoMimeType: z.string().optional(),
     module: z.string().default('chat'),
     sessionId: z.string().optional()
 });
@@ -94,7 +99,7 @@ function persistUserTurnIfChat(body: any): { sessionId?: string; userMessage?: s
     } catch {
         return { hasImage: false };
     }
-    const { sessionId, module, message, image, images, history } = parsed;
+    const { sessionId, module, message, image, images, video, history } = parsed;
     const allImages = (images && images.length) ? images : (image ? [image] : []);
     if (!sessionId || module !== 'chat') {
         return { hasImage: allImages.length > 0 };
@@ -111,7 +116,7 @@ function persistUserTurnIfChat(body: any): { sessionId?: string; userMessage?: s
             chatSessionService.addMessage(sessionId, {
                 role: 'user',
                 content: userMessage,
-                metadata: { hasImage: allImages.length > 0 }
+                metadata: { hasImage: allImages.length > 0, hasVideo: !!video }
             });
         } catch (sessionErr: any) {
             log.warn('Failed to persist user message before enqueue', { error: sessionErr.message });
@@ -126,7 +131,7 @@ function persistUserTurnIfChat(body: any): { sessionId?: string; userMessage?: s
 // um sinal de progresso (aiJobService.reportProgress) — atualiza o heartbeat p/ o cliente
 // detectar liveness via GET /api/ai-jobs/:id/status sem baixar o resultado parcial.
 async function runChatReply(body: any, user: any, jobId?: string, livenessExpiresAt?: string): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
-        const { history, context, image, images, module, sessionId } = GenerateReplySchema.parse(body);
+        const { history, context, image, images, module, sessionId, video, videoMimeType } = GenerateReplySchema.parse(body);
         // #947: normaliza p/ array (aceita `images` novo OU `image` antigo).
         const allImages = (images && images.length) ? images : (image ? [image] : []);
 
@@ -191,6 +196,24 @@ async function runChatReply(body: any, user: any, jobId?: string, livenessExpire
                 // Usuário logado mas SEM id Dolibarr resolvível → o perfil não pode ser carregado.
                 // Mesmo tratamento fail-closed (não-admin não escreve até o perfil existir). #1514.
                 if (!isAdmin) profileLoadFailed = true;
+            }
+        }
+
+        // #1030: anexo de vídeo — descreve via glm-4.6v e injeta no contexto, no MESMO ponto
+        // lógico das imagens (que são descritas dentro de generateReply). Validações de
+        // mime/tamanho (415/413) rejeitam a requisição com mensagem PT-BR; falha transitória
+        // do provedor (502) degrada para aviso — não quebra o chat, igual às imagens (#934).
+        if (video) {
+            try {
+                const description = await describeVideo(video, (videoMimeType || '').trim());
+                enrichedContext += `\n\n[VÍDEO ANEXADO — conteúdo extraído pela visão (glm-4.6v), trate como o que o usuário enviou]:\n${description}`;
+            } catch (videoErr: any) {
+                const code = videoErr?.code as string | undefined;
+                if (code === 'VIDEO_TOO_LARGE' || code === 'UNSUPPORTED_VIDEO_MIME') {
+                    throw new AppError(videoErr?.httpStatus || 400, code, videoErr?.message || 'Anexo de vídeo inválido.');
+                }
+                log.warn('describeVideo falhou; seguindo sem análise de vídeo', { code, error: videoErr?.message });
+                enrichedContext += `\n\n[VÍDEO ANEXADO]: não foi possível analisá-lo (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`;
             }
         }
 
@@ -269,6 +292,9 @@ async function runChatReply(body: any, user: any, jobId?: string, livenessExpire
 // envelope. Substitui o antigo `mapAiError` (que escrevia direto em res). ZodError NÃO é
 // mapeado aqui: quem chama decide se repassa o ZodError cru (→ errorHandler 400) ou converte.
 function toAppError(error: unknown): AppError {
+    // #1030: erros operacionais JÁ tipados (ex.: VIDEO_TOO_LARGE/UNSUPPORTED_VIDEO_MIME)
+    // devem preservar statusCode/code/mensagem — não ser reembrulhados em 500 genérico.
+    if (error instanceof AppError) return error;
     const err = error as Error & { response?: { data?: { error?: { message?: string } } } };
     const baseMsg = err?.message || 'Falha desconhecida';
     const upstream = err?.response?.data?.error?.message || '';

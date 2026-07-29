@@ -171,3 +171,131 @@ export function logVisionInit(): void {
     const cfg = getVisionClientConfig();
     log.debug('visionService inicializado', { baseUrl: cfg.baseUrl, model: cfg.model });
 }
+
+/**
+ * #1030: análise de vídeo via glm-4.6v (base Coding), análoga ao `describeImage` do
+ * LocalProvider, mas vivendo AQUI (passo 2 da extração iniciada em #1029). O spike
+ * `test-video-glm.ts` confirmou SUPORTA: o endpoint aceita `video_url` com data URL
+ * `data:video/mp4;base64,...` (≥8.48 MiB, MP4/H.264). WebM não foi exercitado pelo
+ * spike, mas o mesmo endpoint o aceita por mimeType — restrinja ACCEPTED_VIDEO_MIME_TYPES
+ * se quiser limitar ao estritamente validado.
+ */
+
+/** MimeTypes aceitos (spike validou video/mp4; video/webm aceito por analogia do endpoint). */
+export const ACCEPTED_VIDEO_MIME_TYPES: ReadonlySet<string> = new Set(['video/mp4', 'video/webm']);
+
+/**
+ * Limite padrão (bytes decodificados) quando config.videoMaxBytes não definido. Spike
+ * confirmou ≥8.48 MiB aceitos; 10 MiB dá folha sobre o provado sem exagerar.
+ */
+export const DEFAULT_VIDEO_MAX_BYTES = 10 * 1024 * 1024;
+
+export type VideoErrorCode = 'VIDEO_TOO_LARGE' | 'UNSUPPORTED_VIDEO_MIME' | 'VISION_CALL_FAILED';
+
+/**
+ * Erro tipado de análise de vídeo. `code` discrimina a causa; `httpStatus` sugere o status
+ * HTTP adequado. O handler do chat checa `.code` (duck-typing, não instanceof) para seguir
+ * degradando o chat mesmo quando o visionService está mockado nos testes de rota.
+ */
+export class VideoAnalysisError extends Error {
+    readonly code: VideoErrorCode;
+    readonly httpStatus: number;
+    constructor(code: VideoErrorCode, message: string, httpStatus: number) {
+        super(message);
+        this.name = 'VideoAnalysisError';
+        this.code = code;
+        this.httpStatus = httpStatus;
+    }
+}
+
+/** Tamanho aproximado (bytes) do payload decodificado a partir do base64, sem alocar Buffer. */
+function approxDecodedBytes(base64: string): number {
+    const noPad = base64.replace(/=+$/, '');
+    return Math.floor((noPad.length * 3) / 4);
+}
+
+/** Extrai o mimeType de uma data URL (`data:video/mp4;base64,...`) ou devolve undefined. */
+function mimeFromDataUrl(s: string): string | undefined {
+    const m = /^data:([^;,]+)(?:;[^,]*)?,/.exec(s);
+    return m?.[1];
+}
+
+const VIDEO_DESC_PROMPT = `Analise este vídeo em detalhes, em português.
+- Descreva o que acontece: ações, objetos, pessoas, cenários e a sequência dos eventos.
+- Se houver textos, legendas ou interface na tela, transcreva-os.
+- Se houver áudio relevante (falas, sons), resuma quando possível.
+- Seja factual; não invente o que não estiver presente.`;
+
+/**
+ * Descreve o conteúdo de um vídeo via glm-4.6v (`video_url`), análoga ao `describeImage`.
+ * Usa o cliente JÁ configurado (callVisionChat). Aceita `videoBase64` como data URL
+ * (`data:video/mp4;base64,...`) ou base64 puro — neste caso `mimeType` é obrigatório.
+ *
+ * Lança `VideoAnalysisError` em:
+ *  - UNSUPPORTED_VIDEO_MIME (mimeType fora de ACCEPTED_VIDEO_MIME_TYPES) → 415
+ *  - VIDEO_TOO_LARGE (bytes decodificados > config.videoMaxBytes) → 413
+ *  - VISION_CALL_FAILED (provedor indisponível / resposta vazia) → 502
+ *
+ * O chamador (handler do chat) decide: 413/415 são erros do usuário e DEVEM rejeitar a
+ * requisição; 502 é transitório e degrada para aviso (não quebra o chat), como nas imagens.
+ */
+export async function describeVideo(videoBase64: string, mimeType: string): Promise<string> {
+    const clean = videoBase64.replace(/^data:[^,]+,/, '');
+    const mime = (mimeType || mimeFromDataUrl(videoBase64) || '').toLowerCase().split(';')[0].trim();
+
+    if (!ACCEPTED_VIDEO_MIME_TYPES.has(mime)) {
+        throw new VideoAnalysisError(
+            'UNSUPPORTED_VIDEO_MIME',
+            `Tipo de vídeo não suportado: "${mime || 'desconhecido'}". Formatos aceitos: ${[...ACCEPTED_VIDEO_MIME_TYPES].join(', ')}.`,
+            415,
+        );
+    }
+
+    const maxBytes = config.videoMaxBytes || DEFAULT_VIDEO_MAX_BYTES;
+    const bytes = approxDecodedBytes(clean);
+    if (bytes > maxBytes) {
+        const sentMiB = (bytes / 1024 / 1024).toFixed(2);
+        const limitMiB = (maxBytes / 1024 / 1024).toFixed(2);
+        throw new VideoAnalysisError(
+            'VIDEO_TOO_LARGE',
+            `O vídeo possui ${sentMiB} MiB, acima do limite de ${limitMiB} MiB. Envie um vídeo menor.`,
+            413,
+        );
+    }
+
+    const dataUrl = `data:${mime};base64,${clean}`;
+    const startMs = Date.now();
+    try {
+        const result = await callVisionChat(
+            [{
+                role: 'user',
+                content: [
+                    { type: 'text', text: VIDEO_DESC_PROMPT },
+                    { type: 'video_url', video_url: { url: dataUrl } },
+                ],
+            }],
+            { timeoutMs: 180_000, origin: 'describeVideo' },
+        );
+        const elapsedMs = Date.now() - startMs;
+        const data = result.data as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { total_tokens?: number } };
+        const content = data?.choices?.[0]?.message?.content;
+        const tokens = data?.usage?.total_tokens;
+        const text = content == null ? '' : String(content);
+        if (!text) {
+            log.warn('describeVideo: provedor retornou conteúdo vazio', { mime, bytes, elapsedMs, tokens, status: result.status });
+            throw new VideoAnalysisError('VISION_CALL_FAILED', 'O provedor de visão não retornou descrição para o vídeo.', 502);
+        }
+        log.info('describeVideo concluído', { mime, bytes, elapsedMs, tokens, status: result.status });
+        return text;
+    } catch (err) {
+        if (err instanceof VideoAnalysisError) throw err;
+        const info = describeVisionError(err);
+        const elapsedMs = Date.now() - startMs;
+        log.warn('describeVideo falhou', { mime, bytes, elapsedMs, kind: info.kind, status: info.status, code: info.code });
+        throw new VideoAnalysisError(
+            'VISION_CALL_FAILED',
+            'Não foi possível analisar o vídeo no momento (provedor de visão indisponível).',
+            502,
+        );
+    }
+}
