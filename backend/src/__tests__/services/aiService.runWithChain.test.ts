@@ -59,6 +59,11 @@ vi.mock('../../services/llmCallLogService', () => ({
 
 vi.mock('../../services/llmQuotaState', () => ({
     isQuotaError: mockIsQuotaError,
+    // espelha a implementacao real: marcador de infra vence, exceto quando a mensagem
+    // tambem tras texto de limite REAL do provedor.
+    isTransientInfraError: (m) => !!m
+        && /econnaborted|etimedout|econnreset|econnrefused|socket hang up|network error|timeout of/i.test(String(m))
+        && !/limit exhausted|insufficient balance|usage limit/i.test(String(m)),
     markQuotaExhausted: vi.fn(),
     clearQuotaExhausted: vi.fn(),
     isQuotaExhausted: vi.fn(() => false),

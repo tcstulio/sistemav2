@@ -1206,7 +1206,7 @@ class GoogleProvider implements AIProvider {
 
 // --- Local LLM Provider (OpenAI Compatible) ---
 
-import { isQuotaError, markQuotaExhausted, clearQuotaExhausted } from './llmQuotaState';
+import { isQuotaError, isTransientInfraError, markQuotaExhausted, clearQuotaExhausted } from './llmQuotaState';
 import { llmCallLogService } from './llmCallLogService';
 import { llmHealthService } from './llmHealthService';
 import { configService as _configService } from './configService';
@@ -1301,7 +1301,8 @@ export class LocalProvider implements AIProvider {
                 primaryErr = err;
                 // Erro não-recuperável (400/401/403 etc.): não tenta fallback, lança imediatamente.
                 if (!this.isRetryableError(err)) {
-                    if (isQuotaError(this.errDetail(err))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(err)}`);
+                    // idem runWithChain: timeout não marca o sinal GLOBAL de cota.
+                    if (isQuotaError(this.errDetail(err)) && !isTransientInfraError(this.errDetail(err))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(err)}`);
                     llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: false, latencyMs: Date.now() - t0, origin, errorCode: this.errCode(err), errorDetail: this.errDetail(err).slice(0, 300) });
                     throw err;
                 }
@@ -1309,6 +1310,17 @@ export class LocalProvider implements AIProvider {
                 const reason = err?.response?.status || err?.code || err?.message || 'erro';
                 assertWithinDeadline(options?.deadlineAt);
                 const remaining = retryDeadline - Date.now();
+
+                // Cota ESGOTADA no primário não melhora com backoff: um 1310 "Weekly/Monthly
+                // Limit Exhausted" só volta na renovação do plano, daqui a horas. Insistir
+                // com 2s→4s→8s queimava ~14s do orçamento COMPARTILHADO e o fallback (saudável)
+                // recebia o resto já curto, estourando por timeout — o oposto do que um fallback
+                // existe para fazer. Aqui: vai direto pro fallback, com o orçamento intacto.
+                const detailForQuota = this.errDetail(err);
+                if (this.fallbackConfig && isQuotaError(detailForQuota) && !isTransientInfraError(detailForQuota)) {
+                    log.warn(`LLM primário (${this.modelName}) sem cota [${reason}] — pulando backoff, direto para ${this.fallbackConfig.model}`);
+                    break;
+                }
 
                 if (remaining > retryDelay) {
                     // Ainda há tempo dentro do deadline — aguarda backoff e tenta de novo.
@@ -1325,7 +1337,7 @@ export class LocalProvider implements AIProvider {
 
         // Sem fallback configurado: registra e lança o erro do primário.
         if (!this.fallbackConfig) {
-            if (isQuotaError(this.errDetail(primaryErr))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(primaryErr)}`);
+            if (isQuotaError(this.errDetail(primaryErr)) && !isTransientInfraError(this.errDetail(primaryErr))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(primaryErr)}`);
             llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: false, latencyMs: Date.now() - t0, origin, errorCode: this.errCode(primaryErr), errorDetail: this.errDetail(primaryErr).slice(0, 300) });
             throw primaryErr;
         }
@@ -2295,7 +2307,15 @@ async function runWithChain<T>(
                 ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data || '').slice(0, 200)}`
                 : (err?.code || err?.message || String(err));
 
-            if (isQuotaError(detail)) {
+            // PRECEDÊNCIA: timeout/queda de conexão é transitório, NUNCA esgotamento.
+            // `isQuotaError` casa 'econnaborted'/'etimedout' de propósito (o TaskRunner
+            // precisa disso para segurar-e-retomar), mas aqui a mistura envenenava o
+            // circuit breaker: um provider SAUDÁVEL que estourou o orçamento de tempo
+            // era marcado `exhausted` e ficava em cooldown de até 10min, e o turno
+            // seguinte via "todos os providers falharam".
+            if (isTransientInfraError(detail)) {
+                llmHealthService.recordTransientError(provider, err);
+            } else if (isQuotaError(detail)) {
                 llmHealthService.recordQuotaError(provider, err);
             } else {
                 llmHealthService.recordTransientError(provider, err);

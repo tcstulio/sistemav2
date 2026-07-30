@@ -45,6 +45,41 @@ export function isQuotaError(msg?: string | null): boolean {
   return QUOTA_MARKERS.some((k) => m.includes(k));
 }
 
+// Marcadores de falha TRANSITÓRIA DE INFRA — a chamada não chegou a ser recusada por
+// cota; ela não terminou a tempo, ou a conexão caiu. São um SUBCONJUNTO de QUOTA_MARKERS
+// (que os inclui de propósito, para o TaskRunner segurar-e-retomar também em timeout).
+const TRANSIENT_INFRA_MARKERS = [
+  'econnaborted',
+  'etimedout',
+  'econnreset',
+  'econnrefused',
+  'socket hang up',
+  'network error',
+  'timeout of',
+];
+
+/**
+ * true quando o erro é timeout/queda de conexão e NÃO um limite real do provedor.
+ *
+ * Por que existe: `isQuotaError` lista 'econnaborted'/'etimedout' como marcadores de cota
+ * de propósito — o TaskRunner usa esse sinal para segurar-e-retomar, e ali tratar timeout
+ * como transitório queimaria as re-tentativas. Mas para o CIRCUIT BREAKER a mesma mistura
+ * é destrutiva: um provider saudável que demorou demais era marcado `exhausted`, com
+ * cooldown escalando 30s → 2min → 10min, e o usuário recebia "limite do provedor atingido"
+ * com o provedor de pé (verificado 2026-07-30: MiniMax respondendo 200 em 1,8s enquanto o
+ * bot dizia estar sem capacidade).
+ *
+ * Um erro que casa AQUI deve ser tratado como transitório mesmo casando em `isQuotaError`.
+ * A precedência é esta função primeiro; `isQuotaError` só decide o que sobra.
+ */
+export function isTransientInfraError(msg?: string | null): boolean {
+  if (!msg) return false;
+  const m = String(msg).toLowerCase();
+  // Um 429/402 COM texto de cota é limite real, mesmo que a mensagem cite timeout.
+  if (m.includes('limit exhausted') || m.includes('insufficient balance') || m.includes('usage limit')) return false;
+  return TRANSIENT_INFRA_MARKERS.some((k) => m.includes(k));
+}
+
 /** Sinaliza que a cota/saldo de LLM está esgotada.
  *  Sem provider explícito → registra no provider 'global' (representa "todos"). */
 export function markQuotaExhausted(reason: string): void {
