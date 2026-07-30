@@ -23,6 +23,7 @@ import githubRoutes from './routes/githubRoutes';
 import issueReportRoutes from './routes/issueReportRoutes';
 import { sessionService } from './services/legacy/sessionService';
 import { schedulerService } from './services/schedulerService';
+import { notificationService } from './services/notificationService';
 import { healthLimiter } from './middleware/healthRateLimiter';
 // #1566: aiLimiter agora vem do middleware/rateLimit.ts (rateLimiters.ai) — single source
 // of truth. Antes era redefinido inline aqui, duplicando a config de middleware/rateLimit.ts
@@ -345,6 +346,12 @@ if (!IS_PREVIEW) {
     schedulerService.startWorker();
     log.info('SchedulerService worker started');
 
+    // #1407 — Worker do gate central de quiet-hours: despacha os envios adiados pela
+    // janela de silêncio (notificationService.create → scheduledDispatch) quando a
+    // janela abre. Não sobe no constructor p/ não pendurar timers em testes.
+    notificationService.startDispatchWorker();
+    log.info('NotificationService quiet-hours dispatch worker started');
+
     // Start Event Scraper Worker (interval/auto-run vêm da config — scraperConfigStore)
     eventScraperService.startWorker();
     log.info('EventScraperService worker started (config-driven)');
@@ -426,6 +433,9 @@ const gracefulShutdown = async (signal: string) => {
 
     // 2. Stop Scheduler Worker
     schedulerService.stopWorker();
+
+    // #1407 — Stop quiet-hours dispatch worker
+    notificationService.stopDispatchWorker();
 
     // 3. Stop Alert Cron
     alertCronService.stop();

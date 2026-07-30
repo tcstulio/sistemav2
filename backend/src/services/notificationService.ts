@@ -1,6 +1,11 @@
 import { createLogger } from '../utils/logger';
 import { socketService } from './socketService';
 import { channelRouter } from './channelRouter';
+// #1407 — gate central de quiet-hours. uiConfigService NÃO importa notificationService,
+// e `notifications/quietHours` importa SÓ tipos de uiConfigService (import type, apagado
+// em runtime) → sem ciclo de módulo em runtime.
+import { uiConfigService } from './uiConfigService';
+import { getQuietHours, nextQuietEnd } from './notifications/quietHours';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -42,14 +47,36 @@ export interface Notification {
     createdAt: number;
     deliveredTo: NotificationChannel[];
     failedChannels: string[];
+    /**
+     * #1407 — Notificação crítica (ex.: OTP/segurança) fura o gate de quiet-hours e é
+     * despachada imediatamente mesmo dentro da janela de silêncio. Default undefined/false.
+     */
+    critical?: boolean;
 }
 
 interface NotificationStore {
     notifications: Notification[];
 }
 
+/**
+ * #1407 — Envio adiado pelo gate de quiet-hours. Fica neste pool até o worker
+ * (`processScheduledDispatch`) despachá-lo quando `scheduledFor` chegar. Mantém a
+ * referência à `notification` (que já está no store) p/ o worker chamar `deliver`
+ * sem precisar de re-leitura. Em memória: um restart perde o adiantamento (aceitável
+ * — a mensagem não foi pedida p/ envio imediato pelo cliente; eco do schedulerService).
+ */
+interface ScheduledDispatch {
+    notification: Notification;
+    channel: NotificationChannel;
+    scheduledFor: number; // timestamp ms (próximo fim da janela de silêncio)
+    createdAt: number;
+}
+
 const STORE_PATH = path.join(__dirname, '../../data/notifications.json');
 const MAX_NOTIFICATIONS = 1000;
+// #1407 — granularidade do worker de dispatch adiado (quiet-hours). Mesma casa do
+// schedulerService (30s): suficiente p/ honrar uma janela de silêncio sem polling agressivo.
+const DISPATCH_CHECK_INTERVAL_MS = 30000;
 
 class NotificationService {
 
@@ -81,6 +108,9 @@ class NotificationService {
         return route;
     }
     private data: NotificationStore;
+    // #1407 — fila de envios adiados pelo gate de quiet-hours (aguardando o fim da janela).
+    private scheduledDispatches: ScheduledDispatch[] = [];
+    private dispatchIntervalId: NodeJS.Timeout | null = null;
 
     constructor() {
         this.data = { notifications: [] };
@@ -143,6 +173,7 @@ class NotificationService {
         entityType?: string;
         entityId?: string;
         linkTo?: string;
+        critical?: boolean;
     }): Promise<Notification> {
         const channels = params.channels || ['in-app'];
         const notification: Notification = {
@@ -165,12 +196,34 @@ class NotificationService {
             createdAt: Date.now(),
             deliveredTo: [],
             failedChannels: [],
+            critical: params.critical === true,
         };
 
         this.data.notifications.unshift(notification);
         this.save();
 
+        const now = new Date();
+        const bypass = notification.critical === true;
         for (const channel of channels) {
+            // #1407 — Gate central de quiet-hours (gargalo único por onde passam canais,
+            // cron, agendamentos e tooling). in-app é benigno (on-screen, reversível) e
+            // sempre passa. Canal externo em silêncio é ADIADO p/ scheduledDispatch (fica
+            // agendado p/ o próximo fim da janela) em vez de despachar agora — a menos que
+            // a notificação seja crítica (OTP/segurança), que fura o gate de propósito.
+            if (!bypass && channel !== 'in-app' && uiConfigService.isWithinQuietHours(now, channel)) {
+                const rule = getQuietHours(uiConfigService.getNotificationPolicy().quietHours, channel);
+                const scheduledFor = nextQuietEnd(now, rule).getTime();
+                this.scheduledDispatches.push({ notification, channel, scheduledFor, createdAt: now.getTime() });
+                log.info('notification.quietHours.deferred', {
+                    channel,
+                    scheduledFor: new Date(scheduledFor).toISOString(),
+                    originalDueAt: now.toISOString(),
+                    event: notification.event,
+                    notificationId: notification.id,
+                    recipient: notification.recipient,
+                });
+                continue;
+            }
             try {
                 await this.deliver(notification, channel);
                 notification.deliveredTo.push(channel);
@@ -264,6 +317,7 @@ class NotificationService {
         entityType?: string;
         entityId?: string;
         linkTo?: string;
+        critical?: boolean;
     }): Promise<Notification> {
         return this.create({
             ...params,
@@ -284,6 +338,7 @@ class NotificationService {
         senderName?: string;
         entityType?: string;
         entityId?: string;
+        critical?: boolean;
     }): Promise<Notification> {
         const notification = await this.create(params);
         // #1004: garante a persistência em disco ANTES de retornar. A ferramenta notify_person
@@ -300,6 +355,57 @@ class NotificationService {
             this.saveTimeout = null;
         }
         await this.performSave();
+    }
+
+    // ---- #1407 — Worker de dispatch adiado (quiet-hours) ----
+    // Intervalo de checagem da fila de adiantamentos. Eco do CHECK_INTERVAL_MS do
+    // schedulerService (30s): granularidade suficiente p/ uma janela de silêncio sem
+    // gastar CPU. O worker NÃO sobe no constructor (evita timers pendurados em testes);
+    // é ligado explicitamente no boot (server.ts), como os demais workers.
+    startDispatchWorker(): void {
+        if (this.dispatchIntervalId) return;
+        this.dispatchIntervalId = setInterval(() => {
+            this.processScheduledDispatch().catch((e) => log.error('quiet-hours dispatch worker tick', (e as Error)?.message));
+        }, DISPATCH_CHECK_INTERVAL_MS);
+    }
+
+    stopDispatchWorker(): void {
+        if (this.dispatchIntervalId) {
+            clearInterval(this.dispatchIntervalId);
+            this.dispatchIntervalId = null;
+        }
+    }
+
+    /**
+     * Despacha os envios adiados cujo `scheduledFor` já chegou. Devolve o nº de itens
+     * entregues nesta rodada. `now` injetável p/ teste (fake timers). Idempotente:
+     * itens já vencidos são removidos da fila ANTES da entrega p/ não reprocessar.
+     */
+    async processScheduledDispatch(now: Date = new Date()): Promise<number> {
+        const t = now.getTime();
+        const due = this.scheduledDispatches.filter((d) => d.scheduledFor <= t);
+        if (due.length === 0) return 0;
+        this.scheduledDispatches = this.scheduledDispatches.filter((d) => d.scheduledFor > t);
+        for (const d of due) {
+            try {
+                await this.deliver(d.notification, d.channel);
+                if (!d.notification.deliveredTo.includes(d.channel)) {
+                    d.notification.deliveredTo.push(d.channel);
+                }
+            } catch (e: any) {
+                log.error(`Failed to deliver deferred via ${d.channel}: ${e.message}`);
+                if (!d.notification.failedChannels.includes(d.channel)) {
+                    d.notification.failedChannels.push(d.channel);
+                }
+            }
+        }
+        this.save();
+        return due.length;
+    }
+
+    /** Snapshot da fila de adiantamentos (observabilidade/teste). */
+    getScheduledDispatches(): ScheduledDispatch[] {
+        return this.scheduledDispatches.map((d) => ({ ...d }));
     }
 
     /** A notificação é visível para este usuário? (regra única reusada na listagem e no isolamento) */
