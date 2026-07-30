@@ -25,6 +25,11 @@ export interface JudgeCommentInput {
     attempt: number;
     /** Número da task/issue (contexto opcional no cabeçalho). */
     issueNumber?: number;
+    /** #atribuicao: modelo que produziu ESTE score. `claude:<model>` = juiz FORTE;
+     *  `chat-chain` = juiz de fallback. A distincao importa: a escalada so dispara
+     *  com score do juiz forte (shouldEscalateToOpus), entao quem le o score no PR
+     *  precisa saber de onde ele veio. */
+    judgeModel?: string;
 }
 
 /** Limite defensivo p/ o resumo. ~1500 chars conforme spec (#1203). */
@@ -35,7 +40,7 @@ export const JUDGE_COMMENT_REVIEW_MAX = 1500;
  * Função pura — não realiza I/O nem lança.
  */
 export function formatJudgeComment(input: JudgeCommentInput): string {
-    const { score, approved, review, missingCoverage, attempt, issueNumber } = input;
+    const { score, approved, review, missingCoverage, attempt, issueNumber, judgeModel } = input;
 
     const verdict =
         approved === true ? 'Aprovado'
@@ -51,6 +56,9 @@ export function formatJudgeComment(input: JudgeCommentInput): string {
         ...(issueNumber ? [`Task/issue #${issueNumber}`] : []),
         '',
         `**Score: ${score}/10** — ${verdict}`,
+        // Omitido quando ausente: melhor nao dizer nada do que imprimir 'undefined'
+        // num comentario publico do PR.
+        ...(judgeModel ? [`**Juiz:** \`${judgeModel}\``] : []),
         '',
         '**Resumo da revisão:**',
         reviewText || '_sem resumo_',
