@@ -39,6 +39,9 @@ export const config = {
     minimaxMediaKey: process.env.MINIMAX_MEDIA_KEY || process.env.MINIMAX_SUBSCRIPTION_KEY || '',
     minimaxBaseUrl: process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1/',
     minimaxModel: process.env.MINIMAX_MODEL || 'MiniMax-M3',
+    // Host raiz da MiniMax (SEM /v1). Chaves de plano (sk-cp-*) vivem em api.minimax.io,
+    // não em api.minimax.chat — vide docs/operations/env-audit-2026-05-07.md item 8.
+    minimaxApiHost: (process.env.MINIMAX_API_HOST || 'https://api.minimax.io').replace(/\/+$/, '').replace(/\/v1$/, ''),
     // GroupId é exigido por algumas regiões/endpoints da MiniMax (mídia). Opcional: se vazio, não é enviado.
     minimaxGroupId: process.env.MINIMAX_GROUP_ID || '',
     // Geração de mídia (tools do agente). Modelos e voz default — todos configuráveis.

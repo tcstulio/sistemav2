@@ -583,6 +583,17 @@ class TaskRunnerService {
     }
 
     startPolling() {
+        // Gate de feature: sem TULIPA_TASKS_ENABLED o polling NÃO deve rodar. Antes
+        // (lido de process.env, NÃO de FEATURES: importar config/features aqui executa
+        //  resolveBootWhatsAppProvider() no load do módulo e quebra os testes que
+        //  importam este serviço sem uiConfigService. Mesmo padrão do AUTOSTART abaixo.)
+        // `server.ts` chamava isto sem condição, então com a flag OFF o sync ainda
+        // batia no `gh` a cada 5min e, sem `gh auth`, enchia o log de "List issues
+        // error" — ruído contínuo que mascara erro real.
+        if (process.env.TULIPA_TASKS_ENABLED !== 'true') {
+            log.info('TaskRunner polling NÃO iniciado — TULIPA_TASKS_ENABLED != true.');
+            return;
+        }
         if (this.polling) return;
         this.polling = true;
         const tick = () => {
