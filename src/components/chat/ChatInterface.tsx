@@ -1,11 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { Send, User as UserIcon, Calendar, Loader2, Search, X, CheckSquare, Paperclip, ArrowLeft, Trash2, Pencil } from 'lucide-react';
+import { Send, User as UserIcon, Calendar, Loader2, Search, X, CheckSquare, ArrowLeft, Trash2, Pencil } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import * as Operations from '../../services/api/operations';
-import { RichTextEditor } from '../common/RichTextEditor';
 import { TaskWizard } from '../Projects/TaskWizard';
 import { useEvents, useProjects, useUsers } from '../../hooks/dolibarr';
 import { Project, DolibarrUser, AgendaEvent } from '../../types';
@@ -15,6 +14,8 @@ import { notifyError } from '../../utils/notifyError';
 import { SafeHtml, stripHtml } from '../../utils/sanitizeHtml';
 import { useConfirm } from '../../hooks/useConfirm';
 import { ChatMessage, ChatReply, agendaEventToChatMessage } from './types';
+import { ChatInput, type ChatAttachment } from './ChatInput';
+import { CHAT_VIDEO_MIME_TYPES, VIDEO_MAX_BYTES } from '../../lib/constants';
 
 interface ChatInterfaceProps {
     elementId: string;
@@ -57,6 +58,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const [showTaskWizard, setShowTaskWizard] = useState(false);
     const [wizardInitialData, setWizardInitialData] = useState<{ label: string; description: string }[] | undefined>(undefined);
     const [isUploading, setIsUploading] = useState(false);
+    const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+    const [attachmentError, setAttachmentError] = useState<string | null>(null);
     // Otimista: mensagens adicionadas localmente antes do POST confirmar pelo servidor
     const [optimisticMessages, setOptimisticMessages] = useState<ChatMessage[]>([]);
     // Erro de envio visível inline (além do toast) para que o usuário saiba que pode tentar de novo
@@ -69,7 +72,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
     const scrollRef = useRef<HTMLDivElement>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const baseApiUrl = config?.apiUrl.replace('/api/index.php', '') || '';
 
@@ -194,55 +196,100 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
         setEditingText('');
     }, []);
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files || e.target.files.length === 0 || !config) return;
+    const handleFilesSelected = useCallback((files: File[]) => {
+        const validAttachments: ChatAttachment[] = [];
+        let validationError: string | null = null;
 
-        const file = e.target.files[0];
-        setIsUploading(true);
+        files.forEach((file) => {
+            const extension = file.name.split('.').pop()?.toLowerCase();
+            const hasVideoMime = CHAT_VIDEO_MIME_TYPES.has(file.type);
+            const hasVideoExtension = !file.type && (extension === 'mp4' || extension === 'webm');
+            const isVideo = hasVideoMime || hasVideoExtension;
+            const isSupported = file.type.startsWith('image/')
+                || file.type === 'application/pdf'
+                || (!file.type && extension === 'pdf')
+                || isVideo;
 
-        try {
+            if (!isSupported) {
+                validationError = `O arquivo "${file.name}" tem um tipo não suportado. Envie imagens, PDFs ou vídeos MP4/WebM.`;
+                return;
+            }
+
+            if (isVideo && file.size > VIDEO_MAX_BYTES) {
+                validationError = `Vídeo acima de ${VIDEO_MAX_BYTES / (1024 * 1024)} MB não é suportado`;
+                return;
+            }
+
+            validAttachments.push({
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                file,
+            });
+        });
+
+        setAttachmentError(validationError);
+        if (validAttachments.length > 0) {
+            setAttachments((current) => [...current, ...validAttachments]);
+        }
+    }, []);
+
+    const handleRemoveAttachment = useCallback((id: string) => {
+        setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+        setAttachmentError(null);
+    }, []);
+
+    const handleSendMessage = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        if ((!newMessage.trim() && attachments.length === 0) || !config || isSending) return;
+
+        setIsSending(true);
+        setSendError(null);
+        setAttachmentError(null);
+
+        let uploadedAttachments = attachments;
+        if (attachments.length > 0) {
             let modulePart = '';
             let ref = '';
 
             if (elementType === 'project' && currentProject) {
                 modulePart = 'project';
                 ref = currentProject.ref;
-            } else if (elementType === 'user') {
+            } else if (elementType === 'user' && currentUser?.id) {
                 modulePart = 'user';
-                ref = String(currentUser?.id);
+                ref = String(currentUser.id);
             }
 
-            if (modulePart && ref) {
-                await DolibarrService.uploadDocument(config, file, modulePart, ref);
-
-                // Construct Link
-                // Using document.php wrapper from Dolibarr to handle auth if logged in, or token based if supported.
-                // Alternatively, we can use the download endpoint via API but that requires headers.
-                // For HTML display, we use a link to the standard interface document handler.
-                const safeFileName = file.name.replace(/[^a-zA-Z0-9.\-_ ]/g, '');
-                const fileUrl = `${baseApiUrl}/document.php?modulepart=${modulePart}&file=${ref}/${encodeURIComponent(safeFileName)}`;
-                const fileLink = `<br/><div class="file-attachment mt-2"><a href="${fileUrl}" target="_blank" class="text-blue-600 dark:text-blue-400 underline flex items-center gap-1 bg-gray-50 dark:bg-gray-700/50 p-1 rounded w-fit"><span style="font-size: 1.2em">📎</span> ${safeFileName}</a></div><br/>`;
-
-                setNewMessage(prev => prev + fileLink);
-            } else {
+            if (!modulePart || !ref) {
                 toast.error('Upload não suportado neste contexto (falta referência "Ref").');
+                setIsSending(false);
+                return;
             }
-        } catch (err) {
-            notifyError('Upload de arquivo', err);
-        } finally {
-            setIsUploading(false);
-            if (fileInputRef.current) fileInputRef.current.value = '';
+
+            setIsUploading(true);
+            try {
+                uploadedAttachments = [...attachments];
+                for (let index = 0; index < uploadedAttachments.length; index += 1) {
+                    const attachment = uploadedAttachments[index];
+                    if (attachment.fileLink) continue;
+
+                    await DolibarrService.uploadDocument(config, attachment.file, modulePart, ref);
+                    const safeFileName = attachment.file.name.replace(/[^a-zA-Z0-9.\-_ ]/g, '');
+                    const fileUrl = `${baseApiUrl}/document.php?modulepart=${modulePart}&file=${ref}/${encodeURIComponent(safeFileName)}`;
+                    const fileLink = `<br/><div class="file-attachment mt-2"><a href="${fileUrl}" target="_blank" class="text-blue-600 dark:text-blue-400 underline flex items-center gap-1 bg-gray-50 dark:bg-gray-700/50 p-1 rounded w-fit"><span style="font-size: 1.2em">📎</span> ${safeFileName}</a></div><br/>`;
+                    uploadedAttachments[index] = { ...attachment, fileLink };
+                }
+                setAttachments(uploadedAttachments);
+            } catch (err) {
+                setAttachments(uploadedAttachments);
+                setAttachmentError('Não foi possível enviar um ou mais anexos. Tente novamente.');
+                notifyError('Upload de arquivo', err);
+                setIsSending(false);
+                return;
+            } finally {
+                setIsUploading(false);
+            }
         }
-    };
 
-    const handleSendMessage = async (e?: React.FormEvent) => {
-        if (e) e.preventDefault();
-        if (!newMessage.trim() || !config || isSending) return;
-
-        setIsSending(true);
-        setSendError(null);
-
-        let finalMessage = newMessage;
+        let finalMessage = newMessage + uploadedAttachments.map((attachment) => attachment.fileLink || '').join('');
 
         // Handle Reply
         if (replyingTo) {
@@ -294,6 +341,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
 
             await Operations.createEvent(config, payload);
             setNewMessage('');
+            setAttachments([]);
+            setAttachmentError(null);
             setReplyingTo(null);
             refreshData();
             // Refetch imediato + refetch adiado: o Dolibarr pode ter latência de indexação
@@ -531,41 +580,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                     </div>
                 )}
 
-                <RichTextEditor
+                <ChatInput
                     value={newMessage}
                     onChange={setNewMessage}
-                    placeholder="Digite sua mensagem..."
-                    className="flex-1"
-                    minHeight="60px"
-                    maxHeight="200px"
                     onKeyDown={handleKeyDown}
+                    onSend={() => handleSendMessage()}
+                    onFilesSelected={handleFilesSelected}
+                    onRemoveAttachment={handleRemoveAttachment}
+                    attachments={attachments}
+                    attachmentError={attachmentError}
+                    isSending={isSending}
+                    isUploading={isUploading}
                 />
-
-                <input
-                    type="file"
-                    ref={fileInputRef}
-                    className="hidden"
-                    onChange={handleFileUpload}
-                />
-
-                <div className="flex justify-end gap-2">
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={isSending || isUploading}
-                        className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 p-3 rounded-full transition-colors disabled:opacity-50 sm:p-2"
-                        title="Anexar arquivo"
-                    >
-                        {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
-                    </button>
-                    <button
-                        onClick={() => handleSendMessage()}
-                        disabled={isSending || !newMessage.trim()}
-                        aria-label="Enviar mensagem"
-                        className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-colors sm:p-2"
-                    >
-                        {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
-                    </button>
-                </div>
             </div>
 
             {/* Task Wizard Modal */}

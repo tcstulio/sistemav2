@@ -168,10 +168,12 @@ describe('ChatInterface — no native alert/confirm', () => {
     });
 
     it('uses toast.error instead of alert for unsupported upload context', async () => {
+        const user = userEvent.setup();
         renderChat({ elementType: 'task' });
 
         const fileInputEl = document.querySelector('input[type="file"]') as HTMLInputElement;
-        fireEvent.change(fileInputEl, { target: { files: [new File(['content'], 'test.txt')] } });
+        fireEvent.change(fileInputEl, { target: { files: [new File(['content'], 'test.png', { type: 'image/png' })] } });
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
 
         await waitFor(() => {
             expect(toast.error).toHaveBeenCalledWith('Upload não suportado neste contexto (falta referência "Ref").');
@@ -179,12 +181,14 @@ describe('ChatInterface — no native alert/confirm', () => {
     });
 
     it('uses notifyError instead of alert when upload fails', async () => {
+        const user = userEvent.setup();
         vi.mocked(DolibarrService.uploadDocument).mockRejectedValue(new Error('Upload failed'));
 
         renderChat({ elementType: 'user', elementId: 'u1' });
 
         const fileInputEl = document.querySelector('input[type="file"]') as HTMLInputElement;
-        fireEvent.change(fileInputEl, { target: { files: [new File(['content'], 'test.txt')] } });
+        fireEvent.change(fileInputEl, { target: { files: [new File(['content'], 'test.png', { type: 'image/png' })] } });
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
 
         await waitFor(() => {
             expect(notifyError).toHaveBeenCalledWith('Upload de arquivo', expect.any(Error));
@@ -616,5 +620,80 @@ describe('ChatInterface — callbacks tipados onSend/onReply/onEdit/onDelete (#1
             expect(Operations.deleteEvent).not.toHaveBeenCalled();
         });
         expect(onDelete).not.toHaveBeenCalled();
+    });
+});
+
+describe('ChatInterface — anexos de vídeo (#1032)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useEvents).mockReturnValue(eventsReturn());
+        vi.mocked(Operations.createEvent).mockResolvedValue({});
+        vi.mocked(DolibarrService.uploadDocument).mockResolvedValue({});
+    });
+
+    it('aceita imagens, PDFs, MP4 e WebM com seleção múltipla', () => {
+        renderChat();
+
+        const input = screen.getByLabelText('Selecionar anexos') as HTMLInputElement;
+        expect(input).toHaveAttribute('accept', 'image/*,application/pdf,video/mp4,video/webm');
+        expect(input).toHaveAttribute('multiple');
+    });
+
+    it('mostra erro inline para tipo não suportado', () => {
+        renderChat();
+
+        fireEvent.change(screen.getByLabelText('Selecionar anexos'), {
+            target: { files: [new File(['texto'], 'arquivo.txt', { type: 'text/plain' })] },
+        });
+
+        expect(screen.getByTestId('attachment-error')).toHaveTextContent('tipo não suportado');
+        expect(screen.queryByText('arquivo.txt')).not.toBeInTheDocument();
+        expect(DolibarrService.uploadDocument).not.toHaveBeenCalled();
+    });
+
+    it('bloqueia vídeo acima de 10 MB com mensagem clara', () => {
+        renderChat();
+        const video = new File(['video'], 'grande.mp4', { type: 'video/mp4' });
+        Object.defineProperty(video, 'size', { value: 10 * 1024 * 1024 + 1 });
+
+        fireEvent.change(screen.getByLabelText('Selecionar anexos'), {
+            target: { files: [video] },
+        });
+
+        expect(screen.getByTestId('attachment-error')).toHaveTextContent('Vídeo acima de 10 MB não é suportado');
+        expect(screen.queryByText('grande.mp4')).not.toBeInTheDocument();
+        expect(DolibarrService.uploadDocument).not.toHaveBeenCalled();
+    });
+
+    it('arrasta imagem, PDF e vídeo juntos, mostra previews e envia todos', async () => {
+        const user = userEvent.setup();
+        renderChat({ elementType: 'user', elementId: 'u1' });
+        const files = [
+            new File(['imagem'], 'foto.png', { type: 'image/png' }),
+            new File(['pdf'], 'manual.pdf', { type: 'application/pdf' }),
+            new File(['video'], 'curto.webm', { type: 'video/webm' }),
+        ];
+
+        fireEvent.drop(screen.getByTestId('chat-dropzone'), { dataTransfer: { files } });
+
+        expect(screen.getByText('foto.png')).toBeInTheDocument();
+        expect(screen.getByText('manual.pdf')).toBeInTheDocument();
+        expect(screen.getByText('curto.webm')).toBeInTheDocument();
+        expect(DolibarrService.uploadDocument).not.toHaveBeenCalled();
+
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(DolibarrService.uploadDocument).toHaveBeenCalledTimes(3);
+            expect(Operations.createEvent).toHaveBeenCalledWith(
+                expect.any(Object),
+                expect.objectContaining({
+                    description: expect.stringContaining('curto.webm'),
+                })
+            );
+        });
+        const description = vi.mocked(Operations.createEvent).mock.calls[0][1].description as string;
+        expect(description).toContain('foto.png');
+        expect(description).toContain('manual.pdf');
     });
 });
