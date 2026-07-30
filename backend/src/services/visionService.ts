@@ -88,17 +88,26 @@ export async function callVisionChat(
     const headers = getVisionHeaders();
     const timeoutMs = options.timeoutMs ?? 120_000;
     const startMs = Date.now();
-    const resp = await axios.post(
-        `${baseUrl}/chat/completions`,
-        { model, messages, temperature: 0.1 },
-        { headers, timeout: timeoutMs, signal: options.signal }
-    );
-    return {
-        status: resp.status,
-        elapsedMs: Date.now() - startMs,
-        data: resp.data,
-        headers,
-    };
+    try {
+        const resp = await axios.post(
+            `${baseUrl}/chat/completions`,
+            { model, messages, temperature: 0.1 },
+            { headers, timeout: timeoutMs, signal: options.signal }
+        );
+        return {
+            status: resp.status,
+            elapsedMs: Date.now() - startMs,
+            data: resp.data,
+            headers,
+        };
+    } catch (err) {
+        // Fallback: MiniMax VLM. Devolve null quando não se aplica (vídeo, sem
+        // chave, erro não-recuperável) — aí o erro ORIGINAL do primário sobe,
+        // que é o mais informativo pro operador.
+        const fallback = await tryMinimaxVisionFallback(messages, err, options, startMs);
+        if (fallback) return fallback;
+        throw err;
+    }
 }
 
 export interface VisionErrorInfo {
@@ -145,6 +154,146 @@ function safeStringify(data: unknown): string {
         return JSON.stringify(data);
     } catch {
         return String(data);
+    }
+}
+
+
+
+// ---------------------------------------------------------------------------
+// Fallback de visão: MiniMax VLM (chave de plano / Coding Plan)
+// ---------------------------------------------------------------------------
+/**
+ * Por que um endpoint DIFERENTE e não `/chat/completions`: a chave de plano
+ * (`sk-cp-*`) atende `POST {minimaxApiHost}/v1/coding_plan/vlm` com o corpo
+ * `{ prompt, image_url }`. O `/v1/chat/completions` com content-blocks
+ * `image_url` devolve `400 invalid params` — VERIFICADO em 2026-07-30 contra a
+ * conta real, e é o mesmo endpoint que `packages/mcp-minimax` da Tulipa usa em
+ * `understand_image` ("confirmado 2026-05-03" no comentário de `tools.ts`).
+ * Isso fecha o item 8 de `docs/operations/env-audit-2026-05-07.md`, que pedia
+ * validar se o host de chaves de plano era `api.minimax.io`. É.
+ *
+ * ESCOPO DELIBERADO — só IMAGEM. O endpoint VLM recebe um único `image_url`;
+ * `describeVideo` manda `video_url`, que ele não aceita. Quando as mensagens não
+ * contêm exatamente uma imagem, o fallback é PULADO e o erro do primário sobe
+ * intacto (melhor um 429 honesto do GLM que um 400 confuso da MiniMax).
+ */
+
+/** Config do fallback. `apiKey` vazio = fallback desligado. */
+export function getMinimaxVisionConfig(): { url: string; apiKey: string } {
+    return {
+        url: `${config.minimaxApiHost}/v1/coding_plan/vlm`,
+        // Mesma precedência do `minimaxKey()` em aiService: a chave da ASSINATURA
+        // primeiro (créditos do plano), a pay-as-you-go como reserva — a confusão
+        // de carteiras do #942 já quebrou esse fallback silenciosamente antes.
+        apiKey: config.minimaxMediaKey || config.minimaxApiKey || '',
+    };
+}
+
+/**
+ * Vale tentar o fallback? Mesma regra do `LocalProvider.isRecoverable`: 429,
+ * 5xx e erros de rede. Somados os códigos de CARTEIRA da Z.AI, que chegam como
+ * 429 mas significam coisas diferentes: `1310` = cota do plano esgotada (volta
+ * sozinha na renovação) e `1113` = saldo pay-as-you-go zerado (não volta sozinha).
+ * Ambos merecem fallback. 4xx restante (400/401/403) NÃO — é request inválido.
+ */
+function isRecoverableVisionError(err: unknown): boolean {
+    if (!axios.isAxiosError(err)) return false;
+    const ax = err as AxiosError;
+    const status = ax.response?.status;
+    if (status === 429) return true;
+    if (status && status >= 500) return true;
+    if (!status && ax.code) return true; // timeout / ECONNRESET / ECONNABORTED
+    return false;
+}
+
+/**
+ * Extrai `{ prompt, imageUrl }` do formato content-blocks. Devolve null quando
+ * o payload não é "exatamente uma imagem" — inclusive quando há `video_url`.
+ */
+export function extractImagePrompt(messages: unknown[]): { prompt: string; imageUrl: string } | null {
+    const texts: string[] = [];
+    const images: string[] = [];
+    let hasVideo = false;
+
+    for (const msg of messages ?? []) {
+        const content = (msg as { content?: unknown })?.content;
+        if (typeof content === 'string') { texts.push(content); continue; }
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+            const b = block as { type?: string; text?: string; image_url?: { url?: string }; video_url?: unknown };
+            if (b?.type === 'text' && typeof b.text === 'string') texts.push(b.text);
+            else if (b?.type === 'image_url' && typeof b.image_url?.url === 'string') images.push(b.image_url.url);
+            else if (b?.type === 'video_url') hasVideo = true;
+        }
+    }
+
+    if (hasVideo || images.length !== 1) return null;
+    return { prompt: texts.join('\n\n').trim() || 'Descreva esta imagem em detalhes, em português.', imageUrl: images[0] };
+}
+
+/**
+ * Tenta a MiniMax e ADAPTA a resposta para o formato que os chamadores já
+ * esperam (`data.choices[0].message.content`), para que `describeImage` e afins
+ * não precisem saber qual provedor respondeu. `_visionProvider` fica no payload
+ * como marcador de observabilidade.
+ *
+ * Devolve `null` (em vez de lançar) sempre que o fallback não se aplica ou
+ * também falha — o caller então relança o erro ORIGINAL do primário, que é o
+ * mais informativo para o operador.
+ */
+async function tryMinimaxVisionFallback(
+    messages: unknown[],
+    primaryErr: unknown,
+    options: VisionCallOptions,
+    startMs: number,
+): Promise<VisionCallResult | null> {
+    const info = describeVisionError(primaryErr);
+
+    if (!isRecoverableVisionError(primaryErr)) return null;
+
+    const { url, apiKey } = getMinimaxVisionConfig();
+    if (!apiKey) {
+        log.warn('visão: primário falhou e não há chave MiniMax para fallback', { kind: info.kind, status: info.status });
+        return null;
+    }
+
+    const extracted = extractImagePrompt(messages);
+    if (!extracted) {
+        log.warn('visão: fallback MiniMax PULADO — payload não é imagem única (vídeo ou múltiplas imagens)', { kind: info.kind });
+        return null;
+    }
+
+    log.warn('visão: primário falhou — tentando fallback MiniMax VLM', { kind: info.kind, status: info.status, origin: options.origin });
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+    try {
+        const resp = await axios.post(
+            url,
+            { prompt: extracted.prompt, image_url: extracted.imageUrl },
+            { headers, timeout: options.timeoutMs ?? 120_000, signal: options.signal },
+        );
+        const body = resp.data as { content?: unknown; base_resp?: { status_code?: number; status_msg?: string } };
+        const statusCode = body?.base_resp?.status_code;
+        const text = body?.content == null ? '' : String(body.content);
+
+        // A MiniMax devolve 200 com base_resp.status_code != 0 em erro de aplicação.
+        if ((statusCode != null && statusCode !== 0) || !text) {
+            log.warn('visão: fallback MiniMax respondeu sem conteúdo útil', { statusCode, statusMsg: body?.base_resp?.status_msg });
+            return null;
+        }
+
+        const elapsedMs = Date.now() - startMs;
+        log.info('visão: fallback MiniMax OK', { elapsedMs, chars: text.length, origin: options.origin });
+        return {
+            status: resp.status,
+            elapsedMs,
+            data: { choices: [{ message: { content: text } }], _visionProvider: 'minimax-vlm' },
+            headers,
+        };
+    } catch (fbErr) {
+        const fbInfo = describeVisionError(fbErr);
+        log.warn('visão: fallback MiniMax também falhou', { kind: fbInfo.kind, status: fbInfo.status, body: fbInfo.body?.slice(0, 200) });
+        return null;
     }
 }
 
