@@ -86,6 +86,14 @@ export const config = {
     interSandbox: process.env.INTER_SANDBOX === 'true',
     interWebhookSecret: process.env.INTER_WEBHOOK_SECRET || '',
 
+    // #1546 — limite de tamanho (em bytes) para vídeos anexados no chat (describeVideo).
+    // Padrão 20 MiB. Configurável via CHAT_VIDEO_MAX_BYTES (>= 1 MiB; senão cai pro default).
+    chatVideoMaxBytes: (() => {
+        const raw = parseInt(process.env.CHAT_VIDEO_MAX_BYTES || '20971520', 10);
+        const min = 1024 * 1024; // 1 MiB mínimo (evita zero/negativo por env malformada)
+        return Number.isFinite(raw) && raw >= min ? raw : 20971520;
+    })(),
+
     // Banco Itaú
     itauClientId: process.env.ITAU_CLIENT_ID || '',
     itauClientSecret: process.env.ITAU_CLIENT_SECRET || '',

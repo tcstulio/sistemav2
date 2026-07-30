@@ -29,12 +29,17 @@
  */
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import * as fsp from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
 import { getProgressStream, type ProgressEvent } from '../agent/progressStream';
 import { analyzePdf } from '../services/analyzePdf';
+import { describeVideo, SUPPORTED_VIDEO_MIMES } from '../services/describeVideo';
+import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('ChatRoutes');
@@ -231,6 +236,101 @@ router.post(
         const result = await analyzePdf(pdfBuffer);
         log.debug(`/chat/analyze-pdf processado via ${result.path}`);
         return ok(res, result);
+    }),
+);
+
+/**
+ * POST /chat/analyze-video
+ *
+ * #1546 — Devolve ao agente a descrição textual de um vídeo curto anexado (MP4 / MOV).
+ * Mesmo padrão do `/chat/analyze-pdf` (decodifica base64 → processa → devolve só o texto
+ * pra o caller decidir como injetar no `messages` do loop de tools do agente).
+ *
+ *   1. Decodifica o base64 → Buffer.
+ *   2. Detecta MIME (`video/mp4` ou `video/quicktime`); rejeita outros com 400.
+ *   3. Valida tamanho contra `config.chatVideoMaxBytes` (env `CHAT_VIDEO_MAX_BYTES`,
+ *      padrão 20 MiB). Acima disso → 413 com mensagem clara (sem streaming de bytes
+ *      enormes pela API de visão).
+ *   4. Salva o vídeo em diretório temporário (mkdtemp em `os.tmpdir()`) — atende ao
+ *      requisito da issue ("salvar temporariamente") e dá flexibilidade para tools
+ *      externas (ffmpeg preview, auditoria) operarem no arquivo.
+ *   5. Chama `describeVideo({ filePath, mimeType })` que faz POST no glm-4.6v com
+ *      `video_url` (data URL). Lê o arquivo, descarta após a chamada.
+ *   6. Remove o diretório temporário em `finally` (best-effort) — o vídeo NÃO fica
+ *      persistido após a resposta.
+ *
+ * Critérios de aceite (#1546):
+ *   - Enviar um vídeo curto (≤ limite) → 200 com `text` populado.
+ *   - Vídeo maior que o limite → 413 VIDEO_TOO_LARGE com mensagem clara.
+ *   - Logs distinguem o caminho vídeo do caminho imagem (`/chat/analyze-video` vs
+ *     `/chat/analyze-pdf`) e o `path` da resposta (`video_url`) difere dos demais.
+ *   - Não interfere em imagem: a rota de PDF continua intacta.
+ */
+const ChatAnalyzeVideoSchema = z.object({
+    video: z.string().min(1),
+    mimeType: z.enum(SUPPORTED_VIDEO_MIMES as unknown as [string, ...string[]]),
+});
+
+router.post(
+    '/analyze-video',
+    asyncHandler(async (req: Request, res: Response) => {
+        const parsed = ChatAnalyzeVideoSchema.safeParse(req.body);
+        if (!parsed.success || !parsed.data.video || !parsed.data.mimeType) {
+            throw new AppError(
+                400,
+                'BAD_REQUEST',
+                'Campos `video` (base64) e `mimeType` (video/mp4|video/quicktime) são obrigatórios.'
+            );
+        }
+        const { video, mimeType } = parsed.data as { video: string; mimeType: typeof SUPPORTED_VIDEO_MIMES[number] };
+
+        const buffer = Buffer.from(video, 'base64');
+        if (!buffer.length) {
+            throw new AppError(400, 'BAD_REQUEST', 'Vídeo vazio após decodificar base64.');
+        }
+
+        // Limite configurável (env CHAT_VIDEO_MAX_BYTES; default 20 MiB). Rejeitamos com 413
+        // ANTES de gastar I/O em vídeos claramente grandes — visão não aceitaria de qualquer
+        // jeito e o caller precisa do erro claro pra exibir UX de "reduza o tamanho".
+        const maxBytes = config.chatVideoMaxBytes;
+        if (buffer.length > maxBytes) {
+            const maxMb = Math.round(maxBytes / 1024 / 1024);
+            const sizeMb = (buffer.length / 1024 / 1024).toFixed(2);
+            throw new AppError(
+                413,
+                'VIDEO_TOO_LARGE',
+                `Vídeo excede o limite de ${maxMb}MB (env CHAT_VIDEO_MAX_BYTES). Recebido: ${sizeMb}MB.`
+            );
+        }
+
+        // #1546: salva temporariamente — diretório único por request em os.tmpdir(), removido
+        // em `finally` mesmo se a visão falhar. Extensão reflete o MIME declarado pra que
+        // ferramentas externas (ffmpeg, preview) infiram o container certo.
+        const ext = mimeType === 'video/quicktime' ? 'mov' : 'mp4';
+        const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'chat-video-'));
+        const tmpPath = path.join(tmpDir, `input.${ext}`);
+
+        let description: string | null = null;
+        try {
+            await fsp.writeFile(tmpPath, buffer);
+            log.debug(`/chat/analyze-video: caminho vídeo (mime=${mimeType}, ${buffer.length} bytes, limite=${maxBytes})`);
+            description = await describeVideo({ filePath: tmpPath, mimeType });
+        } finally {
+            try {
+                await fsp.rm(tmpDir, { recursive: true, force: true });
+            } catch {
+                /* best-effort cleanup; tmpdir é purgável pelo SO depois */
+            }
+        }
+
+        log.debug(`/chat/analyze-video: processado via video_url (mime=${mimeType}, descrição=${description ? description.length : 0} chars)`);
+        // path sempre é `video_url` — distingue dos caminhos de imagem (`pdf_parse`/`ocr_vision`)
+        // nos logs estruturados e na resposta pra consumer.
+        return ok(res, {
+            text: description,
+            mimeType,
+            path: 'video_url' as const,
+        });
     }),
 );
 
