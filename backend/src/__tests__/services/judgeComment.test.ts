@@ -90,3 +90,40 @@ describe('formatJudgeComment (#1203) — formatador puro do comentário do Judge
         expect(out).toContain('Score: 0/10');
     });
 });
+
+describe('#atribuicao — qual modelo julgou aparece no comentário do PR', () => {
+    const base = { score: 8, approved: true, review: 'ok', attempt: 1, issueNumber: 42 };
+
+    it('mostra o juiz FORTE', () => {
+        expect(formatJudgeComment({ ...base, judgeModel: 'claude:opus' }))
+            .toContain('**Juiz:** `claude:opus`');
+    });
+
+    it('mostra o juiz de FALLBACK — é a informação que muda a leitura do score', () => {
+        // `chat-chain` significa que o juiz forte falhou e o score veio da cadeia barata.
+        // A escalada só dispara com score do juiz forte (shouldEscalateToOpus), então um
+        // reviewer que vê 9/10 precisa saber se veio de um ou de outro.
+        expect(formatJudgeComment({ ...base, judgeModel: 'chat-chain' }))
+            .toContain('**Juiz:** `chat-chain`');
+    });
+
+    it('omite a linha quando não há modelo — nunca imprime "undefined" num comentário público', () => {
+        const out = formatJudgeComment(base);
+        expect(out).not.toContain('**Juiz:**');
+        expect(out).not.toContain('undefined');
+    });
+
+    it('omite também com string vazia — judgeModelUsed nasce como \'\' no taskRunner', () => {
+        // Regressão real: `let judgeModelUsed = ''` e é isso que vai para task.judgeModelUsed
+        // se nenhum ramo do julgamento setar. Se testássemos só `undefined`, passaria aqui e
+        // imprimiria "**Juiz:** ``" em produção.
+        const out = formatJudgeComment({ ...base, judgeModel: '' });
+        expect(out).not.toContain('**Juiz:**');
+    });
+
+    it('a linha do juiz vem logo depois do score', () => {
+        const linhas = formatJudgeComment({ ...base, judgeModel: 'claude:opus' }).split('\n');
+        const iScore = linhas.findIndex(l => l.startsWith('**Score:'));
+        expect(linhas[iScore + 1]).toBe('**Juiz:** `claude:opus`');
+    });
+});

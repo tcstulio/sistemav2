@@ -3852,6 +3852,7 @@ Return ONLY a JSON:
                 missingCoverage: result.missing_coverage,
                 attempt,
                 issueNumber: task.issueNumber,
+                judgeModel: task.judgeModelUsed,
             });
             await gh(['pr', 'comment', String(task.prNumber), '--repo', REPO, '--body', body], { timeout: 30000 });
             this.emitLog(task.issueNumber, 'info', `Judge: comentário com score/resumo postado no PR #${task.prNumber} (tentativa ${attempt}).`);
