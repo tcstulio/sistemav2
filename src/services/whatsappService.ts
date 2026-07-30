@@ -179,7 +179,9 @@ export const WhatsAppService = {
 
     sendMessage: async (conversationId: string, text: string, sessionId: string = 'default'): Promise<WhatsAppMessage> => {
         try {
-            const response = await axios.post(`${config.WHATSAPP_API_URL}/send`, { chatId: conversationId, text, sessionId }, { headers: getHeaders() });
+            // `message` é o nome canônico do backend desde o #1568; `chatId` continua sendo
+            // o endereço (conversa existente, inclusive contatos @lid, que não têm telefone).
+            const response = await axios.post(`${config.WHATSAPP_API_URL}/send`, { chatId: conversationId, message: text, sessionId }, { headers: getHeaders() });
             const data = unwrapWa<any>(response);
             // Normalize ID: WWebJS returns an object { fromMe, remote, id, _serialized }
             const msgId = (typeof data.id === 'object' && data.id._serialized) ? data.id._serialized : (data.id || `temp_${Date.now()}`);
