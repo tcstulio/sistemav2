@@ -70,6 +70,13 @@ const OPENCODE_FALLBACK_MODEL = process.env.TASKRUNNER_OPENCODE_FALLBACK_MODEL ?
 // janela GLM-morto evita queimar 30min/task no primário pendurado. Revert (env vazio) quando o GLM voltar.
 const OPENCODE_PRIMARY_MODEL = (process.env.TASKRUNNER_OPENCODE_PRIMARY_MODEL || '').trim();
 
+// #atribuicao: identidade git do ROBO. Antes o commit saia assinado como o dono do repositorio —
+// que e quem empresta o token do `gh`, nao quem escreveu o codigo; nada no historico distinguia
+// os dois. Email @users.noreply.github.com SEM conta associada de proposito: o GitHub renderiza
+// sem avatar de humano, deixando obvio que nao e uma pessoa.
+const TASKRUNNER_GIT_IDENT = ['-c', 'user.name=TaskRunner (Tulipa)', '-c', 'user.email=taskrunner@users.noreply.github.com'];
+const TASKRUNNER_LABEL = 'taskrunner';
+
 /**
  * Decide se uma falha do opencode no modelo PRIMÁRIO deve re-rodar com o modelo de fallback.
  * Cobre 429/cota (isQuotaError) E o timeout/hang do próprio opencode — sob limite semanal o provider
@@ -375,6 +382,11 @@ export interface Task {
     gateFixAttempts?: number;     // teto (default 3, #963 Fase A), SEPARADO de judgeAttempts (não se multiplicam)
     gateFixInstruction?: string;  // correção PERSISTENTE injetada nos builders (imune ao wipe de feedbackHistory na síntese)
     roundsUsed?: number; // #1154 item 23: rodadas de opencode acumuladas na vida da task (para o teto de custo por task)
+    // #atribuicao: modelos que DE FATO produziram codigo nesta task, na ordem em que rodaram
+    // (primario, fallback GLM->MiniMax, escalada Claude). Diferente do modelo CONFIGURADO:
+    // resolveCoderModels() diz o que se PRETENDIA usar, isto diz o que rodou — e sob fallback os
+    // dois divergem. Vai no trailer do commit e no corpo do PR.
+    coderModelsUsed?: string[];
     // #escalada-opus: modelo que produziu o judgeScore atual (ex.: 'claude:opus' | 'chat-chain'). Gatilho da
     // escalada EXIGE que o score tenha vindo do juiz FORTE — não escalar com base em score de juiz-fallback.
     judgeModelUsed?: string;
@@ -1736,6 +1748,53 @@ class TaskRunnerService {
      * LITERAL p/ `--model <X>` num bash -lc; inválido/vazio → '' (sem --model / herda). Fonte ÚNICA usada
      * pelo run (runOpencodeIsolated) e pelo status (getRunnerHealth) — o dono vê o que está de fato valendo.
      */
+    /**
+     * #atribuicao: registra que `model` produziu codigo nesta task. Idempotente por valor — um
+     * fallback que roda em 3 rounds nao vira 3 entradas. String vazia = default do opencode
+     * (comando sem `--model`), registrado explicitamente para nao virar "nao registrado".
+     */
+    private recordCoderModel(task: Task, model: string | undefined): void {
+        const m = (model || '').trim() || '(default do opencode)';
+        if (!task.coderModelsUsed) task.coderModelsUsed = [];
+        if (!task.coderModelsUsed.includes(m)) task.coderModelsUsed.push(m);
+    }
+
+    /** #atribuicao: modelos usados, para trailer/corpo de PR. */
+    private modelsUsedLabel(task: Task): string {
+        return task.coderModelsUsed?.length ? task.coderModelsUsed.join(', ') : '(nao registrado)';
+    }
+
+    /**
+     * #atribuicao: mensagem de commit do robo. Alem do assunto, carrega TRAILERS legiveis por
+     * maquina — `git log --format='%(trailers:key=Tulipa-Model)'` responde "qual modelo escreveu
+     * isto?" sem precisar cruzar com o tasks.json, que e local e nao viaja com o repo.
+     */
+    private buildCommitMessage(task: Task, issueNumber: number, title: string): string {
+        return [
+            `feat(#${issueNumber}): ${title.substring(0, 72)}`,
+            '',
+            'Gerado pelo TaskRunner (automacao) — nao escrito a mao.',
+            '',
+            `Tulipa-Model: ${this.modelsUsedLabel(task)}`,
+            `Tulipa-Task: #${issueNumber}`,
+        ].join('\n');
+    }
+
+    /**
+     * #atribuicao: garante a label antes de usa-la. `gh pr create --label` FALHA (nao ignora) se a
+     * label nao existe no repo — e derrubar a criacao do PR por causa de uma label seria pior que
+     * nao ter a label. Idempotente; devolve false se nao deu, e ai o PR sai sem ela.
+     */
+    private async ensureTaskRunnerLabel(): Promise<boolean> {
+        try {
+            await gh(['label', 'create', TASKRUNNER_LABEL, '--repo', REPO, '--color', '6E5494',
+                '--description', 'PR gerado pelo TaskRunner (automacao), nao escrito a mao'], { timeout: 15000 });
+            return true;
+        } catch (e: any) {
+            return /already exists/i.test(String(e?.message || ''));
+        }
+    }
+
     private resolveCoderModels(): { primary: string; fallback: string } {
         const cfg = this.getAutomationConfig();
         const pick = (ui: unknown, env: string) => {
@@ -2170,6 +2229,7 @@ class TaskRunnerService {
             }
             // RODOU DE FATO → agora sim consome a tentativa única + conta escalada + custo (observabilidade).
             task.opusEscalated = true;
+            this.recordCoderModel(task, `claude:${model}`);
             this.accountOpusEscalation();
             this.accountOpusCost(r?.costUsd || 0);
             task.opusInFlightAt = undefined;
@@ -2207,6 +2267,7 @@ class TaskRunnerService {
             // Modelo do coder: PRECEDÊNCIA ui_config (tela, AO VIVO) > env (default) > default do opencode.
             // Resolvido+revalidado (charset) em resolveCoderModels — defesa em profundidade antes do shell.
             const { primary: primaryModel, fallback: fallbackModel } = this.resolveCoderModels();
+            this.recordCoderModel(task, primaryModel);
             const primaryCmd = primaryModel
                 ? `opencode run --model ${primaryModel} "${basePrompt}"`
                 : `opencode run "${basePrompt}"`;
@@ -2233,6 +2294,7 @@ class TaskRunnerService {
                     const isTimeout = /opencode timeout/i.test(msg);
                     const cause = isTimeout ? 'Timeout/hang do modelo primário' : 'Cota do modelo primário esgotada';
                     this.recordEvent(task, 'attempt_started', `${cause} — re-rodando o opencode com fallback ${fallbackModel}.`, { fallbackModel });
+                    this.recordCoderModel(task, fallbackModel);
                     this.emitLog(task.issueNumber, 'warn', `Opencode: ${isTimeout ? 'timeout/hang' : 'cota/429'} no modelo primário — fallback para ${fallbackModel}.`);
                     // excludeIssue=self: mata o órfão do PRIMÁRIO desta run (mesmo needle), poupa vizinhos.
                     const goneMid = await this.sweepOrphanedOpencode(`fallback-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
@@ -3323,7 +3385,7 @@ class TaskRunnerService {
         await git(['add', '-A'], { timeout: 15000, cwd: slot.root });
         let commitSha: string | undefined;
         try {
-            const { stdout: commitOut } = await git(['commit', '-m', `feat(#${issueNumber}): ${String(issueData.title).substring(0, 72)}`], { timeout: 20000, cwd: slot.root });
+            const { stdout: commitOut } = await git([...TASKRUNNER_GIT_IDENT, 'commit', '-m', this.buildCommitMessage(task, issueNumber, String(issueData.title))], { timeout: 20000, cwd: slot.root });
             const shaMatch = commitOut.match(/\[[\w\-/]+ ([a-f0-9]+)\]/);
             commitSha = shaMatch?.[1];
             this.recordEvent(task, 'git_committed', 'Mudanças commitadas', { sha: commitSha });
@@ -3352,15 +3414,18 @@ class TaskRunnerService {
         const verifyTag = verify.ok ? '✅ typecheck OK' : '⚠️ typecheck FALHOU — revisar com atenção';
         const exploreCount = task.attempts.filter(a => a.phase === 'exploring').length;
         const synthCount = task.attempts.filter(a => a.phase === 'synthesizing').length;
-        const prBody = `Closes #${issueNumber}\n\nImplementado pelo TaskRunner com Multi-Attempt Synthesis.\n\n**Exploração:** ${exploreCount} tentativas | **Síntese:** ${synthCount} tentativa(s)\n**Verificação:** ${verifyTag}\n\n⚠️ Requer revisão humana antes do merge.`;
+        const prBody = `Closes #${issueNumber}\n\n🤖 **Gerado pelo TaskRunner** (automação) — não escrito à mão.\n**Modelo(s) que produziram o código:** ${this.modelsUsedLabel(task)}\n\nImplementado com Multi-Attempt Synthesis.\n\n**Exploração:** ${exploreCount} tentativas | **Síntese:** ${synthCount} tentativa(s)\n**Verificação:** ${verifyTag}\n\n⚠️ Requer revisão humana antes do merge.`;
         let prNumber: number | undefined;
         let prUrl: string | undefined;
         try {
-            const { stdout: prOut } = await gh([
+            const prArgs = [
                 'pr', 'create', '--repo', REPO, '--head', branch, '--base', 'main',
                 '--title', `feat(#${issueNumber}): ${issueData.title}`,
                 '--body', prBody,
-            ], { timeout: 30000 });
+            ];
+            // #atribuicao: label so entra se existir — ver ensureTaskRunnerLabel.
+            if (await this.ensureTaskRunnerLabel()) prArgs.push('--label', TASKRUNNER_LABEL);
+            const { stdout: prOut } = await gh(prArgs, { timeout: 30000 });
             const match = prOut.match(/\/pull\/(\d+)/);
             if (match) prNumber = parseInt(match[1]);
             prUrl = prOut.trim();
