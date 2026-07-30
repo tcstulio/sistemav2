@@ -521,7 +521,7 @@ class BotService {
 
             // SPECIAL COMMANDS - Process before auto-reply check
             if (body.startsWith('/')) {
-                const handled = await this.handleCommand(body, sessionId, chatId);
+                const handled = await this.handleCommand(body, sessionId, chatId, message.realSender);
                 if (handled) return; // Command was handled, don't continue to LLM
             }
 
@@ -889,8 +889,26 @@ class BotService {
      * Handle special slash commands
      * Returns true if command was handled, false otherwise
      */
-    private async handleCommand(body: string, sessionId: string, chatId: string): Promise<boolean> {
+    private async handleCommand(body: string, sessionId: string, chatId: string, realSender?: string): Promise<boolean> {
         const cmd = body.split(' ')[0].toLowerCase().trim();
+
+        // #fin-gate: comandos financeiros (/pagar,/pix,/saldo) e a seção "Financeiro" do /help exigem
+        // identidade de FUNCIONÁRIO (telefone cadastrado). Cliente/desconhecido NÃO vê nem dispara —
+        // senão qualquer número enfileiraria pedidos de pagamento/PIX na fila de aprovação (spam/abuso)
+        // e via os comandos no help. (Refino futuro: exigir papel Financeiro específico, não só funcionário.)
+        const FINANCIAL_CMDS = new Set(['/pagar', '/pix', '/saldo']);
+        let isInternal = false;
+        if (FINANCIAL_CMDS.has(cmd) || cmd === '/help' || cmd === '/ajuda') {
+            try {
+                const id = await whatsappIdentityService.identifySender(realSender || chatId);
+                isInternal = id.kind === 'employee';
+            } catch { isInternal = false; }
+        }
+        if (FINANCIAL_CMDS.has(cmd) && !isInternal) {
+            await messageService.sendText(sessionId, chatId,
+                '🔒 Este comando é restrito a usuários internos autorizados. Se você é da equipe, confirme que seu telefone está cadastrado no sistema.');
+            return true;
+        }
 
         try {
             switch (cmd) {
@@ -917,11 +935,14 @@ class BotService {
                         `/status - Mostra status do sistema\n` +
                         `/resumo - Resume a conversa atual\n` +
                         `/reset - Limpa o histórico de conversa com o bot\n` +
-                        `/ajuda - Lista comandos disponíveis\n\n` +
-                        `*Financeiro (requer aprovação):*\n` +
-                        `/pagar <código_barras> - Pagar boleto\n` +
-                        `/pix <chave> <valor> - Enviar PIX\n` +
-                        `/saldo [inter|itau] - Consultar saldo`;
+                        `/ajuda - Lista comandos disponíveis`
+                        // #fin-gate: só funcionário identificado vê os comandos financeiros.
+                        + (isInternal
+                            ? `\n\n*Financeiro (requer aprovação):*\n` +
+                              `/pagar <código_barras> - Pagar boleto\n` +
+                              `/pix <chave> <valor> - Enviar PIX\n` +
+                              `/saldo [inter|itau] - Consultar saldo`
+                            : '');
                     await messageService.sendText(sessionId, chatId, helpMsg);
                     return true;
 

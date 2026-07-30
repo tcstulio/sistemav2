@@ -208,7 +208,7 @@ const TOOLS_PROMPT_FULL = `
         FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
         33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
         34. prepare_edit_ticket(id, subject?, message?, severity_code?) - Prepara EDIÇÃO de um ticket. Ache o id antes com list_tickets. severity_code: 'LOW', 'NORMAL', 'HIGH', 'BLOCKING'.
-        35. prepare_create_customer(name, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Rascunho de novo cliente/prospect (client: '1'=cliente, '0' ou '2'=prospect; typent_id: '8'=PF, '5'=PJ; idprof1=CNPJ/CPF; array_options.options_assinante=responsável legal PJ).
+        35. prepare_create_customer(name, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Rascunho de novo cliente/prospect (client: '1'=cliente [PADRÃO], '2'=prospect, '3'=ambos — NUNCA '0'; a tela só aceita 1/2/3; typent_id: '8'=PF, '5'=PJ; idprof1=CNPJ/CPF; array_options.options_assinante=responsável legal PJ).
         36. prepare_edit_customer(id, name?, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
         37. prepare_create_project(title, ref?, socid?) - Rascunho de novo projeto. socid = id do cliente (ache com search_customer). ref = referência (ex.: PROJ-2025-001).
         38. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
@@ -897,7 +897,17 @@ const MUTATING_TOOLS = new Set([
 // roda NENHUMA tool de leitura de dado interno. Decisão do dono (2026-07-17): "nada de dado interno"
 // — o contexto do próprio cliente já vem injetado no prompt via CRM. Allowlist pública EXPLÍCITA
 // (fail-closed): hoje vazia porque toda tool de leitura expõe dado interno (usuários/banco/PII/RH).
-const PUBLIC_READONLY_ALLOWLIST = new Set<string>([]);
+// #cliente-tools (paridade bot n8n Marciano): tools que um CLIENTE identificado (readOnly, SEM
+// permissionProfile) pode usar. Estava VAZIO → o agente-cliente ficava sem NENHUMA ferramenta ("não
+// disponível" pra catálogo/agenda). SÓ entram aqui tools que NÃO vazam dados de OUTROS clientes:
+// catálogo/categorias/info-da-empresa são genéricos (não por-cliente). NÃO adicionar
+// list_invoices/list_proposals/list_events crus (vazam dados de terceiros) — esses precisam de tools
+// ESCOPADAS ao cliente (fase 2: disponibilidade de data; cotação-do-cliente).
+const PUBLIC_READONLY_ALLOWLIST = new Set<string>([
+    'list_products',      // catálogo de produtos/serviços (= BuscarCatalogoCompleto do n8n)
+    'list_categories',    // navegar por categoria
+    'get_company_info',   // dados da empresa (endereço, contato)
+]);
 
 /** True se a ferramenta escreve/dispara efeito externo (deve ser bloqueada em read-only). */
 function isMutatingTool(tool: string): boolean {

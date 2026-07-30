@@ -54,14 +54,30 @@ const TERMINAL_STATUSES = ['merged', 'rejected', 'rejected_precheck', 'cancelled
 const PIPELINE_COLUMNS = [
     { key: 'queue', label: 'Fila', statuses: ['pending'] },
     { key: 'active', label: 'Em Execução', statuses: ['running', 'fixing', 'cancelling'] },
-    // #1175: "Aguardando você" separa reviewing (Judge escalou p/ revisão humana) de approved
-    // retido por piso (mergeHoldReason). O approved transitório (sem hold) fica aqui com chip
-    // "mergeando..." até virar merged.
+    // A coluna REAL de reviewing/approved vem de columnKeyFor() (abaixo), não do status cru.
     { key: 'review', label: 'Aguardando você', statuses: ['reviewing', 'approved'] },
     { key: 'done', label: 'Concluído', statuses: ['merged', 'rejected', 'rejected_precheck'] },
     { key: 'failed', label: 'Falhadas', statuses: ['failed'] },
     { key: 'cancelled', label: 'Canceladas', statuses: ['cancelled'] },
 ] as const;
+
+// #coluna-fix: reviewing/approved NÃO mapeiam 1:1 pro status. Uma task "reviewing" ainda JULGANDO
+// (phase≠'done') ou "approved" AUTO-MERGEANDO (sem mergeHoldReason) está PROCESSANDO → "Em Execução",
+// não "Aguardando você". Só as GENUINAMENTE retidas (juiz terminou = phase 'done' → revisão humana; ou
+// approved retido pelo piso/autoMerge-off = mergeHoldReason setado) te aguardam de fato. Antes tudo que
+// era reviewing/approved caía em "Aguardando você" — inclusive tasks no meio do julgamento/merge.
+const columnKeyFor = (t: Task): string => {
+    switch (t.status) {
+        case 'pending': return 'queue';
+        case 'running': case 'fixing': case 'cancelling': return 'active';
+        case 'reviewing': return t.phase === 'done' ? 'review' : 'active';
+        case 'approved': return t.mergeHoldReason ? 'review' : 'active';
+        case 'merged': case 'rejected': case 'rejected_precheck': return 'done';
+        case 'failed': return 'failed';
+        case 'cancelled': return 'cancelled';
+        default: return 'active';
+    }
+};
 
 const LABEL_COLORS: Record<string, string> = {
     bug: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400',
@@ -395,6 +411,9 @@ const FeedbackModal: React.FC<{
 const EscalateMenu: React.FC<{ task: Task; onAction: (action: string, task: Task, extra?: string) => void }> = ({ task, onAction }) => (
     <details className="relative inline-block">
         <summary
+            // #escalada-ui: o clique no <summary> vazava pro onClick do card (onHistory) → abria o modal
+            // de detalhe POR CIMA do dropdown. Igual aos outros botões de ação, corta a propagação.
+            onClick={(e) => e.stopPropagation()}
             className="list-none cursor-pointer inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-violet-500 text-white hover:bg-violet-600 transition-colors select-none"
             title="Rodar o coder forte (Claude) AGORA nesta task, no modelo escolhido"
         >
@@ -503,6 +522,15 @@ const SortableMiniCard: React.FC<{
                 )}
                 <PrecheckBadge report={task.precheckReport} compact />
                 <TaskAutomationChips task={task} maxRoundsPerTask={maxRoundsPerTask} />
+                {task.lastManualEscalation && (
+                    <span
+                        className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 font-medium inline-flex items-center gap-0.5"
+                        title={`Escalada manual para Claude ${task.lastManualEscalation.model === 'opus' ? 'Opus' : 'Fable'} em ${new Date(task.lastManualEscalation.at).toLocaleString('pt-BR')}`}
+                        data-testid={`escalated-badge-${task.issueNumber}`}
+                    >
+                        <Sparkles size={9} /> {task.lastManualEscalation.model === 'opus' ? 'Opus' : 'Fable'}
+                    </span>
+                )}
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
             {isEpic(task) && epicProgress && (
@@ -1462,8 +1490,8 @@ const IssuesPage: React.FC = () => {
                         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                                 {PIPELINE_COLUMNS.map(col => {
-                                    const colStatuses = col.statuses as readonly string[];
-                                    const colTasks = filteredTasks.filter(t => colStatuses.includes(t.status));
+                                    // #coluna-fix: usa o predicado (status + phase + mergeHoldReason), não o status cru.
+                                    const colTasks = filteredTasks.filter(t => columnKeyFor(t) === col.key);
                                     const isQueue = col.key === 'queue';
                                     const sortableIds = colTasks.map(t => `task-${t.issueNumber}`);
                                     return (

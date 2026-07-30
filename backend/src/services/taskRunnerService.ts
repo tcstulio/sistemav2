@@ -403,6 +403,10 @@ export interface Task {
     // #escalada-manual: modelo escolhido pelo humano p/ ESTA escalada (opus|fable). Override do
     // coderEscalationModel global só nesta task; tem precedência no tryOpusCoderRound.
     coderEscalationModelOverride?: string;
+    // #escalada-ui: última escalação manual (model + quando, ISO). PERSISTE após a rodada consumir o
+    // override acima (limpo em runOpencode) → o card mostra um badge glanceável "⬆️ Opus/Fable" e o
+    // dono sabe de relance que já escalou (e pra qual modelo), sem abrir o timeline.
+    lastManualEscalation?: { model: string; at: string };
     deadlockKicks?: number; // #1455: quantas vezes o planner re-despachou esta task por estar PARADA bloqueando dependentes (teto p/ não loopar)
     // #1154 P1 item 3: crítica do Judge + feedback humano são AÇÕES a atender que DEVEM sobreviver ao wipe
     // de feedbackHistory entre fases (senão o auto-fix roda CEGO). PERSISTENTE como gateFixInstruction:
@@ -1023,9 +1027,11 @@ class TaskRunnerService {
         if (!Array.isArray(task.events)) task.events = [];
         const evt: TaskEvent = { ts: new Date().toISOString(), type, message, meta };
         task.events.push(evt);
-        // #1154 P2 item 20: cap a timeline (loops de auto-fix/resume podem gerar centenas de eventos; a
-        // listagem devolve TUDO a cada 10s). Preserva os mais recentes.
-        const EVENTS_CAP = 500;
+        // #compact-store: cap MUITO menor. Era 500 → o tasks.json inchou a 60MB (eventos judge_score
+        // carregam a review inteira no meta, ~10KB cada), e como save() reescreve o arquivo INTEIRO a
+        // cada evento, os saves ficaram lentos e passaram a contender (redo travando com HTTP 000) +
+        // deixaram o robô lento em tudo. 80 eventos recentes bastam p/ o timeline da UI.
+        const EVENTS_CAP = 80;
         if (task.events.length > EVENTS_CAP) task.events.splice(0, task.events.length - EVENTS_CAP);
         this.save();
         // Mapeia para os tipos visuais que a UI ja conhece (info/success/warn/error/ai).
@@ -1051,6 +1057,37 @@ class TaskRunnerService {
                 // Cleanup: killRequested=true de um restart anterior (child morreu junto).
                 for (const t of Object.values(this.store.tasks)) {
                     if (!Array.isArray(t.events)) t.events = [];
+                    // #compact-store: compactação histórica no load — o store inchou a 60MB (500 eventos/
+                    // task; metas de judge_score ~10KB) → saves lentos, contenção, redo travando. Terminais
+                    // guardam pouco (não re-executam); demais guardam o timeline recente. Eventos ANTIGOS
+                    // (além dos 8 mais recentes) perdem o meta pesado e têm a msg longa truncada.
+                    const evCap = ['merged', 'rejected', 'rejected_precheck', 'cancelled'].includes(t.status) ? 12
+                        : t.status === 'failed' ? 25 : 80;
+                    if (t.events.length > evCap) t.events.splice(0, t.events.length - evCap);
+                    const keepMetaFrom = Math.max(0, t.events.length - 8);
+                    t.events = t.events.map((e: any, i: number) => {
+                        const message = typeof e.message === 'string' && e.message.length > 1500
+                            ? e.message.slice(0, 1500) + '…[truncado]' : e.message;
+                        let meta = e.meta;
+                        if (i < keepMetaFrom && meta && JSON.stringify(meta).length > 800) meta = { _pruned: true };
+                        return { ...e, message, meta };
+                    });
+                    // #compact-store: cpuMemSamples RAW era o MAIOR vilão (~23MB; merged acumulava 177k
+                    // amostras). Só a última amostra (heartbeat/watchdog) e o `metrics` agregado importam
+                    // pós-run. Ativas guardam as últimas 60; o resto guarda 3.
+                    if (Array.isArray(t.cpuMemSamples)) {
+                        const active = ['running', 'reviewing', 'fixing', 'pending'].includes(t.status);
+                        const smpCap = active ? 60 : 3;
+                        if (t.cpuMemSamples.length > smpCap) t.cpuMemSamples = t.cpuMemSamples.slice(-smpCap);
+                    }
+                    // #compact-store: o `diff` de tentativas antigas é grande (~5MB). Mantém as 2 últimas
+                    // inteiras, trunca o resto (o diff antigo já foi consumido pela síntese/juiz).
+                    if (Array.isArray(t.attempts) && t.attempts.length > 2) {
+                        const keepFull = t.attempts.length - 2;
+                        t.attempts = t.attempts.map((a: any, i: number) =>
+                            (i < keepFull && typeof a.diff === 'string' && a.diff.length > 600)
+                                ? { ...a, diff: a.diff.slice(0, 600) + '…[truncado]' } : a);
+                    }
                     if (!t.phase) t.phase = 'done';
                     if (!Array.isArray(t.attempts)) t.attempts = [];
                     if (!t.kind) t.kind = 'task';
@@ -1070,7 +1107,27 @@ class TaskRunnerService {
         }
     }
 
+    // #debounce-save: o save() era atomicWriteSync SÍNCRONO a CADA recordEvent → com o robô gerando
+    // muitos eventos (e N runs paralelos), os writes de MB repetidos bloqueavam o event loop e contendiam
+    // no I/O → requests travavam (POST /redo → HTTP 000) e o robô ficava lento em tudo. Agora coalesce:
+    // marca dirty + agenda UM flush em ~500ms. Perda máx. em crash/restart = ~500ms de estado (o robô já
+    // é resiliente: restart-requeue no load + re-sync do GitHub). Pontos críticos podem chamar saveNow().
+    private saveTimer: ReturnType<typeof setTimeout> | null = null;
+    private saveDirty = false;
+
     private save() {
+        this.saveDirty = true;
+        if (this.saveTimer) return;
+        this.saveTimer = setTimeout(() => {
+            this.saveTimer = null;
+            if (this.saveDirty) this.saveNow();
+        }, 500);
+    }
+
+    /** Flush SÍNCRONO imediato (coalesce pendente incluso). Usar em shutdown ou pontos que não podem perder estado. */
+    private saveNow() {
+        this.saveDirty = false;
+        if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
         try {
             atomicWriteSync(STORE_PATH, this.store);
         } catch (e) {
@@ -1326,6 +1383,8 @@ class TaskRunnerService {
         if (m !== 'opus' && m !== 'fable') throw new Error(`Modelo inválido: "${model}". Use 'opus' ou 'fable'.`);
         task.coderEscalationModelOverride = m;
         task.forceEscalation = true;
+        // #escalada-ui: registro PERSISTENTE (o override acima é limpo após a rodada) → badge no card.
+        task.lastManualEscalation = { model: m, at: new Date().toISOString() };
         task.error = undefined;
         const branch = task.branch || `fix-${issueNumber}`;
         task.branch = branch;
@@ -3494,8 +3553,18 @@ class TaskRunnerService {
                 ? `\n**ATENÇÃO:** Arquivos mencionados na issue que NÃO foram modificados: ${missingFiles.join(', ')}. Verifique se a implementação está completa.`
                 : '';
 
-            const diffContent = diff.length > 50000
-                ? diff.substring(0, 50000) + '\n\n[... diff truncado após 50KB ...]'
+            // #judge-diff: era 50KB → PRs multi-arquivo truncavam MID-FILE, o juiz não via metade dos
+            // arquivos e sub-avaliava ("diff truncado, não consigo verificar" → 8/10, preso abaixo do
+            // piso 9 mesmo com código bom). O modelo do juiz (glm-5.2=200k tokens / MiniMax-M3=1M)
+            // comporta MUITO mais que 50KB. Sobe pra 200KB e, se ainda truncar, lista TODOS os arquivos
+            // alterados (do `changedFiles` já computado) p/ o juiz saber o ESCOPO COMPLETO e não punir
+            // por não-conseguir-verificar algo que ele sabe que existe.
+            const JUDGE_DIFF_CAP = 200_000;
+            const diffContent = diff.length > JUDGE_DIFF_CAP
+                ? diff.substring(0, JUDGE_DIFF_CAP)
+                    + `\n\n[... diff truncado após ${Math.round(JUDGE_DIFF_CAP / 1000)}KB (de ${Math.round(diff.length / 1000)}KB). `
+                    + `Lista COMPLETA de arquivos alterados no PR (inclusive os além do corte): ${changedFiles.join(', ')}. `
+                    + `NÃO penalize a nota por não conseguir ver o diff de um arquivo que consta nesta lista — assuma que a mudança existe. ...]`
                 : diff;
 
             const judgePrompt = `You are a strict senior code reviewer (LLM Judge) for a production system.
