@@ -33,21 +33,20 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                 throw new Error("Por favor, informe Usuário e Senha.");
             }
 
-            // Exchange User/Pass for API Key via Backend
+            // #1329: cookie-only auth. O login() aciona POST /api/auth/login com
+            // credentials:'include'; o backend devolve Set-Cookie: auth_token=httpOnly.
+            // NUNCA mais devolvemos apiKey em texto plano na resposta. A identidade do
+            // usuário vem em `data.user`.
             const authResult = await DolibarrService.login(form.login, form.password);
-            const apiKey = authResult.apiKey || authResult.token;
 
-            if (!apiKey) {
-                throw new Error("Falha ao obter chave de API.");
-            }
+            // Verify Connection (a request usa o cookie via fetch credentials:'include' no core).
+            await DolibarrService.checkConnection(url, '');
 
-            // Verify Connection
-            await DolibarrService.checkConnection(url, apiKey);
-
-            // Complete Setup
+            // Complete Setup — apiKey fica vazio porque a auth é cookie-based. O backend
+            // resolve o cookie httpOnly automaticamente em chamadas subsequentes.
             onComplete({
                 apiUrl: url,
-                apiKey: apiKey,
+                apiKey: '',
                 themeColor: form.themeColor,
                 darkMode: false,
                 apiLimit: 0,

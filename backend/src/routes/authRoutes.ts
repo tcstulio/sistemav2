@@ -6,30 +6,29 @@ import { createLogger } from '../utils/logger';
 import { config } from '../config/env';
 
 import { z } from 'zod';
-import { rateLimiters } from '../middleware/rateLimit';
+import { loginLimiter } from '../middleware/rateLimitFactory';
 import { validateBody } from '../middleware/validation';
+import apiResponse from '../utils/apiResponse';
 
 const log = createLogger('Auth');
 const router = Router();
 
-const SESSION_COOKIE_NAME = 'apiKey';
-const DEFAULT_LOGIN_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const configuredCookieMaxAge = Number(process.env.AUTH_COOKIE_MAX_AGE_MS);
-const LOGIN_COOKIE_MAX_AGE_MS = Number.isSafeInteger(configuredCookieMaxAge) && configuredCookieMaxAge > 0
-    ? configuredCookieMaxAge
-    : DEFAULT_LOGIN_COOKIE_MAX_AGE_MS;
+const SESSION_COOKIE_NAME = 'auth_token';
+const LEGACY_COOKIE_NAME = 'apiKey';
+const LOGIN_COOKIE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const COOKIE_OPTS = { path: '/', httpOnly: true, secure: true, sameSite: 'strict' as const };
 
-// O identificador é o LOGIN (usuário) — é o que o formulário do webapp envia ("Usuário") e o
-// que a API do Dolibarr espera no parâmetro `login` (aceita username OU e-mail como string).
-// REGRESSÃO CORRIGIDA (#1541/#1707 exigia `email` com formato de e-mail → quebrava TODO login por
-// usuário, ex.: "tulio.silva"/"admin", que não são e-mails). Aceitamos `login` genérico; mantidas
-// as demais melhorias do #1707 (rate-limit de login, cookie httpOnly, teto de tamanho).
+// #1329: Zod valida login (min 3) e password (min 6) UPSTREAM do `dolibarrService.login` —
+// payloads inválidos são interceptados pelo `validateBody` middleware (gera 400
+// `VALIDATION_ERROR` via errorHandler) e NUNCA chegam ao handler, portanto não disparam
+// chamada ao ERP. `password` aceita string arbitrária acima do tamanho mínimo — o Dolibarr
+// cuida do hashing/comparação server-side (não fazemos pré-hash aqui).
 const LoginSchema = z.object({
-    login: z.string().trim().min(1).max(255),
-    password: z.string().min(1).max(1024),
+    login: z.string().trim().min(3, 'login deve ter no mínimo 3 caracteres').max(255),
+    password: z.string().min(6, 'password deve ter no mínimo 6 caracteres').max(1024),
 });
 
-router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req, res) => {
+router.post('/login', loginLimiter, validateBody(LoginSchema), async (req, res) => {
     try {
         const { login, password } = req.body;
         const identifier = login;
@@ -45,37 +44,28 @@ router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req,
 
         const sessionToken = createProtoSession(identifier, result.token, userData);
 
+        // #1329: token entregue APENAS via cookie httpOnly (Set-Cookie). NUNCA devolvemos
+        // `apiKey` em texto plano no body — a chave crua do Dolibarr também nunca vaza (fica
+        // apenas no cofre server-side `proto_session`). O cookie tem 24h de vida e flags
+        // estritas (HttpOnly, Secure, SameSite=Strict) para bloquear XSS e CSRF.
         res.cookie(SESSION_COOKIE_NAME, sessionToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: 'strict',
+            ...COOKIE_OPTS,
             maxAge: LOGIN_COOKIE_MAX_AGE_MS,
-            path: '/',
         });
 
-        // RETROCOMPAT (regressão #1707): o frontend lê `apiKey` do corpo e o usa como Bearer nas
-        // próximas chamadas. O #1707 removeu o `apiKey` do JSON (só cookie httpOnly) SEM migrar o
-        // frontend → "Falha ao obter chave de API". Restauramos o `apiKey` (= sessionToken) no
-        // corpo E mantemos o cookie. A migração completa p/ auth-só-por-cookie fica como follow-up.
         res.json({
             success: true,
-            apiKey: sessionToken,
             data: { user: userData ? { id: userData.id, login: userData.login, admin: userData.admin } : null },
         });
     } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
-        }
         log.error('Login Error', { error: error.message });
-        res.status(401).json({
-            success: false,
-            error: error.message || 'Authentication failed'
-        });
+        apiResponse.fail(res, 'AUTHENTICATION_FAILED', error.message || 'Authentication failed', 401);
     }
 });
 
 router.post('/logout', (req, res) => {
-    res.clearCookie(SESSION_COOKIE_NAME, { path: '/', httpOnly: true, secure: true, sameSite: 'strict' });
+    res.clearCookie(SESSION_COOKIE_NAME, COOKIE_OPTS);
+    res.clearCookie(LEGACY_COOKIE_NAME, COOKIE_OPTS);
     res.json({ success: true, message: 'Logged out' });
 });
 
@@ -87,11 +77,11 @@ router.post('/logout', (req, res) => {
 
 const AdminLoginSchema = z.object({ adminKey: z.string().min(1).max(1024) });
 
-router.post('/admin-login', rateLimiters.login, validateBody(AdminLoginSchema), (req, res) => {
+router.post('/admin-login', loginLimiter, validateBody(AdminLoginSchema), (req, res) => {
     try {
         const { adminKey } = req.body;
         if (!config.adminKey || adminKey !== config.adminKey) {
-            return res.status(401).json({ success: false, error: 'Chave de admin inválida' });
+            return apiResponse.fail(res, 'INVALID_ADMIN_KEY', 'Chave de admin inválida', 401);
         }
         res.cookie('admin_key', adminKey, {
             httpOnly: true,
@@ -102,11 +92,8 @@ router.post('/admin-login', rateLimiters.login, validateBody(AdminLoginSchema), 
         });
         res.json({ success: true });
     } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: 'Validation Error', details: error.issues });
-        }
         log.error('Admin login error', { error: error.message });
-        res.status(500).json({ error: error.message });
+        apiResponse.fail(res, 'ADMIN_LOGIN_FAILED', error.message, 500);
     }
 });
 

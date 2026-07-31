@@ -221,7 +221,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
         try {
           const parsed = savedConfigObj;
 
-          if (!parsed.apiKey || parsed.apiKey.trim() === '') {
+          if (typeof parsed.apiKey !== 'string') {
             log.warn('Invalid config. Resetting.');
             safeStorage.removeItem('coolgroove_config');
           } else {
