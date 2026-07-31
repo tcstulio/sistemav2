@@ -314,12 +314,9 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             mockAnalyzePdf.mockReset();
         });
 
-        it('retorna 200 com o conteúdo extraído/OCR + metadados do caminho', async () => {
-            mockAnalyzePdf.mockResolvedValue({
-                text: 'Página 1: conteúdo OCR',
-                path: 'ocr_vision',
-                pagesOcr: 1,
-            });
+        it('retorna 200 com o conteúdo extraído/OCR (string única)', async () => {
+            // Contrato #1031: analyzePdf devolve Promise<string> (sem metadados no corpo).
+            mockAnalyzePdf.mockResolvedValue('--- Página 1 ---\nconteúdo OCR');
             const app = createApp(stream);
             const res = await request(app)
                 .post('/api/chat/analyze-pdf')
@@ -327,24 +324,21 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.data).toEqual({
-                text: 'Página 1: conteúdo OCR',
-                path: 'ocr_vision',
-                pagesOcr: 1,
-            });
+            expect(res.body.data).toEqual({ text: '--- Página 1 ---\nconteúdo OCR' });
             expect(mockAnalyzePdf).toHaveBeenCalledTimes(1);
             expect(Buffer.isBuffer(mockAnalyzePdf.mock.calls[0][0])).toBe(true);
         });
 
-        it('também funciona no caminho pdf_parse (sem OCR)', async () => {
-            mockAnalyzePdf.mockResolvedValue({ text: 'texto puro', path: 'pdf_parse' });
+        it('também funciona no caminho pdf_parse (texto puro)', async () => {
+            mockAnalyzePdf.mockResolvedValue('texto puro extraído da camada de texto');
             const app = createApp(stream);
             const res = await request(app)
                 .post('/api/chat/analyze-pdf')
                 .send({ pdf: Buffer.from('X').toString('base64') });
             expect(res.status).toBe(200);
-            expect(res.body.data.path).toBe('pdf_parse');
-            expect(res.body.data.pagesOcr).toBeUndefined();
+            expect(res.body.data.text).toBe('texto puro extraído da camada de texto');
+            // Sem vazar metadados internos (path/pagesOcr) — ficam no log do service.
+            expect(res.body.data.path).toBeUndefined();
         });
 
         it('400 quando `pdf` está ausente', async () => {
@@ -363,7 +357,7 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
         });
 
         it('exige login (requireDolibarrLogin aplicado no router)', async () => {
-            mockAnalyzePdf.mockResolvedValue({ text: '', path: 'pdf_parse' });
+            mockAnalyzePdf.mockResolvedValue('');
             const app = createApp(stream);
             await request(app).post('/api/chat/analyze-pdf').send({ pdf: Buffer.from('X').toString('base64') });
             expect(mockRequireDolibarrLogin).toHaveBeenCalled();

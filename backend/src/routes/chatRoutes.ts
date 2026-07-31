@@ -200,17 +200,18 @@ router.post(
 /**
  * POST /chat/analyze-pdf
  *
- * #1547 — Devolve ao agente o conteúdo legível de um PDF (base64):
+ * #1031 / #1547 — Devolve ao agente o conteúdo legível de um PDF (base64):
  *   - se o PDF tem camada de texto (pdf-parse), retorna o texto extraído (rápido);
  *   - se é digitalizado (sem texto), renderiza as páginas via pdftoppm/sharp e faz
- *     OCR com a visão (glm-4.6v), concatenando 'Página N: ...'.
+ *     OCR com a visão (glm-4.6v), concatenando '--- Página N ---\n...'.
  *
  * Diferente de /ai/analyze/pdf (que extrai E gera uma resposta do LLM), este
  * endpoint devolve SÓ o texto extraído — o agente consome o conteúdo e decide
  * como usá-lo no seu próprio fluxo. Por isso o endpoint NÃO aceita `question`
  * (responder à pergunta é responsabilidade do agente chamador, não daqui).
  *
- * Resposta: `{ text, path, pagesOcr? }` onde `path` é 'pdf_parse' | 'ocr_vision' | 'empty'.
+ * Resposta: `{ text }` — o conteúdo extraído/OCR (string). O caminho usado
+ * (pdf_parse | ocr_vision) e as métricas (duração, tokens) são logados no service.
  */
 const ChatAnalyzePdfSchema = z.object({
     pdf: z.string(),
@@ -227,10 +228,10 @@ router.post(
         if (!pdfBuffer.length) {
             throw new AppError(400, 'BAD_REQUEST', 'PDF vazio após decodificar base64.');
         }
-        // #1547: o service decide o caminho (pdf_parse vs ocr_vision) e loga qual usou.
-        const result = await analyzePdf(pdfBuffer);
-        log.debug(`/chat/analyze-pdf processado via ${result.path}`);
-        return ok(res, result);
+        // #1031: o service decide o caminho (pdf_parse vs ocr_vision) e loga qual usou.
+        // Contrato mantido: devolve apenas o texto extraído/OCR (string única).
+        const text = await analyzePdf(pdfBuffer);
+        return ok(res, { text });
     }),
 );
 
