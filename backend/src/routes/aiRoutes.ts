@@ -465,16 +465,15 @@ const AnalyzePdfSchema = z.object({
 router.post('/analyze/pdf', asyncHandler(async (req, res) => {
     const { pdf, question } = AnalyzePdfSchema.parse(req.body);
     const pdfBuffer = Buffer.from(pdf, 'base64');
-    // #1547: fallback de OCR — PDF escaneado (sem camada de texto) é renderizado em PNG e
-    // transcrito via visão (describeImage). O caminho usado (pdf_parse vs ocr_vision) é logado
-    // dentro de analyzePdf. Aqui só consumimos o texto final.
-    const { text, path: pdfPath } = await analyzePdf(pdfBuffer);
-    log.debug(`/analyze/pdf processado via ${pdfPath}`);
+    // #1031: analyzePdf preserva o caminho pdf-parse (camada de texto) e adiciona fallback de
+    // OCR via visão (GLM-4.6V) quando o PDF é scan (sem camada de texto). Contrato mantido:
+    // devolve `Promise<string>` — o caminho usado e as métricas são logados internamente.
+    const pdfText = await analyzePdf(pdfBuffer);
 
     const prompt = `Analise o conteúdo deste documento PDF e responda à pergunta do usuário.
 
 Conteúdo do PDF:
-${text}
+${pdfText}
 
 ${question ? `Pergunta: ${question}` : 'Faça um resumo dos pontos principais do documento.'}`;
 
@@ -484,7 +483,7 @@ ${question ? `Pergunta: ${question}` : 'Faça um resumo dos pontos principais do
         undefined,
         'chat'
     );
-    return ok(res, { result: result.text, path: pdfPath });
+    return ok(res, { result: result.text });
 }));
 
 // Draft Collection Email
