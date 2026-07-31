@@ -20,9 +20,7 @@ const LoginSchema = z.object({
     password: z.string().min(6).max(1024),
 });
 
-const loginLimiter = rateLimiters.login;
-
-router.post('/login', loginLimiter, validateBody(LoginSchema), async (req, res) => {
+router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req, res) => {
     try {
         const { login, password } = req.body;
         const identifier = login;
