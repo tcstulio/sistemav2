@@ -333,21 +333,69 @@ describe('API Core', () => {
     });
 
     describe('login', () => {
-        it('logs in successfully with API key', async () => {
+        it('logs in successfully via cookie (no apiKey in body) and returns user data (#1329)', async () => {
             const mockResponse = {
                 ok: true,
                 status: 200,
                 headers: { get: () => 'application/json' },
-                json: () => Promise.resolve({ token: 'abc', apiKey: 'key123' })
+                json: () => Promise.resolve({ success: true, data: { user: { id: '1', login: 'test' } } })
             };
             mockFetch.mockResolvedValue(mockResponse);
 
             const result = await core.login('test', 'password');
 
-            expect(result.token).toBe('abc');
+            expect(result.success).toBe(true);
+            expect(result.user).toEqual({ id: '1', login: 'test' });
+            // #1329 AC: Frontend usa cookie httpOnly, deve incluir credentials: 'include'
+            // para que o navegador envie/receba o cookie de sessão.
+            const fetchCall = mockFetch.mock.calls[0][1] || mockFetch.mock.calls[0][0];
+            const opts = (mockFetch.mock.calls[0] as any)[1] ?? {};
+            expect(opts.credentials).toBe('include');
         });
 
-        it('throws error on failed login', async () => {
+        it('sends credentials: include so the httpOnly auth_token cookie is sent (#1329)', async () => {
+            const mockResponse = {
+                ok: true,
+                status: 200,
+                headers: { get: () => 'application/json' },
+                json: () => Promise.resolve({ success: true, data: { user: null } })
+            };
+            mockFetch.mockResolvedValue(mockResponse);
+
+            await core.login('admin', 'password123');
+
+            const callArgs = mockFetch.mock.calls[0] as any[];
+            const opts = callArgs[1] || {};
+            expect(opts.method).toBe('POST');
+            expect(opts.credentials).toBe('include');
+            expect(opts.headers['Content-Type']).toBe('application/json');
+        });
+
+        it('extracts message from envelope { error: { message } } on failed login (#1329)', async () => {
+            const mockResponse = {
+                ok: false,
+                status: 401,
+                headers: { get: () => 'application/json' },
+                json: () => Promise.resolve({ success: false, error: { code: 'AUTHENTICATION_FAILED', message: 'Invalid credentials' } })
+            };
+            mockFetch.mockResolvedValue(mockResponse);
+
+            await expect(core.login('test', 'wrong')).rejects.toThrow('Invalid credentials');
+        });
+
+        it('falls back to default message when error envelope is malformed', async () => {
+            const mockResponse = {
+                ok: false,
+                status: 401,
+                headers: { get: () => 'application/json' },
+                json: () => Promise.resolve({ error: { code: 'AUTHENTICATION_FAILED' } })
+            };
+            mockFetch.mockResolvedValue(mockResponse);
+
+            await expect(core.login('test', 'wrong')).rejects.toThrow();
+        });
+
+        it('throws error on failed login (legacy error string shape)', async () => {
             const mockResponse = {
                 ok: false,
                 status: 401,

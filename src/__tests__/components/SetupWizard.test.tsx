@@ -43,8 +43,8 @@ describe('SetupWizard', () => {
         });
     });
 
-    it('calls onComplete with config after successful login', async () => {
-        (DolibarrService.login as any).mockResolvedValue({ apiKey: 'test-key', user: { id: '1' } });
+    it('calls onComplete with cookie-based config (no apiKey in body) after successful login (#1329)', async () => {
+        (DolibarrService.login as any).mockResolvedValue({ success: true, user: { id: '1', login: 'admin' } });
         (DolibarrService.checkConnection as any).mockResolvedValue(true);
 
         render(<SetupWizard onComplete={mockOnComplete} />);
@@ -55,8 +55,9 @@ describe('SetupWizard', () => {
 
         await waitFor(() => {
             expect(mockOnComplete).toHaveBeenCalledWith(expect.objectContaining({
-                apiKey: 'test-key',
-                themeColor: 'indigo'
+                apiKey: '',
+                themeColor: 'indigo',
+                currentUser: { id: '1', login: 'admin' }
             }));
         });
     });

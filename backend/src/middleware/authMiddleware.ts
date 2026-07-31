@@ -118,6 +118,10 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
         userKey = authHeader.substring(7);
     }
 
+    if (!userKey && req.cookies?.auth_token) {
+        userKey = req.cookies.auth_token;
+    }
+
     if (!userKey && req.cookies?.apiKey) {
         userKey = req.cookies.apiKey;
     }
