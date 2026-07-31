@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import { requireDolibarrLogin as requireAuth } from '../middleware/authMiddleware';
+import { requireAuth } from '../middleware/authMiddleware';
 import { schedulerService } from '../services/schedulerService';
 import { dolibarrService } from '../services/dolibarrService';
 import { emailService } from '../services/emailService';
@@ -12,6 +12,9 @@ import { fail, ok } from '../utils/apiResponse';
 
 const log = createLogger('Webhook');
 const router = Router();
+const authenticatedRouter = Router();
+
+authenticatedRouter.use(requireAuth);
 
 // Comparação em tempo constante (evita timing attack).
 function safeEqual(a: string, b: string): boolean {
@@ -44,31 +47,133 @@ function requireWebhookSecret(req: Request, res: Response, next: NextFunction) {
     next();
 }
 
-function requireDevelopment(_req: Request, res: Response, next: NextFunction) {
+function hideOutsideDevelopment(_req: Request, res: Response, next: NextFunction) {
     if (process.env.NODE_ENV !== 'development') {
         return fail(res, 'NOT_FOUND', 'Route not found', 404);
     }
     return next();
 }
 
-function isUnsafePattern(pattern: string): boolean {
-    const quantifier = '[+*?]|\\{\\d+(?:,\\d*)?\\}';
-    if (new RegExp(`\\([^()]*?(?:${quantifier})[^()]*\\)(?:${quantifier})`).test(pattern)) {
-        return true;
-    }
-    return /(?:\.\*|\.\+).*(?:\.\*|\.\+)/.test(pattern);
+type PatternAtom = {
+    kind: 'group' | 'wildcard' | 'other';
+    containsQuantifier: boolean;
+};
+
+type PatternQuantifier = {
+    end: number;
+    unbounded: boolean;
+};
+
+function isDigit(character: string | undefined): boolean {
+    return character !== undefined && character >= '0' && character <= '9';
 }
+
+function readQuantifier(pattern: string, index: number): PatternQuantifier | undefined {
+    const character = pattern[index];
+    if (character === '*' || character === '+') {
+        return { end: index, unbounded: true };
+    }
+    if (character === '?') {
+        return { end: index, unbounded: false };
+    }
+    if (character !== '{') return undefined;
+
+    let cursor = index + 1;
+    const lowerBoundStart = cursor;
+    while (isDigit(pattern[cursor])) cursor++;
+    if (cursor === lowerBoundStart) return undefined;
+
+    if (pattern[cursor] === '}') {
+        return { end: cursor, unbounded: false };
+    }
+    if (pattern[cursor] !== ',') return undefined;
+
+    cursor++;
+    const upperBoundStart = cursor;
+    while (isDigit(pattern[cursor])) cursor++;
+    if (pattern[cursor] !== '}') return undefined;
+
+    return { end: cursor, unbounded: cursor === upperBoundStart };
+}
+
+function isUnsafePattern(pattern: string): boolean {
+    const groups = [{ containsQuantifier: false }];
+    let atom: PatternAtom | undefined;
+    let inCharacterClass = false;
+    let unboundedWildcards = 0;
+
+    for (let index = 0; index < pattern.length; index++) {
+        const character = pattern[index];
+
+        if (character === '\\') {
+            index++;
+            if (!inCharacterClass) atom = { kind: 'other', containsQuantifier: false };
+            continue;
+        }
+        if (inCharacterClass) {
+            if (character === ']') inCharacterClass = false;
+            continue;
+        }
+        if (character === '[') {
+            inCharacterClass = true;
+            atom = { kind: 'other', containsQuantifier: false };
+            continue;
+        }
+        if (character === '(') {
+            groups.push({ containsQuantifier: false });
+            atom = undefined;
+            continue;
+        }
+        if (character === ')') {
+            if (groups.length === 1) {
+                atom = { kind: 'other', containsQuantifier: false };
+                continue;
+            }
+            const group = groups.pop();
+            if (!group) return true;
+            groups[groups.length - 1].containsQuantifier ||= group.containsQuantifier;
+            atom = { kind: 'group', containsQuantifier: group.containsQuantifier };
+            continue;
+        }
+
+        const quantifier = readQuantifier(pattern, index);
+        if (quantifier && atom) {
+            if (atom.kind === 'group' && atom.containsQuantifier) return true;
+            groups[groups.length - 1].containsQuantifier = true;
+            if (atom.kind === 'wildcard' && quantifier.unbounded) {
+                unboundedWildcards++;
+                if (unboundedWildcards > 1) return true;
+            }
+            atom = undefined;
+            index = quantifier.end;
+            continue;
+        }
+
+        if (character === '|' || character === '^' || character === '$') {
+            atom = undefined;
+            continue;
+        }
+        atom = {
+            kind: character === '.' ? 'wildcard' : 'other',
+            containsQuantifier: false,
+        };
+    }
+
+    return false;
+}
+
+const supportedPatternCharacters = /^[a-zA-Z0-9_\-.:/\\*?+()[\]\\]+$/;
 
 function validatePattern(pattern: unknown): string | undefined {
     if (pattern === undefined) return undefined;
     if (typeof pattern !== 'string' || pattern.length === 0 || pattern.length > 200) {
         return 'Pattern must be a non-empty string of at most 200 characters';
     }
-    if (/\s/.test(pattern)) {
-        return 'Pattern contains unsupported characters';
-    }
     if (isUnsafePattern(pattern)) {
         return 'Pattern contains unsafe constructs';
+    }
+    if (!supportedPatternCharacters.test(pattern)) {
+        return 'Pattern contains unsupported characters';
     }
     try {
         new RegExp(pattern);
@@ -113,7 +218,7 @@ router.post('/receive/:source', requireWebhookSecret, async (req: Request, res: 
 
 // --- Webhook Receiver (Generic) ---
 
-router.post('/trigger', requireAuth, requireWebhookSecret, async (req: Request, res: Response) => {
+authenticatedRouter.post('/trigger', requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { event, sessionId, chatId, message, templateId, variables, delay } = req.body;
 
@@ -162,7 +267,7 @@ router.post('/trigger', requireAuth, requireWebhookSecret, async (req: Request, 
 
 // --- Dolibarr Specific Webhooks (delegated to eventRouter) ---
 
-router.post('/dolibarr/invoice', requireAuth, requireWebhookSecret, async (req: Request, res: Response) => {
+authenticatedRouter.post('/dolibarr/invoice', requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { invoiceId, action } = req.body;
         if (!invoiceId) return fail(res, 'BAD_REQUEST', 'Missing invoiceId', 400);
@@ -190,7 +295,7 @@ router.post('/dolibarr/invoice', requireAuth, requireWebhookSecret, async (req: 
     }
 });
 
-router.post('/dolibarr/ticket', requireAuth, requireWebhookSecret, async (req: Request, res: Response) => {
+authenticatedRouter.post('/dolibarr/ticket', requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { ticketId, action } = req.body;
         if (!ticketId) return fail(res, 'BAD_REQUEST', 'Missing ticketId', 400);
@@ -217,7 +322,7 @@ router.post('/dolibarr/ticket', requireAuth, requireWebhookSecret, async (req: R
     }
 });
 
-router.post('/dolibarr/order', requireAuth, requireWebhookSecret, async (req: Request, res: Response) => {
+authenticatedRouter.post('/dolibarr/order', requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { orderId, action } = req.body;
         if (!orderId) return fail(res, 'BAD_REQUEST', 'Missing orderId', 400);
@@ -246,12 +351,12 @@ router.post('/dolibarr/order', requireAuth, requireWebhookSecret, async (req: Re
 
 // --- Automation Rules (persisted) ---
 
-router.get('/rules', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.get('/rules', (req: Request, res: Response) => {
     const rules = schedulerService.getRules();
     return ok(res, rules, { count: rules.length });
 });
 
-router.post('/rules', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.post('/rules', (req: Request, res: Response) => {
     try {
         const { name, event, sessionId, templateId, message, delay, conditions, channel, subject } = req.body;
         if (!name || !event || !sessionId) {
@@ -268,13 +373,13 @@ router.post('/rules', requireAuth, (req: Request, res: Response) => {
     }
 });
 
-router.delete('/rules/:id', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.delete('/rules/:id', (req: Request, res: Response) => {
     const success = schedulerService.deleteRule(req.params.id);
     if (success) return ok(res, { deleted: true });
     return fail(res, 'NOT_FOUND', 'Rule not found', 404);
 });
 
-router.put('/rules/:id', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.put('/rules/:id', (req: Request, res: Response) => {
     try {
         const { name, message, delay, templateId, sessionId, conditions, channel, subject } = req.body;
         const patternError = validateRulePatterns(req.body);
@@ -289,7 +394,7 @@ router.put('/rules/:id', requireAuth, (req: Request, res: Response) => {
     }
 });
 
-router.patch('/rules/:id/toggle', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.patch('/rules/:id/toggle', (req: Request, res: Response) => {
     const success = schedulerService.toggleRule(req.params.id);
     if (success) {
         const rule = schedulerService.getRules().find(r => r.id === req.params.id);
@@ -300,7 +405,7 @@ router.patch('/rules/:id/toggle', requireAuth, (req: Request, res: Response) => 
 
 // --- Logs ---
 
-router.get('/logs', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.get('/logs', (req: Request, res: Response) => {
     const { sessionId, type, status, limit, since } = req.query;
     const logs = schedulerService.getLogs({
         sessionId: sessionId as string,
@@ -314,12 +419,12 @@ router.get('/logs', requireAuth, (req: Request, res: Response) => {
 
 // --- Chatbot Flows ---
 
-router.get('/flows', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.get('/flows', (req: Request, res: Response) => {
     const flows = schedulerService.getFlows();
     return ok(res, flows, { count: flows.length });
 });
 
-router.post('/flows', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.post('/flows', (req: Request, res: Response) => {
     try {
         const { name, triggerKeywords, sessionId, steps } = req.body;
         if (!name || !triggerKeywords || !sessionId || !steps) {
@@ -332,7 +437,7 @@ router.post('/flows', requireAuth, (req: Request, res: Response) => {
     }
 });
 
-router.put('/flows/:id', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.put('/flows/:id', (req: Request, res: Response) => {
     try {
         const { name, triggerKeywords, initialMessage } = req.body;
         const updated = schedulerService.updateFlow(req.params.id, { name, triggerKeywords, initialMessage });
@@ -343,13 +448,13 @@ router.put('/flows/:id', requireAuth, (req: Request, res: Response) => {
     }
 });
 
-router.delete('/flows/:id', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.delete('/flows/:id', (req: Request, res: Response) => {
     const success = schedulerService.deleteFlow(req.params.id);
     if (success) return ok(res, { deleted: true });
     return fail(res, 'NOT_FOUND', 'Flow not found', 404);
 });
 
-router.patch('/flows/:id/toggle', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.patch('/flows/:id/toggle', (req: Request, res: Response) => {
     const success = schedulerService.toggleFlow(req.params.id);
     if (success) {
         const flow = schedulerService.getFlow(req.params.id);
@@ -361,7 +466,7 @@ router.patch('/flows/:id/toggle', requireAuth, (req: Request, res: Response) => 
 // --- Test/Dry-Run Endpoints ---
 
 // Test a rule with optional real execution
-router.post('/rules/:id/test', requireAuth, async (req: Request, res: Response) => {
+authenticatedRouter.post('/rules/:id/test', async (req: Request, res: Response) => {
     try {
         const { target } = req.body; // Optional target for real sending
         const rule = schedulerService.getRules().find(r => r.id === req.params.id);
@@ -429,7 +534,7 @@ router.post('/rules/:id/test', requireAuth, async (req: Request, res: Response) 
 });
 
 // Simulate an event (for testing automation flow)
-router.post('/simulate', requireDevelopment, requireAuth, async (req: Request, res: Response) => {
+router.post('/simulate', hideOutsideDevelopment, requireAuth, async (req: Request, res: Response) => {
     try {
         const { event, mockPhone, sessionId } = req.body;
 
@@ -517,7 +622,7 @@ router.post('/simulate', requireDevelopment, requireAuth, async (req: Request, r
 });
 
 // Get available variables for each event type
-router.get('/variables', requireAuth, (req: Request, res: Response) => {
+authenticatedRouter.get('/variables', (req: Request, res: Response) => {
     return ok(res, {
         invoice_created: ['{{customerName}}', '{{ref}}', '{{total}}'],
         invoice_paid: ['{{customerName}}', '{{ref}}', '{{total}}'],
@@ -529,6 +634,8 @@ router.get('/variables', requireAuth, (req: Request, res: Response) => {
         custom: ['{{customerName}}', '{{ref}}', '{{total}}', '{{subject}}']
     });
 });
+
+router.use(authenticatedRouter);
 
 export default router;
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import { config } from '../../config/env';
 
 const mockAuthState = vi.hoisted(() => ({ authenticated: true }));
 const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((_req: any, res: any, next: any) => {
@@ -45,6 +46,7 @@ const mockMessageService = vi.hoisted(() => ({
 }));
 
 vi.mock('../../middleware/authMiddleware', () => ({
+    requireAuth: mockRequireDolibarrLogin,
     requireDolibarrLogin: mockRequireDolibarrLogin,
 }));
 
@@ -104,22 +106,18 @@ function createApp() {
 
 describe('webhookRoutes', () => {
     let app: express.Application;
+    const originalWebhookSecret = config.webhookSecret;
 
-    beforeEach(async () => {
+    beforeEach(() => {
         vi.clearAllMocks();
         vi.stubEnv('NODE_ENV', 'development');
-        // O ambiente local pode ter WEBHOOK_SECRET exportado — os describe blocks
-        // que assumem o caminho "sem segredo" precisam garantir config.webhookSecret='',
-        // caso contrário requireWebhookSecret bloqueia as chamadas e os testes
-        // legítimos (POST /trigger, /dolibarr/invoice, /receive/:source, etc.)
-        // passam a retornar 401 indevidamente.
-        const { config: cfg } = await import('../../config/env');
-        (cfg as any).webhookSecret = '';
+        config.webhookSecret = '';
         mockAuthState.authenticated = true;
         app = createApp();
     });
 
     afterEach(() => {
+        config.webhookSecret = originalWebhookSecret;
         vi.unstubAllEnvs();
     });
 
@@ -144,15 +142,13 @@ describe('webhookRoutes', () => {
 
     describe('WEBHOOK_SECRET (proteção opcional dos endpoints públicos)', () => {
         const SECRET = 'wh-secret';
-        let restore: any;
-        beforeEach(async () => {
-            const { config } = await import('../../config/env');
-            restore = (config as any).webhookSecret;
-            (config as any).webhookSecret = SECRET;
+        let restore: string;
+        beforeEach(() => {
+            restore = config.webhookSecret;
+            config.webhookSecret = SECRET;
         });
-        afterEach(async () => {
-            const { config } = await import('../../config/env');
-            (config as any).webhookSecret = restore;
+        afterEach(() => {
+            config.webhookSecret = restore;
         });
 
         it('bloqueia /trigger sem header quando o segredo está setado', async () => {
@@ -317,6 +313,11 @@ describe('webhookRoutes', () => {
             const res = await (request(app) as any)[method](path).send({});
 
             expect(res.status).toBe(401);
+            expect(res.body).toEqual({
+                success: false,
+                error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+            });
+            expect(mockRequireDolibarrLogin).toHaveBeenCalledOnce();
         });
 
         it('mantém /receive/:source acessível sem autenticação', async () => {
@@ -397,7 +398,7 @@ describe('webhookRoutes', () => {
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
         });
 
-        it.each(['(a+)+$', '(a+)+', '.*.*.*', '.+foo.+'])('rejeita pattern aninhado inseguro %s', async (pattern) => {
+        it.each(['(a+)+$', '(a+)+', '(a*)*', '((ab)+)+', '(?:a+)+', '(a{0,})+', '(a{1,3}){2}', '.*.*.*', '.*foo.*', '.+foo.+'])('rejeita pattern aninhado inseguro %s', async (pattern) => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
                 .send({ name: 'Test', event: 'custom', sessionId: 'default', conditions: { pattern } });
@@ -407,7 +408,7 @@ describe('webhookRoutes', () => {
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
         });
 
-        it.each(['(a+)+$', '(a+)+', '.*.*.*', '.+foo.+'])('rejeita pattern inseguro no corpo %s', async (pattern) => {
+        it.each(['(a+)+$', '(a+)+', '(a*)*', '((ab)+)+', '(?:a+)+', '(a{0,})+', '(a{1,3}){2}', '.*.*.*', '.*foo.*', '.+foo.+'])('rejeita pattern inseguro no corpo %s', async (pattern) => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
                 .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern });
@@ -417,13 +418,21 @@ describe('webhookRoutes', () => {
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
         });
 
-        it('rejeita caracteres fora da whitelist', async () => {
+        it.each([
+            'invoice paid',
+            'invoice\u0000paid',
+            'invoice\u202Epaid',
+            'invoice|paid',
+        ])('rejeita caracteres fora da whitelist em %j', async (pattern) => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
-                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'invoice paid' });
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern });
 
             expect(res.status).toBe(400);
-            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(res.body).toEqual({
+                success: false,
+                error: { code: 'INVALID_PATTERN', message: 'Pattern contains unsupported characters' },
+            });
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
         });
 
@@ -441,6 +450,16 @@ describe('webhookRoutes', () => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
                 .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'invoice_[0-9]+' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockSchedulerService.createRule).toHaveBeenCalledOnce();
+        });
+
+        it('aceita pattern válido com exatamente 200 caracteres', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern: 'a'.repeat(200) });
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
