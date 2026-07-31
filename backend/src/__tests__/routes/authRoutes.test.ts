@@ -152,7 +152,10 @@ describe('authRoutes', () => {
 
             expect(res.status).toBe(401);
             expect(res.body.success).toBe(false);
-            expect(res.body.error).toBe('Invalid credentials');
+            expect(res.body.error).toEqual({
+                code: 'AUTHENTICATION_FAILED',
+                message: 'Invalid credentials',
+            });
         });
 
         it('returns 401 when dolibarrService throws unexpected error', async () => {
@@ -177,12 +180,15 @@ describe('authRoutes', () => {
 
             const res = await request(app)
                 .post('/api/login')
-                .send({ email: 'rate-limited@example.com', password: 'wrongpassword' });
+                .send({ login: 'rate-limited@example.com', password: 'wrongpassword' });
 
             expect(res.status).toBe(429);
             expect(res.body).toMatchObject({
                 success: false,
-                error: { code: 'RATE_LIMIT' },
+                error: {
+                    code: 'RATE_LIMIT',
+                    message: expect.any(String),
+                },
             });
         });
     });

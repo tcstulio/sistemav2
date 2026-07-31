@@ -11,7 +11,7 @@
  *
  * Extraído para um módulo próprio para permitir testes integrados (sem mock do
  * `express-rate-limit`) e auditoria de config. Os outros limiters do server.ts
- * (aiLimiter, bankingLimiter, schedulerLimiter, authLimiter) continuam inline —
+ * Os demais limiters nomeados ficam centralizados em `middleware/rateLimit.ts`;
  * este foi destacado porque é o único com teste de comportamento dedicado.
  */
 import rateLimit from 'express-rate-limit';

@@ -55,7 +55,10 @@ router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req,
         log.error('Login Error', { error: error.message });
         res.status(401).json({
             success: false,
-            error: error.message || 'Authentication failed'
+            error: {
+                code: 'AUTHENTICATION_FAILED',
+                message: error.message || 'Authentication failed',
+            },
         });
     }
 });
