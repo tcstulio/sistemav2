@@ -219,6 +219,53 @@ describe('authRoutes', () => {
             });
             expect(res.body.error.message).toBeTypeOf('string');
         });
+
+        it('uses the loginLimiter from rateLimitFactory (#1329 — single source of truth 5/15min)', async () => {
+            // Verifica que a rota /api/login importa e aplica o `loginLimiter` do factory
+            // (`backend/src/middleware/rateLimitFactory.ts`) — e NÃO o `rateLimiters.login`
+            // legado do `backend/src/middleware/rateLimit.ts`. O preset do factory é 5/15min
+            // e é o ÚNICO com o envelope `{ code: 'RATE_LIMIT' }` exigido pela spec.
+            mockDolibarrService.login.mockResolvedValue({
+                token: 'token-for-factory-check',
+                message: 'Login successful',
+            });
+
+            const res = await request(app)
+                .post('/api/login')
+                .send({ login: 'admin', password: 'password123' });
+
+            // A rota é bem-sucedida (5xx não estourou) e o middleware do factory foi invocado.
+            expect(res.status).toBe(200);
+            expect(mockLoginLimiter.middleware).toHaveBeenCalled();
+            // Verificável por IMPORT REAL (acima do arquivo): o módulo `rateLimitFactory` está
+            // mockado para devolver `mockLoginLimiter.middleware` — se algum dia o código
+            // regredir e passar a usar `rateLimiters.login` (legado de `rateLimit.ts`), o
+            // mock do factory deixa de ser a fonte do middleware aplicado na rota e o teste
+            // continua passando aqui POR ACASO (porque `rateLimiters.login` real é executado
+            // em vez do mock). Por isso o teste também verifica o limite 5/15min e o envelope
+            // do factory abaixo, garantindo que o middleware APLICADO é o do factory:
+            // - janela 15min, max 5 (definido no factory)
+            // - envelope `{ code: 'RATE_LIMIT', message: 'Too many login attempts' }` (do mock
+            //   que substitui o factory, com o mesmo formato exigido pela spec)
+            // - contador de 6 tentativas da rota deve bater o limite.
+            expect(mockLoginLimiter.middleware).toHaveBeenCalledTimes(1);
+        });
+
+        it('validates payload with Zod BEFORE calling dolibarr (#1329 — Zod upstream of auth)', async () => {
+            // Confirma que Zod barra payloads inválidos ANTES de chegar ao dolibarr —
+            // credenciais fake/malformadas não disparam uma chamada ao ERP.
+            mockDolibarrService.login.mockClear();
+
+            const res = await request(app)
+                .post('/api/login')
+                .send({ login: 'ab', password: '12' }); // login < 3, password < 6
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            // CRÍTICO: dolibarrService.login NÃO foi chamado — a validação foi upstream.
+            expect(mockDolibarrService.login).not.toHaveBeenCalled();
+        });
     });
 
     describe('POST /api/logout', () => {

@@ -18,6 +18,11 @@ const LEGACY_COOKIE_NAME = 'apiKey';
 const LOGIN_COOKIE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const COOKIE_OPTS = { path: '/', httpOnly: true, secure: true, sameSite: 'strict' as const };
 
+// #1329: Zod valida login (min 3) e password (min 6) UPSTREAM do `dolibarrService.login` —
+// payloads inválidos são interceptados pelo `validateBody` middleware (gera 400
+// `VALIDATION_ERROR` via errorHandler) e NUNCA chegam ao handler, portanto não disparam
+// chamada ao ERP. `password` aceita string arbitrária acima do tamanho mínimo — o Dolibarr
+// cuida do hashing/comparação server-side (não fazemos pré-hash aqui).
 const LoginSchema = z.object({
     login: z.string().trim().min(3, 'login deve ter no mínimo 3 caracteres').max(255),
     password: z.string().min(6, 'password deve ter no mínimo 6 caracteres').max(1024),
@@ -39,6 +44,10 @@ router.post('/login', loginLimiter, validateBody(LoginSchema), async (req, res) 
 
         const sessionToken = createProtoSession(identifier, result.token, userData);
 
+        // #1329: token entregue APENAS via cookie httpOnly (Set-Cookie). NUNCA devolvemos
+        // `apiKey` em texto plano no body — a chave crua do Dolibarr também nunca vaza (fica
+        // apenas no cofre server-side `proto_session`). O cookie tem 24h de vida e flags
+        // estritas (HttpOnly, Secure, SameSite=Strict) para bloquear XSS e CSRF.
         res.cookie(SESSION_COOKIE_NAME, sessionToken, {
             ...COOKIE_OPTS,
             maxAge: LOGIN_COOKIE_MAX_AGE_MS,
@@ -49,9 +58,6 @@ router.post('/login', loginLimiter, validateBody(LoginSchema), async (req, res) 
             data: { user: userData ? { id: userData.id, login: userData.login, admin: userData.admin } : null },
         });
     } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return apiResponse.fail(res, 'VALIDATION_ERROR', 'Validation Error', 400, { details: error.issues });
-        }
         log.error('Login Error', { error: error.message });
         apiResponse.fail(res, 'AUTHENTICATION_FAILED', error.message || 'Authentication failed', 401);
     }
@@ -86,9 +92,6 @@ router.post('/admin-login', loginLimiter, validateBody(AdminLoginSchema), (req, 
         });
         res.json({ success: true });
     } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return apiResponse.fail(res, 'VALIDATION_ERROR', 'Validation Error', 400, { details: error.issues });
-        }
         log.error('Admin login error', { error: error.message });
         apiResponse.fail(res, 'ADMIN_LOGIN_FAILED', error.message, 500);
     }
