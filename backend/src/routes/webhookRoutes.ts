@@ -51,15 +51,23 @@ function requireDevelopment(_req: Request, res: Response, next: NextFunction) {
     return next();
 }
 
+function isUnsafePattern(pattern: string): boolean {
+    const quantifier = '[+*?]|\\{\\d+(?:,\\d*)?\\}';
+    if (new RegExp(`\\([^()]*?(?:${quantifier})[^()]*\\)(?:${quantifier})`).test(pattern)) {
+        return true;
+    }
+    return /(?:\.\*|\.\+).*(?:\.\*|\.\+)/.test(pattern);
+}
+
 function validatePattern(pattern: unknown): string | undefined {
     if (pattern === undefined) return undefined;
     if (typeof pattern !== 'string' || pattern.length === 0 || pattern.length > 200) {
         return 'Pattern must be a non-empty string of at most 200 characters';
     }
-    if (!/^[a-zA-Z0-9_\-.:/\\*?+()[\]\\]+$/.test(pattern)) {
+    if (/\s/.test(pattern)) {
         return 'Pattern contains unsupported characters';
     }
-    if (/(\([^)]*[+*?][^)]*\))[+*?]|\.\*\.\*/.test(pattern)) {
+    if (isUnsafePattern(pattern)) {
         return 'Pattern contains unsafe constructs';
     }
     try {
@@ -74,12 +82,19 @@ function validateRulePatterns(body: unknown): string | undefined {
     if (!body || typeof body !== 'object') return undefined;
 
     const payload = body as Record<string, unknown>;
+    const patterns: unknown[] = [payload.pattern];
     const conditions = payload.conditions;
-    const nestedPattern = conditions && typeof conditions === 'object' && !Array.isArray(conditions)
-        ? (conditions as Record<string, unknown>).pattern
-        : undefined;
+    if (Array.isArray(conditions)) {
+        for (const condition of conditions) {
+            if (condition && typeof condition === 'object') {
+                patterns.push((condition as Record<string, unknown>).pattern);
+            }
+        }
+    } else if (conditions && typeof conditions === 'object') {
+        patterns.push((conditions as Record<string, unknown>).pattern);
+    }
 
-    for (const pattern of [payload.pattern, nestedPattern]) {
+    for (const pattern of patterns) {
         const error = validatePattern(pattern);
         if (error) return error;
     }

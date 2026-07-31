@@ -105,9 +105,16 @@ function createApp() {
 describe('webhookRoutes', () => {
     let app: express.Application;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.clearAllMocks();
         vi.stubEnv('NODE_ENV', 'development');
+        // O ambiente local pode ter WEBHOOK_SECRET exportado — os describe blocks
+        // que assumem o caminho "sem segredo" precisam garantir config.webhookSecret='',
+        // caso contrário requireWebhookSecret bloqueia as chamadas e os testes
+        // legítimos (POST /trigger, /dolibarr/invoice, /receive/:source, etc.)
+        // passam a retornar 401 indevidamente.
+        const { config: cfg } = await import('../../config/env');
+        (cfg as any).webhookSecret = '';
         mockAuthState.authenticated = true;
         app = createApp();
     });
@@ -171,6 +178,23 @@ describe('webhookRoutes', () => {
         it('também protege /dolibarr/invoice', async () => {
             const res = await request(app).post('/api/webhooks/dolibarr/invoice').send({ invoiceId: '1' });
             expect(res.status).toBe(401);
+        });
+
+        it('valida o segredo de /receive/:source sem exigir autenticação', async () => {
+            mockAuthState.authenticated = false;
+
+            const unauthorized = await request(app)
+                .post('/api/webhooks/receive/dolibarr')
+                .send({ id: '1' });
+            const accepted = await request(app)
+                .post('/api/webhooks/receive/dolibarr')
+                .set('x-webhook-secret', SECRET)
+                .send({ id: '1' });
+
+            expect(unauthorized.status).toBe(401);
+            expect(accepted.status).toBe(200);
+            expect(mockRequireDolibarrLogin).not.toHaveBeenCalled();
+            expect(mockEventRouter.processEvent).toHaveBeenCalledOnce();
         });
     });
 
@@ -305,6 +329,26 @@ describe('webhookRoutes', () => {
             expect(mockEventRouter.processEvent).toHaveBeenCalledWith('dolibarr', { id: '1' });
         });
 
+        it('bloqueia /receive/:source em produção quando o segredo não está configurado', async () => {
+            vi.stubEnv('NODE_ENV', 'production');
+            mockAuthState.authenticated = false;
+
+            const res = await request(app).post('/api/webhooks/receive/dolibarr').send({ id: '1' });
+
+            expect(res.status).toBe(503);
+            expect(res.body.error.code).toBe('WEBHOOK_NOT_CONFIGURED');
+            expect(mockRequireDolibarrLogin).not.toHaveBeenCalled();
+            expect(mockEventRouter.processEvent).not.toHaveBeenCalled();
+        });
+
+        it('permite /simulate em development com autenticação', async () => {
+            const res = await request(app).post('/api/webhooks/simulate').send({ event: 'invoice_created' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockRequireDolibarrLogin).toHaveBeenCalledOnce();
+        });
+
         it('retorna 404 para /simulate em produção antes da autenticação', async () => {
             vi.stubEnv('NODE_ENV', 'production');
             mockAuthState.authenticated = false;
@@ -328,6 +372,21 @@ describe('webhookRoutes', () => {
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
         });
 
+        it('rejeita pattern em uma lista de condições com mais de 200 caracteres', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({
+                    name: 'Test',
+                    event: 'custom',
+                    sessionId: 'default',
+                    conditions: [{ field: 'ref', operator: 'contains', value: 'x', pattern: 'a'.repeat(201) }],
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('INVALID_PATTERN');
+            expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
+        });
+
         it('rejeita pattern no corpo com mais de 200 caracteres', async () => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
@@ -338,7 +397,7 @@ describe('webhookRoutes', () => {
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
         });
 
-        it.each(['(a+)+$', '.*.*.*'])('rejeita pattern aninhado inseguro %s', async (pattern) => {
+        it.each(['(a+)+$', '(a+)+', '.*.*.*', '.+foo.+'])('rejeita pattern aninhado inseguro %s', async (pattern) => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
                 .send({ name: 'Test', event: 'custom', sessionId: 'default', conditions: { pattern } });
@@ -348,7 +407,7 @@ describe('webhookRoutes', () => {
             expect(mockSchedulerService.createRule).not.toHaveBeenCalled();
         });
 
-        it.each(['(a+)+$', '.*.*.*'])('rejeita pattern inseguro no corpo %s', async (pattern) => {
+        it.each(['(a+)+$', '(a+)+', '.*.*.*', '.+foo.+'])('rejeita pattern inseguro no corpo %s', async (pattern) => {
             const res = await request(app)
                 .post('/api/webhooks/rules')
                 .send({ name: 'Test', event: 'custom', sessionId: 'default', pattern });
