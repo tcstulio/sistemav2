@@ -12,24 +12,17 @@ import { validateBody } from '../middleware/validation';
 const log = createLogger('Auth');
 const router = Router();
 
-const SESSION_COOKIE_NAME = 'apiKey';
-const DEFAULT_LOGIN_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const configuredCookieMaxAge = Number(process.env.AUTH_COOKIE_MAX_AGE_MS);
-const LOGIN_COOKIE_MAX_AGE_MS = Number.isSafeInteger(configuredCookieMaxAge) && configuredCookieMaxAge > 0
-    ? configuredCookieMaxAge
-    : DEFAULT_LOGIN_COOKIE_MAX_AGE_MS;
+const SESSION_COOKIE_NAME = 'auth_token';
+const LOGIN_COOKIE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-// O identificador é o LOGIN (usuário) — é o que o formulário do webapp envia ("Usuário") e o
-// que a API do Dolibarr espera no parâmetro `login` (aceita username OU e-mail como string).
-// REGRESSÃO CORRIGIDA (#1541/#1707 exigia `email` com formato de e-mail → quebrava TODO login por
-// usuário, ex.: "tulio.silva"/"admin", que não são e-mails). Aceitamos `login` genérico; mantidas
-// as demais melhorias do #1707 (rate-limit de login, cookie httpOnly, teto de tamanho).
 const LoginSchema = z.object({
-    login: z.string().trim().min(1).max(255),
-    password: z.string().min(1).max(1024),
+    login: z.string().trim().min(3).max(255),
+    password: z.string().min(6).max(1024),
 });
 
-router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req, res) => {
+const loginLimiter = rateLimiters.login;
+
+router.post('/login', loginLimiter, validateBody(LoginSchema), async (req, res) => {
     try {
         const { login, password } = req.body;
         const identifier = login;
@@ -53,13 +46,8 @@ router.post('/login', rateLimiters.login, validateBody(LoginSchema), async (req,
             path: '/',
         });
 
-        // RETROCOMPAT (regressão #1707): o frontend lê `apiKey` do corpo e o usa como Bearer nas
-        // próximas chamadas. O #1707 removeu o `apiKey` do JSON (só cookie httpOnly) SEM migrar o
-        // frontend → "Falha ao obter chave de API". Restauramos o `apiKey` (= sessionToken) no
-        // corpo E mantemos o cookie. A migração completa p/ auth-só-por-cookie fica como follow-up.
         res.json({
             success: true,
-            apiKey: sessionToken,
             data: { user: userData ? { id: userData.id, login: userData.login, admin: userData.admin } : null },
         });
     } catch (error: any) {

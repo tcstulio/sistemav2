@@ -29,6 +29,7 @@ const SAFE_ERROR_CODES = [
     'FORBIDDEN',
     'BAD_REQUEST',
     'RATE_LIMITED',
+    'RATE_LIMIT',
     'CONFLICT',
     // #1030: rejeição tipada de anexo de vídeo (413/415). Sem esses códigos aqui, em
     // produção a mensagem PT-BR seria mascarada pelo default genérico — perdendo o

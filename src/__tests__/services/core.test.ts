@@ -333,18 +333,27 @@ describe('API Core', () => {
     });
 
     describe('login', () => {
-        it('logs in successfully with API key', async () => {
+        it('logs in successfully with the httpOnly cookie', async () => {
             const mockResponse = {
                 ok: true,
                 status: 200,
                 headers: { get: () => 'application/json' },
-                json: () => Promise.resolve({ token: 'abc', apiKey: 'key123' })
+                json: () => Promise.resolve({ success: true, data: { user: { id: '1', login: 'test' } } })
             };
             mockFetch.mockResolvedValue(mockResponse);
 
             const result = await core.login('test', 'password');
 
-            expect(result.token).toBe('abc');
+            expect(result.user).toEqual({ id: '1', login: 'test' });
+            expect(result).not.toHaveProperty('apiKey');
+            expect(mockFetch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/auth/login'),
+                expect.objectContaining({
+                    method: 'POST',
+                    credentials: 'include',
+                    body: JSON.stringify({ login: 'test', password: 'password' })
+                })
+            );
         });
 
         it('throws error on failed login', async () => {
@@ -357,6 +366,18 @@ describe('API Core', () => {
             mockFetch.mockResolvedValue(mockResponse);
 
             await expect(core.login('test', 'wrong')).rejects.toThrow('Invalid credentials');
+        });
+
+        it('reads the message from the standard error envelope', async () => {
+            const mockResponse = {
+                ok: false,
+                status: 429,
+                headers: { get: () => 'application/json' },
+                json: () => Promise.resolve({ error: { code: 'RATE_LIMIT', message: 'Too many login attempts' } })
+            };
+            mockFetch.mockResolvedValue(mockResponse);
+
+            await expect(core.login('test', 'wrong')).rejects.toThrow('Too many login attempts');
         });
 
         it('handles non-JSON response', async () => {

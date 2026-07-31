@@ -280,6 +280,20 @@ describe('requireDolibarrLogin', () => {
         expect(res.status).toHaveBeenCalledWith(401);
     });
 
+    it('reads the session from cookies.auth_token', async () => {
+        const user = { id: 7 };
+        mockDolibarrService.getUserByKey.mockResolvedValue(user);
+
+        const req = mockReq({ cookies: { auth_token: 'cookie-session' } });
+        const res = mockRes();
+        const next = mockNext();
+
+        await requireDolibarrLogin(req, res, next);
+
+        expect(mockDolibarrService.getUserByKey).toHaveBeenCalledWith('cookie-session');
+        expect(next).toHaveBeenCalled();
+    });
+
     it('reads API key from cookies.dolapikey', async () => {
         const user = { id: 7 };
         mockDolibarrService.getUserByKey.mockResolvedValue(user);

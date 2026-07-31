@@ -110,7 +110,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
     const requestBody = sanitizeBodyForLog(options.body);
 
     try {
-        const response = await fetch(proxyUrl, options);
+        const response = await fetch(proxyUrl, { credentials: 'include', ...options });
 
             if (!response.ok) {
                 let errorMsg = `Erro Proxy HTTP ${response.status}`;
@@ -469,37 +469,24 @@ export const fetchCurrentUser = async (config: DolibarrConfig, loginHint?: strin
     return null;
 };
 
-export const login = async (login: string, password: string): Promise<{ token: string, entity: string, message: string, apiKey?: string, user?: DolibarrUser }> => {
+export const login = async (login: string, password: string): Promise<{ token?: string, entity?: string, message?: string, user?: DolibarrUser }> => {
     try {
         const response = await fetch(`${AppConfig.API_BASE_URL}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ login, password })
         });
 
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.indexOf("application/json") !== -1) {
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Falha no Login');
-
-            if (data.apiKey) {
-                try {
-                    const tempConfig: DolibarrConfig = {
-                        apiUrl: '',
-                        apiKey: data.apiKey,
-                        themeColor: 'indigo',
-                        darkMode: false
-                    };
-                    const userProfile = await fetchCurrentUser(tempConfig, login);
-                    if (userProfile) {
-                        return { ...data, user: userProfile };
-                    }
-                } catch (userErr) {
-                    log.warn('Failed to fetch user profile after login', userErr);
-                }
+            if (!response.ok) {
+                const message = typeof data.error === 'string' ? data.error : data.error?.message;
+                throw new Error(message || 'Falha no Login');
             }
 
-            return data;
+            return { ...data, user: data.user || data.data?.user };
         } else {
             const text = await response.text();
             log.error(`Login: Non-JSON response: ${text}`);

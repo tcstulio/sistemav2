@@ -85,21 +85,18 @@ describe('authRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({ success: true, data: { user: { id: 1, login: 'admin', admin: '1' } } });
-            // Retrocompat (regressão #1707): o corpo expõe o SESSION token (`sess_...`), que o frontend
-            // usa como Bearer e que resolve server-side p/ a chave real. NUNCA a chave CRUA do Dolibarr.
-            expect(typeof res.body.apiKey).toBe('string');
-            expect(res.body.apiKey).toMatch(/^sess_/);
-            expect(JSON.stringify(res.body)).not.toContain('test-token-123'); // chave crua do Dolibarr NÃO vaza
+            expect(res.body).not.toHaveProperty('apiKey');
+            expect(JSON.stringify(res.body)).not.toContain('test-token-123');
             const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
-            expect(cookie).toContain('apiKey=');
+            expect(cookie).toContain('auth_token=');
             expect(cookie).toContain('HttpOnly');
             expect(cookie).toContain('Secure');
             expect(cookie).toContain('SameSite=Strict');
             expect(cookie).toContain('Path=/');
-            expect(cookie).toMatch(/Max-Age=\d+/);
+            expect(cookie).toContain('Max-Age=86400');
         });
 
-        it('returns 400 when email field is missing', async () => {
+        it('returns 400 when login field is missing', async () => {
             const res = await request(app)
                 .post('/api/login')
                 .send({ password: 'password123' });
@@ -124,6 +121,26 @@ describe('authRoutes', () => {
 
             expect(res.status).toBe(400);
             expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when login has fewer than 3 characters', async () => {
+            const res = await request(app)
+                .post('/api/login')
+                .send({ login: 'ab', password: 'password123' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockDolibarrService.login).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when password has fewer than 6 characters', async () => {
+            const res = await request(app)
+                .post('/api/login')
+                .send({ login: 'admin', password: '12345' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockDolibarrService.login).not.toHaveBeenCalled();
         });
 
         it('returns 401 when credentials are invalid', async () => {
@@ -155,7 +172,7 @@ describe('authRoutes', () => {
             for (let attempt = 0; attempt < 5; attempt++) {
                 await request(app)
                     .post('/api/login')
-                    .send({ email: 'rate-limited@example.com', password: 'wrongpassword' });
+                    .send({ login: 'rate-limited@example.com', password: 'wrongpassword' });
             }
 
             const res = await request(app)
@@ -179,7 +196,7 @@ describe('authRoutes', () => {
             expect(res.body.success).toBe(true);
             expect(res.body.message).toBe('Logged out');
             const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
-            expect(cookie).toContain('apiKey=;');
+            expect(cookie).toContain('auth_token=;');
             expect(cookie).toContain('HttpOnly');
             expect(cookie).toContain('Secure');
             expect(cookie).toContain('SameSite=Strict');
