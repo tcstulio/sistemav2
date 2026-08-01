@@ -1,14 +1,15 @@
 import path from 'path';
 import { execSync } from 'child_process';
-import { defineConfig, loadEnv, Plugin } from 'vite';
+import { defineConfig, loadEnv, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
+import { sentryVitePlugin } from '@sentry/vite-plugin';
 
 function getGitHash(): string {
   try { return execSync('git rev-parse --short HEAD').toString().trim(); }
   catch { return 'dev'; }
 }
 
-function versionPlugin(): Plugin {
+function versionPlugin(): PluginOption {
   const version = process.env.npm_package_version || '0.0.0';
   const hash = getGitHash();
   const virtualModuleId = 'virtual:app-version';
@@ -29,6 +30,40 @@ function versionPlugin(): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  const sentryDsn = env.VITE_SENTRY_DSN || '';
+  const sentryOrg = env.SENTRY_ORG || process.env.SENTRY_ORG || '';
+  const sentryProject = env.SENTRY_PROJECT || process.env.SENTRY_PROJECT || '';
+  const sentryAuthToken = env.SENTRY_AUTH_TOKEN || process.env.SENTRY_AUTH_TOKEN || '';
+  const isProdBuild = mode === 'production';
+
+  const plugins: PluginOption[] = [react(), versionPlugin()];
+
+  // Sentry source-map upload em build de produção.
+  // Só ativamos quando VITE_SENTRY_DSN estiver definido (DSN válido = projeto
+  // configurado para monitorar este app). Sem DSN, o upload é pulado — o build
+  // continua gerando source maps locais (hidden) mas nada é enviado.
+  if (isProdBuild && sentryDsn) {
+    plugins.push(
+      sentryVitePlugin({
+        org: sentryOrg || undefined,
+        project: sentryProject || undefined,
+        authToken: sentryAuthToken || undefined,
+        release: {
+          name: env.VITE_APP_VERSION || process.env.npm_package_version || '1.0.0',
+        },
+        sourcemaps: {
+          // Faz upload apenas dos arquivos gerados pelo build (não inclui node_modules).
+          assets: ['./dist/**/*'],
+        },
+        // Se o upload falhar (CLI ausente, sem rede, etc), avisa mas não derruba o build.
+        errorHandler: (err) => {
+          // eslint-disable-next-line no-console
+          console.warn('[sentry-vite-plugin] source-map upload failed:', err?.message || err);
+        },
+      }),
+    );
+  }
+
   return {
     server: {
       port: 3003,
@@ -52,14 +87,16 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    plugins: [react(), versionPlugin()],
+    plugins,
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
       }
     },
     build: {
-      sourcemap: false,
+      // 'hidden' gera .map files no dist sem referenciá-los nos JS finais
+      // (evita expor o source map no browser, mas mantém o arquivo para upload).
+      sourcemap: isProdBuild ? 'hidden' : true,
       rollupOptions: {
         output: {
           manualChunks: {
