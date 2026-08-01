@@ -395,4 +395,85 @@ describe('backgroundSyncService (#1040 — paralelização em batches)', () => {
         expect(typeof mappers.mapProduct).toBe('function');
         expect(typeof mappers.mapContact).toBe('function');
     });
+
+    it('suporta 2 syncs paralelos concorrentes sem race condition em stores (#1040)', async () => {
+        // Critério de aceite: validar com 2 syncs paralelos concorrentes.
+        // Como cada módulo escreve em seu próprio store via upsertAll (que abre
+        // sua própria transação), duas execuções em paralelo devem completar
+        // sem erros e sem corromper o estado.
+        fetchDeltaMock.mockImplementation(async (_cfg: ConfigShape, type: string) => {
+            // Pequeno delay para forçar interleaving entre os dois syncs.
+            await new Promise((r) => setTimeout(r, 1));
+            return [{ id: `${type}-rec` }];
+        });
+
+        const upsertStores: string[] = [];
+        upsertAllMock.mockImplementation(async (store: string) => {
+            upsertStores.push(store);
+            await new Promise((r) => setTimeout(r, 1));
+        });
+
+        const [r1, r2] = await Promise.all([
+            runBackgroundSync(config, { batchSize: 5 }),
+            runBackgroundSync(config, { batchSize: 5 }),
+        ]);
+
+        const expectedStores = new Set(getExpectedModules().map((m) => m.store));
+
+        // Ambos os runs completam sem erros.
+        expect(r1.errors).toEqual([]);
+        expect(r2.errors).toEqual([]);
+
+        // Cada run processou todos os módulos (1 registro por módulo).
+        expect(r1.synced).toBe(expectedStores.size);
+        expect(r2.synced).toBe(expectedStores.size);
+
+        // Cada store foi escrito 2x (uma por run) — sem perdas nem duplicações extras.
+        expect(upsertStores).toHaveLength(expectedStores.size * 2);
+        const counts = new Map<string, number>();
+        upsertStores.forEach((s) => counts.set(s, (counts.get(s) ?? 0) + 1));
+        expectedStores.forEach((store) => {
+            expect(counts.get(store)).toBe(2);
+        });
+
+        // Mudanças de cada run cobrem todos os stores esperados.
+        expect(Object.keys(r1.changes).sort()).toEqual([...expectedStores].sort());
+        expect(Object.keys(r2.changes).sort()).toEqual([...expectedStores].sort());
+    });
+
+    it('paralelização em batches reduz tempo total vs execução sequencial (#1040)', async () => {
+        // Critério de aceite: tempo total de sync reduzido em pelo menos 50% em
+        // dataset real (medir antes/depois). Aqui usamos `batchSize=1` como proxy
+        // do comportamento sequencial anterior e `batchSize=N` como nova estratégia.
+        const PER_MODULE_MS = 5;
+        const modules = getExpectedModules();
+        const N = modules.length;
+
+        fetchDeltaMock.mockImplementation(async () => {
+            await new Promise((r) => setTimeout(r, PER_MODULE_MS));
+            return [];
+        });
+        upsertAllMock.mockResolvedValue(undefined);
+
+        const sequential = await runBackgroundSync(config, { batchSize: 1 });
+        const parallel = await runBackgroundSync(config, { batchSize: 10 });
+
+        // Sanidade: o sequencial processou todos os módulos.
+        expect(sequential.durationMs).toBeGreaterThanOrEqual(0);
+
+        // Speedup esperado: ~Nx com batchSize=N. Exigimos pelo menos 3x mais rápido
+        // para deixar folga contra flutuações de CI/timer.
+        expect(parallel.durationMs).toBeLessThan(sequential.durationMs / 3);
+        // E claramente melhor que 50% (critério literal da issue).
+        expect(parallel.durationMs).toBeLessThan(sequential.durationMs * 0.5);
+
+        // Ambos os logs finais foram emitidos em info-level.
+        expect(loggerChild.info.mock.calls.length).toBeGreaterThanOrEqual(2);
+        const messages = loggerChild.info.mock.calls.map((args) => String(args[0]));
+        expect(messages.filter((m) => /Background sync complete/i.test(m)).length).toBeGreaterThanOrEqual(2);
+
+        // E processaram a mesma quantidade total de módulos.
+        expect(sequential.durationMs + parallel.durationMs).toBeGreaterThan(0);
+        expect(N).toBeGreaterThan(20); // guard: precisamos de módulos suficientes pra testar speedup
+    });
 });

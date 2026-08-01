@@ -128,9 +128,10 @@ export interface BackgroundSyncResult {
 }
 
 /**
- * Sync a single module end-to-end. Errors are caught and returned as a
- * `SyncOutcome` so the parallel runner can collect per-module results without
- * letting one failure short-circuit the batch (`Promise.allSettled` semantics).
+ * Result of syncing a single module. Errors are caught inside `syncOneModule`
+ * and returned as a discriminated union so the parallel runner can collect
+ * per-module outcomes without letting one failure short-circuit the batch
+ * (`Promise.allSettled` semantics).
  */
 type SyncOutcome =
     | { status: 'ok'; module: string; store: string; synced: number; mappedData: unknown[] }
@@ -140,10 +141,7 @@ type SyncOutcome =
 async function syncOneModule(
     config: DolibarrConfig,
     module: typeof SYNC_MODULES[number],
-    signal: AbortSignal | undefined,
-    onProgress: ((progress: BackgroundSyncProgress) => void) | undefined,
-    processedRef: { count: number },
-    totalModules: number
+    signal: AbortSignal | undefined
 ): Promise<SyncOutcome> {
     if (signal?.aborted) {
         return { status: 'skipped', module: module.type, store: module.store };
@@ -156,12 +154,6 @@ async function syncOneModule(
         const itemCount = await dbService.count(module.store);
         if (lastModified === 0 && itemCount > 0) {
             log.debug(`Skipping ${module.type} (has ${itemCount} items but no tms tracking)`);
-            processedRef.count += 1;
-            onProgress?.({
-                processed: processedRef.count,
-                total: totalModules,
-                currentModule: module.type,
-            });
             return { status: 'skipped', module: module.type, store: module.store };
         }
 
@@ -174,46 +166,31 @@ async function syncOneModule(
         // 2. Fetch delta from API
         const delta = await DolibarrService.fetchDelta(config, module.type, watermarkUnix);
 
-        if (delta.length > 0) {
-            // 3. Map data (use type assertion to handle varied return types)
-            const mappedData = delta.map((item: unknown) => module.mapFn(item as Record<string, unknown>));
-
-            // 4. Upsert to IndexedDB
-            await dbService.upsertAll(module.store, mappedData);
-
-            log.debug(`${module.type}: Synced ${delta.length} records to ${module.store}`);
-            processedRef.count += 1;
-            onProgress?.({
-                processed: processedRef.count,
-                total: totalModules,
-                currentModule: module.type,
-            });
-            return { status: 'ok', module: module.type, store: module.store, synced: delta.length, mappedData };
+        if (delta.length === 0) {
+            return { status: 'ok', module: module.type, store: module.store, synced: 0, mappedData: [] };
         }
 
-        processedRef.count += 1;
-        onProgress?.({
-            processed: processedRef.count,
-            total: totalModules,
-            currentModule: module.type,
-        });
-        return { status: 'ok', module: module.type, store: module.store, synced: 0, mappedData: [] };
+        // 3. Map data (use type assertion to handle varied return types)
+        const mappedData = delta.map((item: unknown) => module.mapFn(item as Record<string, unknown>));
+
+        // 4. Upsert to IndexedDB
+        await dbService.upsertAll(module.store, mappedData);
+
+        log.debug(`${module.type}: Synced ${delta.length} records to ${module.store}`);
+        return { status: 'ok', module: module.type, store: module.store, synced: delta.length, mappedData };
     } catch (error) {
-        const err: Error = error instanceof Error ? error : new Error(String((error as { message?: unknown })?.message ?? 'Unknown error'));
+        const err: Error = error instanceof Error
+            ? error
+            : new Error(String((error as { message?: unknown })?.message ?? 'Unknown error'));
         // Report to Sentry when configured; never throws — Sentry is a no-op
-        // when DSN is missing.
+        // when DSN is missing. Defensive try/catch keeps the sync loop running
+        // even if a future Sentry integration misbehaves.
         try {
             captureException(err, { module: module.type, store: module.store });
         } catch {
-            // Defensive: captureException must never break the sync loop.
+            // ignore — Sentry failures must never break the sync loop.
         }
         log.error(`Error syncing ${module.type}: ${err.message}`);
-        processedRef.count += 1;
-        onProgress?.({
-            processed: processedRef.count,
-            total: totalModules,
-            currentModule: module.type,
-        });
         return { status: 'error', module: module.type, store: module.store, error: err };
     }
 }
@@ -223,10 +200,11 @@ async function syncOneModule(
  *
  * - Modules run concurrently up to `batchSize` at a time (default 5, configurable
  *   via `VITE_SYNC_BATCH_SIZE` or the explicit `options.batchSize`).
- * - Per-module errors are isolated via `Promise.allSettled`: one failure never
- *   blocks the remaining modules and is reported through `result.errors` and
- *   Sentry (when configured).
- * - Progress is emitted through `options.onProgress` after each module finishes.
+ * - Per-module errors are isolated via `Promise.allSettled` semantics: one
+ *   failure never blocks the remaining modules and is reported through
+ *   `result.errors` and Sentry (when configured).
+ * - Progress is emitted through `options.onProgress` after each module finishes
+ *   (success, skip or error).
  * - The total elapsed time is measured and returned in `result.durationMs` and
  *   logged at info-level for before/after comparison.
  *
@@ -246,7 +224,6 @@ export async function runBackgroundSync(
     const errors: string[] = [];
     const changes: Record<string, unknown[]> = {};
     let synced = 0;
-    const processedRef = { count: 0 };
     const totalModules = SYNC_MODULES.length;
     const effectiveBatchSize = batchSize ?? getSyncBatchSize();
 
@@ -254,39 +231,31 @@ export async function runBackgroundSync(
 
     const startedAt = now();
 
-    // Run modules in parallel with bounded concurrency. We chunk the list so the
-    // progress counter increments smoothly per-batch and the JS event loop gets
-    // small yields between batches — useful on very large module counts.
-    let cursor = 0;
-    while (cursor < SYNC_MODULES.length) {
-        if (signal?.aborted) {
-            log.debug('Background sync aborted before batch start');
-            break;
-        }
+    // Bounded-concurrency runner. `mapWithConcurrency` itself guarantees at most
+    // `effectiveBatchSize` modules in flight at any moment, so we don't need to
+    // additionally slice the module list into batches — that would be redundant.
+    let processed = 0;
+    const outcomes = await mapWithConcurrency(SYNC_MODULES, effectiveBatchSize, async (mod) => {
+        const outcome = await syncOneModule(config, mod, signal);
+        processed += 1;
+        onProgress?.({
+            processed,
+            total: totalModules,
+            currentModule: mod.type,
+        });
+        return outcome;
+    });
 
-        const slice = SYNC_MODULES.slice(cursor, cursor + effectiveBatchSize);
-
-        // Fire all modules in the current batch concurrently. `mapWithConcurrency`
-        // bounds the in-flight count to `effectiveBatchSize`, preserving order
-        // in the results array so we can correlate outcomes back to the original
-        // module list.
-        const outcomes = await mapWithConcurrency(slice, effectiveBatchSize, (mod) =>
-            syncOneModule(config, mod, signal, onProgress, processedRef, totalModules)
-        );
-
-        for (const outcome of outcomes) {
-            if (outcome.status === 'ok') {
-                if (outcome.synced > 0) {
-                    synced += outcome.synced;
-                    changes[outcome.store] = outcome.mappedData;
-                }
-            } else if (outcome.status === 'error') {
-                errors.push(`${outcome.module}: ${outcome.error.message || 'Unknown error'}`);
+    for (const outcome of outcomes) {
+        if (outcome.status === 'ok') {
+            if (outcome.synced > 0) {
+                synced += outcome.synced;
+                changes[outcome.store] = outcome.mappedData;
             }
-            // 'skipped' modules contribute neither records nor errors.
+        } else if (outcome.status === 'error') {
+            errors.push(`${outcome.module}: ${outcome.error.message || 'Unknown error'}`);
         }
-
-        cursor += slice.length;
+        // 'skipped' modules contribute neither records nor errors.
     }
 
     const durationMs = Math.round(now() - startedAt);
