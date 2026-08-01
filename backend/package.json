@@ -51,6 +51,8 @@
         "socket.io": "^4.8.1",
         "uuid": "^13.0.0",
         "whatsapp-web.js": "github:wwebjs/whatsapp-web.js#1780711a1c86dfeca7c5ba6a66f950eac93dde28",
+        "winston": "^3.19.0",
+        "winston-daily-rotate-file": "^5.0.0",
         "zod": "^4.1.13"
     },
     "devDependencies": {
