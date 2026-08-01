@@ -29,6 +29,27 @@ export interface PlannerDecision {
     epicReason: string;
 }
 
+type PlannerAnalyzeOptions = { noCache?: boolean; preflightHint?: string };
+
+function createPlannerDecision(reason = 'Sem conflitos detectados.'): PlannerDecision {
+    return {
+        action: 'go',
+        reason,
+        priority: 0,
+        blockedBy: [],
+        overlappingFiles: [],
+        alreadyResolved: false,
+        filesEstimate: [],
+        isEpic: false,
+        epicReason: '',
+    };
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+    const parsed = Number.parseInt(value ?? '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 interface OpenPR {
     number: number;
     title: string;
@@ -139,53 +160,120 @@ export function invalidatePlannerCache(issueNumber?: number): void {
 //
 // Cache hits NÃO passam por aqui: continuam retornando direto em `analyzeTask`
 // (antes do slot) para não serializar decisões baratas e determinísticas.
-let plannerMaxConcurrent = Math.max(1, Number(process.env.PLANNER_MAX_CONCURRENT) || 1);
-let plannerActive = 0;
-let plannerWaiters: Array<() => void> = [];
+const DEFAULT_PLANNER_CONCURRENCY = 3;
+const configuredPlannerConcurrency = process.env.PLANNER_CONCURRENCY || process.env.PLANNER_MAX_CONCURRENT || '3';
+export const PLANNER_CONCURRENCY = parsePositiveInteger(configuredPlannerConcurrency, DEFAULT_PLANNER_CONCURRENCY);
+const DEFAULT_PLANNER_TIMEOUT_MS = 30_000;
+export const PLANNER_TIMEOUT_MS = parsePositiveInteger(process.env.PLANNER_TIMEOUT_MS || '30000', DEFAULT_PLANNER_TIMEOUT_MS);
 
-/** Ajusta o grau de concorrência do Planner (>=1). Exportado p/ testes/config. */
-export function setPlannerMaxConcurrent(n: number): void {
-    plannerMaxConcurrent = Math.max(1, Math.floor(n));
-}
-
-/** Zera o estado do semáforo. Exportado p/ isolar suítes de teste entre si. */
-export function resetPlannerThrottle(): void {
-    plannerActive = 0;
-    plannerWaiters = [];
-}
-
-async function acquirePlannerSlot(): Promise<void> {
-    if (plannerActive < plannerMaxConcurrent) {
-        plannerActive++;
-        return;
+class PlannerThrottleResetError extends Error {
+    constructor() {
+        super('Planner throttle reset');
+        this.name = 'PlannerThrottleResetError';
     }
-    // Fica em fila até um slot ser liberado; a liberação TRANSFERE o slot (não
-    // incrementa plannerActive de novo) — assim o limite N é respeitado.
-    await new Promise<void>((resolve) => plannerWaiters.push(resolve));
 }
 
-function releasePlannerSlot(): void {
-    const next = plannerWaiters.shift();
-    if (next) {
-        next(); // transferência do slot p/ o próximo waiter (plannerActive inalterado)
-    } else {
-        plannerActive = Math.max(0, plannerActive - 1);
+interface PlannerWaiter {
+    resolve: (release: () => void) => void;
+    reject: (error: Error) => void;
+}
+
+let plannerMaxConcurrent = PLANNER_CONCURRENCY;
+let plannerTimeoutMs = PLANNER_TIMEOUT_MS;
+let plannerActive = 0;
+let plannerWaiters: PlannerWaiter[] = [];
+let plannerLeaseSequence = 0;
+let plannerGeneration = 0;
+const plannerLeases = new Set<number>();
+
+function createPlannerLease(incrementActive = true, generation = plannerGeneration): () => void {
+    const leaseId = ++plannerLeaseSequence;
+    if (incrementActive) plannerActive++;
+    plannerLeases.add(leaseId);
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        if (generation !== plannerGeneration || !plannerLeases.delete(leaseId)) return;
+        const next = plannerWaiters.shift();
+        if (next) {
+            next.resolve(createPlannerLease(false, generation));
+        } else {
+            plannerActive = Math.max(0, plannerActive - 1);
+        }
+    };
+}
+
+export function setPlannerMaxConcurrent(n: number): void {
+    plannerMaxConcurrent = Number.isFinite(n) && n > 0 ? Math.max(1, Math.floor(n)) : PLANNER_CONCURRENCY;
+}
+
+export const setPlannerConcurrency = setPlannerMaxConcurrent;
+
+export function setPlannerTimeoutMs(n: number): void {
+    plannerTimeoutMs = Number.isFinite(n) && n > 0 ? Math.max(1, Math.floor(n)) : PLANNER_TIMEOUT_MS;
+}
+
+export function resetPlannerThrottle(): void {
+    plannerGeneration++;
+    const waiters = plannerWaiters;
+    plannerWaiters = [];
+    plannerActive = 0;
+    plannerLeases.clear();
+    plannerMaxConcurrent = PLANNER_CONCURRENCY;
+    plannerTimeoutMs = PLANNER_TIMEOUT_MS;
+    for (const waiter of waiters) waiter.reject(new PlannerThrottleResetError());
+}
+
+export function getPlannerThrottleStats(): { active: number; pending: number; concurrency: number } {
+    return {
+        active: plannerActive,
+        pending: plannerWaiters.length,
+        concurrency: plannerMaxConcurrent,
+    };
+}
+
+async function acquirePlannerSlot(issueNumber: number): Promise<() => void> {
+    if (plannerActive < plannerMaxConcurrent) return createPlannerLease();
+    return new Promise<() => void>((resolve, reject) => {
+        plannerWaiters.push({ resolve, reject });
+        log.info('Planner analyzeTask queued', {
+            queued: true,
+            active: plannerActive,
+            pending: plannerWaiters.length,
+            issueNumber,
+        });
+    });
+}
+
+async function withPlannerTimeout(
+    issueNumber: number,
+    timeoutMs: number,
+    timeoutState: { timedOut: boolean },
+    operation: () => Promise<PlannerDecision>,
+): Promise<PlannerDecision> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const operationPromise = Promise.resolve().then(operation);
+    void operationPromise.catch(() => undefined);
+    const timeoutPromise = new Promise<PlannerDecision>((resolve) => {
+        timer = setTimeout(() => {
+            timeoutState.timedOut = true;
+            log.warn('Planner analyzeTask timeout', { issueNumber, timeoutMs });
+            resolve(createPlannerDecision(`Planner timeout após ${timeoutMs}ms; plano mínimo aplicado.`));
+        }, timeoutMs);
+        timer.unref?.();
+    });
+
+    try {
+        return await Promise.race([operationPromise, timeoutPromise]);
+    } finally {
+        if (timer) clearTimeout(timer);
     }
 }
 
 export const taskPlannerService = {
-    async analyzeTask(task: Task, opts?: { noCache?: boolean; preflightHint?: string }): Promise<PlannerDecision> {
-        const decision: PlannerDecision = {
-            action: 'go',
-            reason: 'Sem conflitos detectados.',
-            priority: 0,
-            blockedBy: [],
-            overlappingFiles: [],
-            alreadyResolved: false,
-            filesEstimate: [],
-            isEpic: false,
-            epicReason: '',
-        };
+    async analyzeTask(task: Task, opts?: PlannerAnalyzeOptions): Promise<PlannerDecision> {
+        const decision = createPlannerDecision();
 
         // Cache (#712): mesma issue + mesmo corpo, dentro do TTL → reaproveita (sem gh/LLM).
         const bodyHash = hashBody(task.body || '');
@@ -196,13 +284,27 @@ export const taskPlannerService = {
                 return cloneDecision(hit.decision);
             }
         }
+        const timeoutState = { timedOut: false };
         const store = (d: PlannerDecision): PlannerDecision => {
-            plannerCache.set(task.issueNumber, { bodyHash, ts: Date.now(), decision: cloneDecision(d) });
+            if (!timeoutState.timedOut) {
+                plannerCache.set(task.issueNumber, { bodyHash, ts: Date.now(), decision: cloneDecision(d) });
+            }
             return d;
         };
 
-        await acquirePlannerSlot();
+        let releasePlannerSlot: () => void;
         try {
+            releasePlannerSlot = await acquirePlannerSlot(task.issueNumber);
+        } catch (error) {
+            if (error instanceof PlannerThrottleResetError) {
+                return createPlannerDecision('Planner resetado antes da execução; análise cancelada.');
+            }
+            throw error;
+        }
+
+        try {
+            return await withPlannerTimeout(task.issueNumber, plannerTimeoutMs, timeoutState, async () => {
+                try {
             const allOpenPRs = await listOpenPRs();
             // #1460: NUNCA tratar o PR da PRÓPRIA task como conflito/duplicata. O planner (determinístico
             // E LLM) via o próprio PR aberto como "PR concorrente já em andamento" (regra do prompt: 'wait
@@ -317,9 +419,11 @@ export const taskPlannerService = {
 
             log.info(`Planner #${task.issueNumber}: ${decision.action} (priority=${decision.priority}) — ${decision.reason}`);
             return store(decision);
-        } catch (e: any) {
-            log.error(`Planner error #${task.issueNumber}`, e.message);
-            return decision;
+                } catch (e: any) {
+                    log.error(`Planner error #${task.issueNumber}`, e.message);
+                    return decision;
+                }
+            });
         } finally {
             releasePlannerSlot();
         }
