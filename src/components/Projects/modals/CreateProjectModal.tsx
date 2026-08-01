@@ -30,10 +30,12 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     initialForm
 }) => {
     const [form, setForm] = useState<CreateProjectForm>({ ref: '', title: '', socid: '', description: '', date_start: '', date_end: '', budget_amount: '' });
+    const [titleError, setTitleError] = useState(false);
 
     // ao abrir, sincroniza com o prefill (vazio se não houver) — deeplink HITL do agente.
     useEffect(() => {
         if (isOpen) {
+            setTitleError(false);
             if (initialForm?.ref) {
                 setForm({ ref: initialForm.ref, title: initialForm?.title || '', socid: initialForm?.socid || '', description: '', date_start: '', date_end: '', budget_amount: '' });
             } else {
@@ -55,7 +57,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800">
+            <div data-testid="project-create-modal" className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800">
                 <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
                     <h3 className="font-bold text-lg dark:text-white">Novo Projeto</h3>
                     <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
@@ -66,6 +68,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Referência</label>
                         <input
+                            data-testid="project-reference-input"
                             type="text"
                             required
                             className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
@@ -75,19 +78,30 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Título</label>
+                        <label htmlFor="project-title" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Título</label>
                         <input
+                            id="project-title"
+                            data-testid="project-title-input"
                             type="text"
                             required
+                            aria-invalid={titleError}
+                            aria-describedby={titleError ? 'project-title-error' : undefined}
                             className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                             value={form.title}
-                            onChange={e => setForm({ ...form, title: e.target.value })}
+                            onInvalid={() => setTitleError(true)}
+                            onChange={event => {
+                                setTitleError(false);
+                                setForm({ ...form, title: event.target.value });
+                            }}
                             placeholder="Nome do projeto"
                         />
+                        {titleError && <p id="project-title-error" role="alert" className="mt-1 text-xs text-red-600">Título é obrigatório</p>}
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente (SocID)</label>
+                        <label htmlFor="project-customer" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente (SocID)</label>
                         <select
+                            id="project-customer"
+                            data-testid="project-customer-select"
                             required
                             className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                             value={form.socid}
@@ -102,6 +116,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
                         <textarea
+                            data-testid="project-description-input"
                             rows={3}
                             className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white resize-none"
                             value={form.description}
@@ -143,7 +158,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     </div>
                     <div className="pt-2 flex justify-end gap-2">
                         <button type="button" onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancelar</button>
-                        <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                        <button data-testid="create-project-submit" type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50">
                             {isSubmitting ? 'Criando...' : 'Criar Projeto'}
                         </button>
                     </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Project, AppView, DolibarrDocument } from '../types';
+import { Project, Task, AppView, DolibarrDocument } from '../types';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Search, Plus, Loader2, CheckCircle2, Settings, Pencil, Trash2, FolderKanban } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -29,6 +29,7 @@ import {
     ProjectSalesTab, ProjectShipmentsTab, ProjectPurchasesTab, ProjectManufacturingTab,
     ProjectContractsTab, ProjectInterventionsTab, ProjectChatTab
 } from './Projects/tabs';
+import type { ProjectTaskStatus } from './Projects/tabs/ProjectTasksTab';
 import { CreateProjectModal, EditProjectModal, TaskModal, TicketModal } from './Projects/modals';
 import { TaskWizard } from './Projects/TaskWizard';
 
@@ -70,7 +71,7 @@ const ProjectDetail: React.FC<{
     customers: any[];
     users: any[];
     contacts: any[];
-    tasks: any[];
+    tasks: Task[];
     invoices: any[];
     supplierInvoices: any[];
     interventions: any[];
@@ -87,8 +88,9 @@ const ProjectDetail: React.FC<{
     projectContacts: any[];
     // Modals Triggers
     onCreateTask: () => void;
-    onEditTask: (t: any) => void;
+    onEditTask: (t: Task) => void;
     onDeleteTask: (id: string) => Promise<void>;
+    onMoveTask: (task: Task, status: ProjectTaskStatus) => Promise<void>;
     onOpenWizard: () => void;
     onCreateTicket: () => void;
     onEditTicket: (t: any) => void;
@@ -100,7 +102,7 @@ const ProjectDetail: React.FC<{
     customers, users, contacts, tasks, invoices, supplierInvoices, interventions,
     expenseReports, manufacturingOrders, contracts, tickets, events, links, proposals,
     orders, shipments, supplierOrders, projectContacts,
-    onCreateTask, onEditTask, onDeleteTask, onOpenWizard,
+    onCreateTask, onEditTask, onDeleteTask, onMoveTask, onOpenWizard,
     onCreateTicket, onEditTicket, onDeleteTicket, refreshData
 }) => {
         const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'tickets' | 'events' | 'financials' | 'sales' | 'shipments' | 'purchases' | 'interventions' | 'expenses' | 'manufacturing' | 'contracts' | 'documents' | 'debug' | 'team' | 'chat'>('overview');
@@ -239,10 +241,10 @@ const ProjectDetail: React.FC<{
         };
 
         return (
-            <>
+            <div data-testid="project-detail" data-project-name={project.title} className="flex min-h-0 flex-1 flex-col">
                 <PageHeader
                     onBack={onClose}
-                    title={project.title}
+                    title={<span data-testid="project-title">{project.title}</span>}
                     subtitle={
                         <span className="flex items-center gap-2">
                             {project.ref} | {getCustomerName(project.socid)}
@@ -326,6 +328,7 @@ const ProjectDetail: React.FC<{
                                 onCreateTask={onCreateTask}
                                 onEditTask={onEditTask}
                                 onDeleteTask={onDeleteTask}
+                                onMoveTask={onMoveTask}
                                 onOpenWizard={onOpenWizard}
                                 refreshData={refreshData}
                             />
@@ -377,7 +380,7 @@ const ProjectDetail: React.FC<{
                     </div>
                 </div>
                 )}
-            </>
+            </div>
         );
     };
 
@@ -422,6 +425,13 @@ const ProjectList: React.FC<{
 
     // Selection
     const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+    const [taskStatusOverrides, setTaskStatusOverrides] = useState<Record<string, Pick<Task, 'progress' | 'status'>>>({});
+    const visibleTasks = useMemo(
+        () => tasks.map(task => taskStatusOverrides[task.id] === undefined
+            ? task
+            : { ...task, ...taskStatusOverrides[task.id] }),
+        [tasks, taskStatusOverrides]
+    );
 
     // State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -572,6 +582,16 @@ const ProjectList: React.FC<{
         const start = page * limit;
         return filteredProjects.slice(start, start + limit);
     }, [filteredProjects, page, limit]);
+
+    const openProject = (project: Project) => {
+        setSelectedProject(project);
+        onNavigate?.('projects', project.id);
+    };
+
+    const closeProject = () => {
+        setSelectedProject(null);
+        onNavigate?.('projects', '');
+    };
 
     // Actions
     const handleCreateProject = async (form: { ref: string; title: string; socid: string; description: string; date_start: string; date_end: string; budget_amount: string }) => {
@@ -763,6 +783,30 @@ const ProjectList: React.FC<{
         await DolibarrService.deleteTask(config, taskId);
     };
 
+    const handleMoveTask = async (task: Task, status: ProjectTaskStatus) => {
+        if (!config) return;
+        const progress = status === 'todo' ? 0 : status === 'in_progress' ? 50 : 100;
+        const taskStatus = status === 'todo' ? 0 : status === 'in_progress' ? 1 : 2;
+        try {
+            await DolibarrService.updateTask(config, task.id, { progress, status: taskStatus });
+            // Otimista: reflete imediatamente na UI para evitar lag do refresh.
+            setTaskStatusOverrides(current => ({ ...current, [task.id]: { progress, status: taskStatus } }));
+            toast.success('Status da tarefa atualizado');
+            await refreshData?.();
+            // Após o refresh, descarta o override para que o source-of-truth do servidor
+            // (ex.: arredondamento, validação server-side) não seja MASCARADO por ele.
+            setTaskStatusOverrides(current => {
+                const next = { ...current };
+                delete next[task.id];
+                return next;
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            toast.error(`Erro: ${message}`);
+            throw error;
+        }
+    };
+
     const openTicketModal = (ticket?: any) => {
         if (ticket) {
             setEditingTicketId(ticket.id);
@@ -824,6 +868,7 @@ const ProjectList: React.FC<{
                     actions={
                         <div className="flex items-center gap-2">
                             <Input
+                                data-testid="project-search-input"
                                 placeholder="Buscar..."
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -832,7 +877,7 @@ const ProjectList: React.FC<{
                                 fullWidth={false}
                             />
                             {canDo('create', 'projects') && (
-                            <Button icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>Novo</Button>
+                            <Button data-testid="new-project-button" icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>Novo</Button>
                             )}
                         </div>
                     }
@@ -849,7 +894,7 @@ const ProjectList: React.FC<{
 
             <MasterDetailLayout
                 showDetail={!!selectedProject}
-                onCloseDetail={() => setSelectedProject(null)}
+                onCloseDetail={closeProject}
                 listWidth="1/3"
                 list={
                     filteredProjects.length === 0 ? (
@@ -864,21 +909,29 @@ const ProjectList: React.FC<{
                             {paginatedProjects.map(proj => (
                                 <Card
                                     key={proj.id}
-                                    onClick={() => setSelectedProject(proj)}
+                                    onClick={() => openProject(proj)}
                                     selected={selectedProject?.id === proj.id}
                                     hoverable
                                 >
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div className="flex items-center gap-2">
-                                            <h4 className="font-bold text-slate-800 dark:text-white text-sm">{proj.ref}</h4>
-                                            <StatusBadge status={proj.statut} config={projectStatuses} size="sm" />
+                                    <div
+                                        data-testid="project-card"
+                                        data-project-name={proj.title}
+                                        data-project-ref={proj.ref}
+                                    >
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div className="flex items-center gap-2">
+                                                <h4 className="font-bold text-slate-800 dark:text-white text-sm">{proj.ref}</h4>
+                                                <span data-testid="project-status">
+                                                    <StatusBadge status={proj.statut} config={projectStatuses} size="sm" />
+                                                </span>
+                                            </div>
+                                            <span className="text-xs text-slate-500 font-mono">{proj.progress}%</span>
                                         </div>
-                                        <span className="text-xs text-slate-500 font-mono">{proj.progress}%</span>
-                                    </div>
-                                    <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-1 line-clamp-1">{proj.title}</h3>
-                                    <div className="text-sm text-slate-600 dark:text-slate-300 font-medium mb-1 truncate">{getCustomerName(proj.socid)}</div>
-                                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
-                                        <div className="h-full bg-indigo-500" style={{ width: `${proj.progress}%` }}></div>
+                                        <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-1 line-clamp-1">{proj.title}</h3>
+                                        <div className="text-sm text-slate-600 dark:text-slate-300 font-medium mb-1 truncate">{getCustomerName(proj.socid)}</div>
+                                        <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
+                                            <div className="h-full bg-indigo-500" style={{ width: `${proj.progress}%` }}></div>
+                                        </div>
                                     </div>
                                 </Card>
                             ))}
@@ -897,7 +950,7 @@ const ProjectList: React.FC<{
                     selectedProject && (
                         <ProjectDetail
                             project={selectedProject}
-                            onClose={() => setSelectedProject(null)}
+                            onClose={closeProject}
                             onValidate={handleValidate}
                             onDelete={handleDeleteProject}
                             onEdit={openEditModal}
@@ -908,7 +961,7 @@ const ProjectList: React.FC<{
                             customers={customers}
                             users={users}
                             contacts={contacts}
-                            tasks={tasks}
+                            tasks={visibleTasks}
                             invoices={invoices}
                             supplierInvoices={supplierInvoices}
                             interventions={interventions}
@@ -927,6 +980,7 @@ const ProjectList: React.FC<{
                             onCreateTask={() => openTaskModal()}
                             onEditTask={(t) => openTaskModal(t)}
                             onDeleteTask={handleDeleteTask}
+                            onMoveTask={handleMoveTask}
                             onOpenWizard={() => setIsWizardOpen(true)}
                             onCreateTicket={() => openTicketModal()}
                             onEditTicket={(t) => openTicketModal(t)}
