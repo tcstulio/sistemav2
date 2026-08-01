@@ -44,11 +44,37 @@ export const phoneSchema = z
         { message: `Phone DDI not in allowed list (${ALLOWED_DDIS.join(', ')})` }
     );
 
-export const sendSchema = z.object({
-    to: phoneSchema,
-    message: z.string().min(1).max(4096),
-    mediaUrl: z.string().url().optional(),
-});
+/**
+ * Duas formas de endereçar, exatamente uma exigida (#1568 quebrou isto):
+ *
+ *  - `chatId` — RESPONDER uma conversa que já existe. É o único identificador que o
+ *    frontend tem na tela, e o único que existe para contatos `@lid` (identificador de
+ *    privacidade do WhatsApp, que NÃO tem telefone do lado de fora). As rotas irmãs
+ *    `/send-file`, `/send-voice` e `/send-voice-native` sempre aceitaram `chatId`; o
+ *    #1568 migrou só esta, e com isso a tela parou de responder mensagem de texto.
+ *
+ *  - `to` — INICIAR conversa com um telefone. Mantém `phoneSchema` (DDI permitido +
+ *    10-13 dígitos), que era o objetivo do #1568 e continua valendo.
+ *
+ * `text` é alias legado de `message`: o frontend e o moltbotGateway já mandavam assim
+ * antes do #1568. Aceitar os dois evita uma segunda rodada de quebra silenciosa.
+ */
+export const sendSchema = z
+    .object({
+        to: phoneSchema.optional(),
+        chatId: z.string().min(1).optional(),
+        message: z.string().min(1).max(4096).optional(),
+        text: z.string().min(1).max(4096).optional(),
+        mediaUrl: z.string().url().optional(),
+    })
+    .refine((d) => !!d.to || !!d.chatId, {
+        message: 'Informe `chatId` (responder conversa existente) ou `to` (telefone)',
+        path: ['chatId'],
+    })
+    .refine((d) => !!d.message || !!d.text, {
+        message: 'Informe `message` (`text` é aceito como alias legado)',
+        path: ['message'],
+    });
 
 export const sendBulkSchema = z.object({
     recipients: z.array(phoneSchema).min(1).max(100),
@@ -255,24 +281,37 @@ router.post('/send', async (req, res) => {
         if (!parsed.success) {
             return handleZodError(res, parsed.error);
         }
-        const { to, message, mediaUrl } = parsed.data;
+        const { to, chatId: rawChatId, message, text, mediaUrl } = parsed.data;
+        const content = (message ?? text) as string;
         const sessionId = req.body?.sessionId || getSessionId(req);
 
-        // #1568 — número normalizado, chatId derivado de digits-only.
-        const chatId = toChatId(to);
+        // `chatId` JÁ é um endereço — NÃO pode passar por toChatId. toChatId faz
+        // digits-only e concatena '@c.us', então '59936436445425@lid' viraria
+        // '59936436445425@c.us', um contato que não existe: a mensagem sairia para o
+        // vazio em vez de dar erro. Só o `to` (telefone) é convertido.
+        const chatId = rawChatId || toChatId(to as string);
 
         log.info('Sending WhatsApp message', { chatId, sessionId });
 
         const currentUser = (req as any).user;
 
         // [ANTIGRAVITY] Business Logic: Append Signature
-        let finalText = message;
+        let finalText = content;
         if (currentUser) {
-            finalText = storeService.formatMessageWithSignature(message, currentUser);
+            finalText = storeService.formatMessageWithSignature(content, currentUser);
         }
 
         // Use channelRouter for unified message sending (supports Moltbot or legacy)
         const result = await channelRouter.sendWhatsApp(chatId, finalText, sessionId);
+        // #envio-silencioso: falha de envio NAO pode sair como HTTP 200. Antes, `ok()` devolvia
+        // 200 com `data.success:false` no corpo e o frontend — que so le `data.id` — marcava a
+        // mensagem como 'sent'. Uma mensagem que nunca saiu aparecia enviada na tela, sem sinal
+        // nenhum para o operador. 502 porque a falha e do canal a jusante (sessao do WhatsApp),
+        // nao do request. O /send-bulk NAO entra aqui: ele ja separa `sent` de `failed` por
+        // destinatario e precisa de resposta 200 parcial.
+        if (!result.success) {
+            return fail(res, 'WHATSAPP_SEND_FAILED', result.error || 'Falha ao enviar pelo WhatsApp', 502);
+        }
 
         // [ANTIGRAVITY] Business Logic: Update Assignment (Last Responder)
         if (currentUser) {
@@ -702,6 +741,15 @@ router.post('/send-file', async (req, res) => {
 
         // Use channelRouter for unified file sending
         const result = await channelRouter.sendWhatsAppFile(chatId, fileData, filename, caption, targetSession);
+        // #envio-silencioso: falha de envio NAO pode sair como HTTP 200. Antes, `ok()` devolvia
+        // 200 com `data.success:false` no corpo e o frontend — que so le `data.id` — marcava a
+        // mensagem como 'sent'. Uma mensagem que nunca saiu aparecia enviada na tela, sem sinal
+        // nenhum para o operador. 502 porque a falha e do canal a jusante (sessao do WhatsApp),
+        // nao do request. O /send-bulk NAO entra aqui: ele ja separa `sent` de `failed` por
+        // destinatario e precisa de resposta 200 parcial.
+        if (!result.success) {
+            return fail(res, 'WHATSAPP_SEND_FAILED', result.error || 'Falha ao enviar pelo WhatsApp', 502);
+        }
 
         // #1568 — envelope padrão
         return ok(res, {
@@ -730,6 +778,15 @@ router.post('/send-voice', async (req, res) => {
 
         // Use channelRouter for unified voice sending
         const result = await channelRouter.sendWhatsAppVoice(chatId, fileData, targetSession);
+        // #envio-silencioso: falha de envio NAO pode sair como HTTP 200. Antes, `ok()` devolvia
+        // 200 com `data.success:false` no corpo e o frontend — que so le `data.id` — marcava a
+        // mensagem como 'sent'. Uma mensagem que nunca saiu aparecia enviada na tela, sem sinal
+        // nenhum para o operador. 502 porque a falha e do canal a jusante (sessao do WhatsApp),
+        // nao do request. O /send-bulk NAO entra aqui: ele ja separa `sent` de `failed` por
+        // destinatario e precisa de resposta 200 parcial.
+        if (!result.success) {
+            return fail(res, 'WHATSAPP_SEND_FAILED', result.error || 'Falha ao enviar pelo WhatsApp', 502);
+        }
 
         // #1568 — envelope padrão
         return ok(res, {
@@ -756,6 +813,15 @@ router.post('/send-voice-native', async (req, res) => {
 
         const targetSession = sessionId || getSessionId(req);
         const result = await channelRouter.sendWhatsAppVoice(chatId, fileData, targetSession);
+        // #envio-silencioso: falha de envio NAO pode sair como HTTP 200. Antes, `ok()` devolvia
+        // 200 com `data.success:false` no corpo e o frontend — que so le `data.id` — marcava a
+        // mensagem como 'sent'. Uma mensagem que nunca saiu aparecia enviada na tela, sem sinal
+        // nenhum para o operador. 502 porque a falha e do canal a jusante (sessao do WhatsApp),
+        // nao do request. O /send-bulk NAO entra aqui: ele ja separa `sent` de `failed` por
+        // destinatario e precisa de resposta 200 parcial.
+        if (!result.success) {
+            return fail(res, 'WHATSAPP_SEND_FAILED', result.error || 'Falha ao enviar pelo WhatsApp', 502);
+        }
 
         // #1568 — envelope padrão
         return ok(res, {

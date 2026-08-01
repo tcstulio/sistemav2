@@ -385,7 +385,6 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                             onSendAudio={handleSendAudio}
                             onSendFile={handleSendFile}
                             isSending={isSending}
-                            messagesForSmartReply={messages}
                             selectedConversation={selectedConversation}
                             crmContext={contextData}
                         />

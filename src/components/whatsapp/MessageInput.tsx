@@ -1,8 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { Send, Loader2, Mic, Paperclip, Smile, Trash2, Sparkles } from 'lucide-react';
+import { Send, Loader2, Mic, Paperclip, Smile, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { AiService } from '../../services/aiService';
-import { WhatsAppMessage } from '../../types';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('MessageInput');
@@ -12,7 +10,6 @@ interface MessageInputProps {
     onSendAudio: (blob: Blob) => Promise<void>;
     onSendFile: (file: File) => Promise<void>;
     isSending: boolean;
-    messagesForSmartReply?: WhatsAppMessage[]; // Context for AI
     selectedConversation?: any; // To check if active
     crmContext?: any; // Passed from parent (useCRMContext result)
 }
@@ -22,7 +19,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     onSendAudio,
     onSendFile,
     isSending,
-    messagesForSmartReply,
     selectedConversation,
     crmContext
 }) => {
@@ -30,7 +26,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     const [inputText, setInputText] = useState('');
     const [isRecording, setIsRecording] = useState(false);
     const [recordingSeconds, setRecordingSeconds] = useState(0);
-    const [isGeneratingSmartReply, setIsGeneratingSmartReply] = useState(false);
 
     // Refs
     // ... existing refs ...
@@ -125,42 +120,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
-    const handleSmartReply = async () => {
-        if (!selectedConversation) return;
-
-        setIsGeneratingSmartReply(true);
-        try {
-            // Contexto simplificado: últimas 10 mensagens
-            const history = messagesForSmartReply?.slice(-10).map(m =>
-                `${m.sender === 'agent' ? 'Eu' : 'Cliente'}: ${m.text}`
-            ).join('\n');
-
-            const suggestion = await AiService.generateTicketReply(
-                "WhatsApp Conversation",
-                "Generate a reply based on history",
-                history ? [history] : []
-            );
-
-            if (suggestion) {
-                setInputText(suggestion);
-                // Trigger resize
-                setTimeout(() => {
-                    const textarea = document.querySelector('textarea');
-                    if (textarea) {
-                        textarea.style.height = 'auto';
-                        textarea.style.height = textarea.scrollHeight + 'px';
-                    }
-                }, 100);
-            } else {
-                toast.error("Não foi possível gerar uma resposta inteligente. Verifique a configuração da IA.");
-            }
-        } catch (error) {
-            log.error("Smart reply failed", error);
-            toast.error("Erro ao conectar com a Inteligência Artificial.");
-        } finally {
-            setIsGeneratingSmartReply(false);
-        }
-    };
 
     const formatRecordingTime = (seconds: number) => {
         const mins = Math.floor(seconds / 60);
@@ -233,17 +192,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
                 </>
             )}
 
-            {/* Smart Reply FAB */}
-            {!isRecording && !inputText.trim() && (
-                <button
-                    onClick={handleSmartReply}
-                    disabled={isGeneratingSmartReply}
-                    className="absolute bottom-20 right-6 bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 p-3 rounded-full shadow-lg border border-slate-100 dark:border-slate-700 hover:scale-105 transition-transform group z-20"
-                    title="Sugerir resposta com IA"
-                >
-                    {isGeneratingSmartReply ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
-                </button>
-            )}
         </div>
     );
 };

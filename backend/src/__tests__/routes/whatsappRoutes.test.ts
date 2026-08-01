@@ -225,6 +225,177 @@ describe('whatsappRoutes', () => {
         });
     });
 
+    describe('POST /api/whatsapp/send — endereçar por chatId (regressão do #1568)', () => {
+        // O #1568 trocou `{ chatId, text }` por `{ to: phoneSchema, message }` e não atualizou
+        // o frontend, que só tem o chatId na tela. Resultado: 5 tentativas de responder uma
+        // conversa viraram 400 em 1ms, sem nunca encostar no WhatsApp.
+        it('aceita chatId e envia para ele', async () => {
+            mockChannelRouter.sendWhatsApp.mockClear();
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '5511987654321@c.us', message: 'Oi' });
+
+            expect(res.status).toBe(200);
+            expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledWith(
+                '5511987654321@c.us', 'Oi', expect.any(String),
+            );
+        });
+
+        it('preserva um chatId @lid SEM converter para @c.us', async () => {
+            // O caso que motivou o fix. `@lid` é o identificador de privacidade do WhatsApp e
+            // NÃO tem telefone do lado de fora — `contact.number` devolve o próprio @lid
+            // (ver sessionService.resolveRealSender). Se o chatId passasse por toChatId,
+            // '59936436445425@lid' viraria '59936436445425@c.us': um contato inexistente, e a
+            // mensagem sairia para o vazio em vez de dar erro. Este teste é a trava disso.
+            mockChannelRouter.sendWhatsApp.mockClear();
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '59936436445425@lid', message: 'pague o aluguel' });
+
+            expect(res.status).toBe(200);
+            expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledWith(
+                '59936436445425@lid', 'pague o aluguel', expect.any(String),
+            );
+        });
+
+        it('aceita `text` como alias legado de `message`', async () => {
+            mockChannelRouter.sendWhatsApp.mockClear();
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '5511987654321@c.us', text: 'Legado' });
+
+            expect(res.status).toBe(200);
+            expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledWith(
+                '5511987654321@c.us', 'Legado', expect.any(String),
+            );
+        });
+
+        it('400 quando não vem nem `to` nem `chatId`', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ message: 'Sem destino' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('400 quando vem chatId mas nenhum conteúdo', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '5511987654321@c.us' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('chatId tem precedência quando os dois vêm', async () => {
+            // Endereço explícito ganha do derivado: quem manda chatId está respondendo uma
+            // conversa específica, e converter o `to` poderia abrir OUTRO chat.
+            mockChannelRouter.sendWhatsApp.mockClear();
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '59936436445425@lid', to: '5511987654321', message: 'Oi' });
+
+            expect(res.status).toBe(200);
+            expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledWith(
+                '59936436445425@lid', 'Oi', expect.any(String),
+            );
+        });
+
+        it('`to` continua validado pelo phoneSchema — o objetivo do #1568 não regride', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ to: '999', message: 'Oi' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+    });
+
+    describe('envio que falha NÃO pode devolver HTTP 200', () => {
+        // Cenário real (2026-07-30 23:15:35): a tela mandou com sessionId 'default', o
+        // channelRouter respondeu `success:false, error:"Session default not found"`, e a rota
+        // devolveu 200. O frontend só lê `data.id`, inventa um `temp_<ts>` quando ele falta e
+        // marca a mensagem como 'sent' — então a mensagem sumia sem nenhum sinal na tela.
+        // Estes testes são a trava: falha de canal tem que chegar como erro HTTP.
+        it('/send devolve 502 quando o channelRouter reporta falha', async () => {
+            mockChannelRouter.sendWhatsApp.mockResolvedValueOnce({
+                success: false, error: 'Session default not found', provider: 'legacy',
+            } as any);
+
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '5511987654321@c.us', message: 'Oi' });
+
+            expect(res.status).toBe(502);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('WHATSAPP_SEND_FAILED');
+        });
+
+        it('/send propaga o motivo da falha — sem isso o operador não tem o que investigar', async () => {
+            mockChannelRouter.sendWhatsApp.mockResolvedValueOnce({
+                success: false, error: 'Session default not found', provider: 'legacy',
+            } as any);
+
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '5511987654321@c.us', message: 'Oi' });
+
+            expect(res.body.error.message).toContain('Session default not found');
+        });
+
+        it('/send-voice devolve 502 quando falha (mesmo defeito, mesma rota-família)', async () => {
+            mockChannelRouter.sendWhatsAppVoice.mockResolvedValueOnce({
+                success: false, error: 'boom', provider: 'legacy',
+            } as any);
+
+            const res = await request(app)
+                .post('/api/whatsapp/send-voice')
+                .send({ chatId: '5511987654321@c.us', fileData: 'data:audio/ogg;base64,AAA' });
+
+            expect(res.status).toBe(502);
+            expect(res.body.error.code).toBe('WHATSAPP_SEND_FAILED');
+        });
+
+        it('/send-bulk CONTINUA 200 com falha parcial — não pode ser contaminado pela guarda', async () => {
+            // O bulk separa `sent` de `failed` por destinatário e precisa de 200 parcial. A guarda
+            // foi aplicada só às rotas de resposta única; este teste prova que ele ficou de fora.
+            mockChannelRouter.sendWhatsApp
+                .mockResolvedValueOnce({ success: true, messageId: 'm1', provider: 'legacy' } as any)
+                .mockResolvedValueOnce({ success: false, error: 'nope', provider: 'legacy' } as any);
+
+            const res = await request(app)
+                .post('/api/whatsapp/send-bulk')
+                .send({ recipients: ['5511987654321', '5511912345678'], message: 'Oi' });
+
+            expect(res.status).toBe(200);
+        });
+
+        it('sucesso continua 200 (a guarda não pode disparar no caminho feliz)', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '5511987654321@c.us', message: 'Oi' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+        });
+    });
+
+    describe('sessionId omitido cai na sessão primária', () => {
+        it('sem sessionId, usa getDefaultSessionId em vez da string literal "default"', async () => {
+            // O frontend mandava `sessionId: 'default'` por parâmetro-default quando o estado do
+            // componente ainda não carregara. Como o backend respeita sessionId explícito, esse
+            // 'default' passava por cima da whatsappPrimarySessionId e o envio morria.
+            mockChannelRouter.sendWhatsApp.mockClear();
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ chatId: '5511987654321@c.us', message: 'Oi' });
+
+            expect(res.status).toBe(200);
+            expect(mockChannelRouter.getDefaultSessionId).toHaveBeenCalled();
+        });
+    });
+
     describe('POST /api/whatsapp/send-bulk (#1568)', () => {
         it('returns 200 and dispatches to each recipient', async () => {
             mockChannelRouter.sendWhatsApp.mockClear();

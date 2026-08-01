@@ -80,8 +80,29 @@ export function getWhatsAppBotToolsPrompt(): string {
 export function absolutizeLinksForWhatsApp(text: string, baseUrlRaw?: string): string {
     if (!text) return text;
     const baseUrl = (baseUrlRaw || process.env.FRONTEND_URL || 'https://app.coolgroove.com.br').replace(/\/+$/, '');
-    const toAbs = (target: string): string =>
-        /^https?:\/\//i.test(target) ? target : baseUrl + (target.startsWith('/') ? target : '/' + target);
+    const toAbs = (target: string): string => {
+        if (!/^https?:\/\//i.test(target)) {
+            return baseUrl + (target.startsWith('/') ? target : '/' + target);
+        }
+        // #host-inventado: o modelo às vezes emite a URL JÁ absoluta, com um host que não
+        // existe — visto ao vivo em 2026-07-30: `https://sistemav2/agenda/75528`. `sistemav2`
+        // é o nome do sistema no prompt (aparece 5× em agentTools.ts), não um domínio. Como
+        // `toAbs` devolvia URL absoluta intacta, esse link saía para o cliente quebrado: host
+        // sem ponto não é nome público, não resolve em lugar nenhum.
+        //
+        // Regra deliberadamente ESTREITA: só rebaseia quando o host não tem ponto. Domínio de
+        // verdade (com ponto) segue intocado — sequestrar link externo legítimo seria pior que
+        // o defeito. Path, query e hash são preservados.
+        try {
+            const u = new URL(target);
+            if (!u.hostname.includes('.')) {
+                return baseUrl + u.pathname + u.search + u.hash;
+            }
+        } catch {
+            // URL malformada: devolve como veio em vez de mascarar o problema.
+        }
+        return target;
+    };
 
     // 1) Links markdown: [label](/path) ou [label](https://...) → "label: URL_absoluta"
     let out = text.replace(/\[([^\]]+)\]\((\/[^)\s]+|https?:\/\/[^)\s]+)\)/g, (_m, label: string, target: string) => {
@@ -91,6 +112,11 @@ export function absolutizeLinksForWhatsApp(text: string, baseUrlRaw?: string): s
         if (lbl === url || url.endsWith('/' + lbl)) return url;
         return `${lbl}: ${url}`;
     });
+
+    // 1b) URLs absolutas SOLTAS (fora de markdown). O passo 1 só pega a forma
+    //     `[label](url)`; um host inventado escrito direto no texto escapava. `toAbs` é
+    //     idempotente para host válido, então re-passar as já corrigidas é inofensivo.
+    out = out.replace(/https?:\/\/[^\s)]+/gi, (m) => toAbs(m));
 
     // 2) Caminhos relativos SOLTOS (fora de markdown), precedidos por início/espaço.
     //    URLs já absolutizadas no passo 1 começam com "https://" (não casam este passo).

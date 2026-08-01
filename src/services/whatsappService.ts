@@ -19,6 +19,18 @@ const log = logger.child('WhatsApp');
 // Este service lia `response.data` CRU → quebrou (ex.: `.map` num objeto → catch → lista vazia; a UI
 // de sessões/conversas ficou em branco). `unwrapWa` desembrulha SE for o envelope; senão devolve o
 // payload cru — compatível com respostas ainda não-envelopadas (nenhuma regressão em qualquer forma).
+/**
+ * #sessao-default: monta `?sessionId=...` so quando ha sessao. Antes estas funcoes tinham
+ * `sessionId: string = 'default'` como parametro-default; quando o estado do componente ainda
+ * nao carregara, o argumento chegava `undefined` e virava a string LITERAL 'default'. O backend
+ * respeita sessionId explicito ("caller e soberano"), entao esse 'default' passava por cima da
+ * `whatsappPrimarySessionId` configurada e o envio morria com "Session default not found" —
+ * devolvendo HTTP 200. Omitindo o parametro, o backend resolve pela primaria.
+ */
+function sessionQuery(sessionId?: string): string {
+    return sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+}
+
 function unwrapWa<T = any>(response: { data: any }): T {
     const b = response?.data;
     return (b && typeof b === 'object' && !Array.isArray(b) && 'success' in b && 'data' in b) ? b.data : b;
@@ -109,9 +121,9 @@ export const WhatsAppService = {
         }
     },
 
-    getConversations: async (sessionId: string = 'default'): Promise<WhatsAppConversation[]> => {
+    getConversations: async (sessionId?: string): Promise<WhatsAppConversation[]> => {
         try {
-            const response = await axios.get<WahaChat[]>(`${config.WHATSAPP_API_URL}/conversations?sessionId=${sessionId}`, { headers: getHeaders() });
+            const response = await axios.get<WahaChat[]>(`${config.WHATSAPP_API_URL}/conversations${sessionQuery(sessionId)}`, { headers: getHeaders() });
             const rawChats = unwrapWa<any[]>(response);
 
             return rawChats.map((c: any) => {
@@ -120,7 +132,9 @@ export const WhatsAppService = {
 
                 return {
                     id: serializedId,
-                    accountId: sessionId,
+                    // sessionId agora e opcional; quando ausente o backend resolve pela
+                    // primaria e o agrupamento por conta cai no vazio (nao havia conta).
+                    accountId: sessionId ?? '',
                     customerName: c.name || c.pushname || c.phoneNumber || userNumber,
                     customerNumber: c.phoneNumber || userNumber,
                     lastMessage: c.lastMessage || '',
@@ -138,10 +152,10 @@ export const WhatsAppService = {
         }
     },
 
-    getMessages: async (conversationId: string, sessionId: string = 'default'): Promise<WhatsAppMessage[]> => {
+    getMessages: async (conversationId: string, sessionId?: string): Promise<WhatsAppMessage[]> => {
         try {
             const encodedChatId = encodeURIComponent(conversationId);
-            const response = await axios.get<WahaMessage[]>(`${config.WHATSAPP_API_URL}/messages/${encodedChatId}?sessionId=${sessionId}`, { headers: getHeaders() });
+            const response = await axios.get<WahaMessage[]>(`${config.WHATSAPP_API_URL}/messages/${encodedChatId}${sessionQuery(sessionId)}`, { headers: getHeaders() });
             const rawMsgs = unwrapWa<WahaMessage[]>(response);
 
             return rawMsgs.map((m) => {
@@ -154,7 +168,7 @@ export const WhatsAppService = {
                 else if (msgType === 'video' || mime.startsWith('video/')) attachmentType = 'video';
                 else if (msgType === 'ptt' || msgType === 'audio' || mime.startsWith('audio/')) attachmentType = 'audio';
 
-                const mediaUrl = `${config.WHATSAPP_API_URL}/messages/${m.id}/media?sessionId=${sessionId}`;
+                const mediaUrl = `${config.WHATSAPP_API_URL}/messages/${m.id}/media${sessionQuery(sessionId)}`;
 
                 return {
                     id: m.id,
@@ -177,10 +191,18 @@ export const WhatsAppService = {
         }
     },
 
-    sendMessage: async (conversationId: string, text: string, sessionId: string = 'default'): Promise<WhatsAppMessage> => {
+    sendMessage: async (conversationId: string, text: string, sessionId?: string): Promise<WhatsAppMessage> => {
         try {
-            const response = await axios.post(`${config.WHATSAPP_API_URL}/send`, { chatId: conversationId, text, sessionId }, { headers: getHeaders() });
+            // `message` é o nome canônico do backend desde o #1568; `chatId` continua sendo
+            // o endereço (conversa existente, inclusive contatos @lid, que não têm telefone).
+            const response = await axios.post(`${config.WHATSAPP_API_URL}/send`, { chatId: conversationId, message: text, sessionId }, { headers: getHeaders() });
             const data = unwrapWa<any>(response);
+            // #envio-silencioso (defesa em profundidade): o backend agora devolve 502 quando o
+            // envio falha, mas um backend antigo devolve 200 com `success:false` no corpo. Sem
+            // esta checagem a mensagem apareceria como 'sent' na tela mesmo sem ter saido.
+            if (data && data.success === false) {
+                throw new Error(data.error || 'Falha ao enviar mensagem no WhatsApp');
+            }
             // Normalize ID: WWebJS returns an object { fromMe, remote, id, _serialized }
             const msgId = (typeof data.id === 'object' && data.id._serialized) ? data.id._serialized : (data.id || `temp_${Date.now()}`);
 
@@ -198,7 +220,7 @@ export const WhatsAppService = {
         }
     },
 
-    sendAudioMessage: async (conversationId: string, audioBlob: Blob, sessionId: string = 'default'): Promise<WhatsAppMessage> => {
+    sendAudioMessage: async (conversationId: string, audioBlob: Blob, sessionId?: string): Promise<WhatsAppMessage> => {
         try {
             const base64 = await new Promise<string>((resolve, reject) => {
                 const reader = new FileReader();
@@ -230,7 +252,7 @@ export const WhatsAppService = {
         }
     },
 
-    sendFileMessage: async (conversationId: string, file: File, mockUrl: string, sessionId: string = 'default'): Promise<WhatsAppMessage> => {
+    sendFileMessage: async (conversationId: string, file: File, mockUrl: string, sessionId?: string): Promise<WhatsAppMessage> => {
         try {
             const base64 = await fileToBase64(file);
 
