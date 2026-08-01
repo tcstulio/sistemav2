@@ -33,6 +33,16 @@ export class ProjectDetailPage {
         return this.page.locator('[data-testid="task-list"]').first();
     }
 
+    /**
+     * Título do projeto renderizado pelo `PageHeader` da `ProjectList.tsx`
+     * (`<span data-testid="project-title">`). Exposto como locator REUTILIZÁVEL
+     * conforme exigido pela issue (não apenas dentro de `expectLoaded`) —
+     * permite asserts diretos como `await expect(detail.projectTitle).toHaveText(name)`.
+     */
+    get projectTitle(): Locator {
+        return this.page.locator('[data-testid="project-title"]').first();
+    }
+
     get tasksTabButton(): Locator {
         return this.page.getByRole('button', { name: /^Tarefas \(\d+\)$/ });
     }
@@ -57,8 +67,8 @@ export class ProjectDetailPage {
     }
 
     async expectLoaded(name: string): Promise<void> {
-        const heading = this.page.getByRole('heading', { name, level: 1 });
-        await expect(heading).toBeVisible({ timeout: 15000 });
+        await expect(this.projectTitle).toBeVisible({ timeout: 15000 });
+        await expect(this.projectTitle).toHaveText(name, { timeout: 15000 });
     }
 
     async expectTaskVisible(title: string): Promise<void> {

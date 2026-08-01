@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { MoreVertical, Pencil, Plus, Sparkles } from 'lucide-react';
 import type { Task } from '../../../types/projects';
 import { AppView } from '../../../types/common';
@@ -47,6 +47,29 @@ export const ProjectTasksTab: React.FC<ProjectTasksTabProps> = ({
 }) => {
     const [openMenuTaskId, setOpenMenuTaskId] = useState<string | null>(null);
     const [movingTaskId, setMovingTaskId] = useState<string | null>(null);
+    const menuContainerRef = useRef<HTMLDivElement | null>(null);
+
+    // Outside-click: fecha o menu ao clicar fora — sem isso o dropdown fica preso sobre
+    // outros elementos (UX ruim e pode mascarar erros). 'mousedown' é disparado ANTES do
+    // bubbling dos botões internos, evitando race com handlers que fechariam o menu por
+    // acidente. Também fecha em Esc (acessibilidade).
+    useEffect(() => {
+        if (!openMenuTaskId) return;
+        const handleMouseDown = (event: MouseEvent) => {
+            if (menuContainerRef.current && !menuContainerRef.current.contains(event.target as Node)) {
+                setOpenMenuTaskId(null);
+            }
+        };
+        const handleKey = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setOpenMenuTaskId(null);
+        };
+        document.addEventListener('mousedown', handleMouseDown);
+        document.addEventListener('keydown', handleKey);
+        return () => {
+            document.removeEventListener('mousedown', handleMouseDown);
+            document.removeEventListener('keydown', handleKey);
+        };
+    }, [openMenuTaskId]);
 
     const moveTask = async (task: Task, status: ProjectTaskStatus) => {
         if (!onMoveTask || getTaskStatus(task) === status) return;
@@ -84,7 +107,7 @@ export const ProjectTasksTab: React.FC<ProjectTasksTabProps> = ({
                 {tasks.length === 0 ? (
                     <p className="text-center text-slate-400 py-10">Nenhuma tarefa encontrada.</p>
                 ) : (
-                    <div className="grid min-w-[780px] grid-cols-3 gap-3 overflow-x-auto pb-2">
+                    <div className="grid grid-cols-1 gap-3 pb-2 sm:grid-cols-3 sm:overflow-x-auto">
                         {taskStatusColumns.map(column => {
                             const columnTasks = tasks.filter(task => getTaskStatus(task) === column.id);
 
@@ -103,6 +126,7 @@ export const ProjectTasksTab: React.FC<ProjectTasksTabProps> = ({
                                         {columnTasks.map(task => (
                                             <div
                                                 key={task.id}
+                                                ref={openMenuTaskId === task.id ? menuContainerRef : undefined}
                                                 data-testid="task-item"
                                                 data-task-title={task.label}
                                                 data-task-status={column.id}

@@ -1,8 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 const projectFilterLabels: Record<string, string> = {
     all: 'Todos',
     todos: 'Todos',
@@ -29,11 +27,13 @@ export class ProjectListPage {
     }
 
     projectCard(name: string): Locator {
-        return this.page.getByRole('button', { name: new RegExp(escapeRegExp(name)) }).first();
+        return this.page
+            .locator(`[data-testid="project-card"][data-project-name="${name}"]`)
+            .first();
     }
 
     projectStatus(name: string): Locator {
-        return this.projectCard(name).getByText(/^(Aberto|Rascunho|Fechado)$/).first();
+        return this.projectCard(name).locator('[data-testid="project-status"]').first();
     }
 
     get searchInput(): Locator {

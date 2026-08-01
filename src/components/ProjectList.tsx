@@ -789,9 +789,17 @@ const ProjectList: React.FC<{
         const taskStatus = status === 'todo' ? 0 : status === 'in_progress' ? 1 : 2;
         try {
             await DolibarrService.updateTask(config, task.id, { progress, status: taskStatus });
+            // Otimista: reflete imediatamente na UI para evitar lag do refresh.
             setTaskStatusOverrides(current => ({ ...current, [task.id]: { progress, status: taskStatus } }));
             toast.success('Status da tarefa atualizado');
             await refreshData?.();
+            // Após o refresh, descarta o override para que o source-of-truth do servidor
+            // (ex.: arredondamento, validação server-side) não seja MASCARADO por ele.
+            setTaskStatusOverrides(current => {
+                const next = { ...current };
+                delete next[task.id];
+                return next;
+            });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             toast.error(`Erro: ${message}`);
