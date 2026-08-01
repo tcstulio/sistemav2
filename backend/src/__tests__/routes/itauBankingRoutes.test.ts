@@ -3,6 +3,14 @@ import request from 'supertest';
 import express from 'express';
 import crypto from 'crypto';
 
+// Mock de config/env: webhook secret vazio para que os testes desta suíte
+// simulem o cenário "sem segredo configurado" (verificação HMAC pulada em
+// dev). Os testes de assinatura — que mutam o segredo no objeto real —
+// depois re-escrevem o valor de `itauWebhookSecret` e o restauram.
+vi.mock('../../config/env', () => ({
+    config: { itauWebhookSecret: '' },
+}));
+
 const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
 
 const mockItauApiService = vi.hoisted(() => ({
@@ -28,6 +36,12 @@ const mockItauApiService = vi.hoisted(() => ({
     consultarWebhookPix: vi.fn(() => ({})),
     deletarWebhookPix: vi.fn(),
     generateTxId: vi.fn(() => 'txid-123'),
+}));
+
+vi.mock('../../services/dolibarr', () => ({
+    dolibarrService: {
+        getAccountsPayable: vi.fn(() => Promise.resolve([])),
+    },
 }));
 
 vi.mock('../../middleware/authMiddleware', () => ({
@@ -98,7 +112,7 @@ describe('itauBankingRoutes', () => {
     });
 
     describe('Webhook signature verification (ITAU_WEBHOOK_SECRET)', () => {
-        // config é importado (não mockado); mutamos o segredo p/ exercitar a verificação.
+        // Mutamos o segredo no objeto mockado p/ exercitar a verificação.
         const SECRET = 'itau-test-secret';
         let restore: string;
         beforeEach(async () => {
@@ -116,6 +130,8 @@ describe('itauBankingRoutes', () => {
         it('rejeita (401) webhook sem assinatura quando o segredo está setado', async () => {
             const res = await request(app).post('/api/itau/webhook/pix').send({ pix: [] });
             expect(res.status).toBe(401);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('INVALID_SIGNATURE');
         });
 
         it('rejeita (401) assinatura inválida', async () => {
@@ -124,6 +140,8 @@ describe('itauBankingRoutes', () => {
                 .set('x-webhook-signature', 'deadbeef')
                 .send({ pix: [] });
             expect(res.status).toBe(401);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('INVALID_SIGNATURE');
         });
 
         it('aceita (200) assinatura HMAC válida', async () => {
@@ -133,6 +151,23 @@ describe('itauBankingRoutes', () => {
                 .set('x-webhook-signature', sign(body))
                 .send(body);
             expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+        });
+
+        it('aceita (200) assinatura HMAC válida no webhook de boleto', async () => {
+            const body = { nossoNumero: '123', evento: 'LIQUIDACAO' };
+            const res = await request(app)
+                .post('/api/itau/webhook/boleto')
+                .set('x-webhook-signature', sign(body))
+                .send(body);
+            expect(res.status).toBe(200);
+        });
+
+        it('rejeita (401) webhook de boleto sem assinatura', async () => {
+            const res = await request(app)
+                .post('/api/itau/webhook/boleto')
+                .send({ nossoNumero: '123', evento: 'LIQUIDACAO' });
+            expect(res.status).toBe(401);
         });
     });
 
@@ -173,7 +208,9 @@ describe('itauBankingRoutes', () => {
             const res = await request(app).get('/api/itau/txid/generate');
 
             expect(res.status).toBe(200);
-            expect(res.body).toHaveProperty('txid');
+            // #1758: envelope padronizado — o txid agora viaja em `data`.
+            expect(res.body).toHaveProperty('data');
+            expect(res.body.data).toHaveProperty('txid');
         });
     });
 
@@ -200,6 +237,72 @@ describe('itauBankingRoutes', () => {
             const res = await request(app).get('/api/itau/pix/recebidos');
 
             expect(res.status).toBe(400);
+        });
+    });
+
+    // #1758: `requireAuth` (= `requireDolibarrLogin`) deve barrar todos os
+    // endpoints autenticados (status, saldo, extrato, pix/*, boleto/*, webhook
+    // config, txid/*) sem token. Webhooks (/webhook/pix, /webhook/boleto) NÃO
+    // usam `requireAuth` — usam HMAC.
+    describe('requireAuth (#1758) — bloqueia endpoints autenticados sem token', () => {
+        const rotasProtegidas: { method: 'get' | 'post' | 'put' | 'delete'; path: string; body?: unknown }[] = [
+            { method: 'get', path: '/api/itau/status' },
+            { method: 'post', path: '/api/itau/test' },
+            { method: 'post', path: '/api/itau/certificates' },
+            { method: 'get', path: '/api/itau/saldo' },
+            { method: 'get', path: '/api/itau/extrato' },
+            { method: 'get', path: '/api/itau/extrato', body: { dataInicio: '2024-01-01', dataFim: '2024-01-31' } },
+            { method: 'post', path: '/api/itau/pagamento/boleto' },
+            { method: 'get', path: '/api/itau/pagamento/123/comprovante' },
+            { method: 'post', path: '/api/itau/pix/cobranca', body: { valor: { original: '1.00' }, chave: 'a@b.c' } },
+            { method: 'post', path: '/api/itau/pix/cobranca-vencimento', body: { txid: 'x' } },
+            { method: 'get', path: '/api/itau/pix/cobranca/abc123' },
+            { method: 'post', path: '/api/itau/pix/enviar', body: { valor: '1.00', pagamento: { valor: '1.00' } } },
+            { method: 'get', path: '/api/itau/pix/recebidos' },
+            { method: 'get', path: '/api/itau/pix/E2EID123' },
+            { method: 'post', path: '/api/itau/boleto', body: { dado_boleto: { valor_total_titulo: '1.00', data_vencimento: '2024-01-01' } } },
+            { method: 'get', path: '/api/itau/boleto' },
+            { method: 'get', path: '/api/itau/boleto/123' },
+            { method: 'get', path: '/api/itau/boleto/123/pdf' },
+            { method: 'post', path: '/api/itau/boleto/123/baixar', body: {} },
+            { method: 'put', path: '/api/itau/webhook/pix/config', body: { chave: 'x', webhookUrl: 'https://example.com' } },
+            { method: 'get', path: '/api/itau/webhook/pix/config/x' },
+            { method: 'delete', path: '/api/itau/webhook/pix/config/x' },
+            { method: 'get', path: '/api/itau/txid/generate' },
+        ];
+
+        it.each(rotasProtegidas)('$method $path retorna 401 quando requireAuth rejeita o request', async ({ method, path, body }) => {
+            mockRequireDolibarrLogin.mockImplementationOnce((_req: any, res: any) => {
+                res.status(401).json({
+                    success: false,
+                    error: { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication Required: You must be logged in to Dolibarr.' },
+                });
+            });
+            const req = request(app)[method](path);
+            const res = body ? await req.send(body) : await req;
+            expect(res.status).toBe(401);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('AUTHENTICATION_REQUIRED');
+        });
+    });
+
+    describe('requireAuth (#1758) — permite webhooks públicos (sem token)', () => {
+        it('POST /api/itau/webhook/pix não chama requireAuth', async () => {
+            mockRequireDolibarrLogin.mockClear();
+            const res = await request(app)
+                .post('/api/itau/webhook/pix')
+                .send({ pix: [] });
+            expect(res.status).toBe(200);
+            expect(mockRequireDolibarrLogin).not.toHaveBeenCalled();
+        });
+
+        it('POST /api/itau/webhook/boleto não chama requireAuth', async () => {
+            mockRequireDolibarrLogin.mockClear();
+            const res = await request(app)
+                .post('/api/itau/webhook/boleto')
+                .send({ nossoNumero: '123', evento: 'LIQUIDACAO' });
+            expect(res.status).toBe(200);
+            expect(mockRequireDolibarrLogin).not.toHaveBeenCalled();
         });
     });
 });
