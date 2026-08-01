@@ -78,6 +78,11 @@ const certUpload = multer({
 });
 
 // ===== PUBLIC Webhook Receiver Endpoints (no auth - bank callbacks) =====
+//
+// Webhooks do Inter têm sua PRÓPRIA validação por assinatura HMAC
+// (`verifyInterWebhookSignature` abaixo). NÃO aplicamos `requireAuth` nestas
+// rotas: a segurança vem da verificação criptográfica da assinatura, não da
+// sessão Dolibarr — o banco não sabe logar na nossa aplicação. #1758.
 
 /**
  * Verify webhook signature using HMAC-SHA256
@@ -163,7 +168,7 @@ router.post('/webhook/pix', verifyInterWebhookSignature, validateBody(InterWebho
 
     await bankingService.processInterWebhook(webhookPayload, 'pix');
 
-    res.status(200).json({ success: true });
+    apiResponse.ok(res, { received: true });
 }));
 
 /**
@@ -185,10 +190,14 @@ router.post('/webhook/boleto', verifyInterWebhookSignature, validateBody(InterWe
 
     await bankingService.processInterWebhook(webhookPayload, 'boleto');
 
-    res.status(200).json({ success: true });
+    apiResponse.ok(res, { received: true });
 }));
 
 // ===== All routes below require authentication =====
+//
+// #1758: middleware `requireDolibarrLogin` (= `requireAuth`) aplicado a TODAS
+// as rotas abaixo deste ponto. Os webhooks acima são a única exceção — usam
+// `verifyInterWebhookSignature` (HMAC) no lugar de auth por sessão.
 router.use(requireDolibarrLogin);
 
 // ===== Status Endpoints =====
@@ -199,7 +208,7 @@ router.use(requireDolibarrLogin);
  */
 router.get('/status', asyncHandler(async (req: Request, res: Response) => {
     const status = await interApiService.getStatus();
-    res.json(status);
+    apiResponse.ok(res, status);
 }));
 
 /**
@@ -219,8 +228,7 @@ router.post('/test', asyncHandler(async (req: Request, res: Response) => {
 
     // Try to get balance as a test
     const saldo = await interApiService.getSaldo();
-    res.json({
-        success: true,
+    apiResponse.ok(res, {
         message: 'Connection successful',
         saldo,
     });
@@ -238,8 +246,7 @@ router.post('/certificates', certUpload.array('files', 2), asyncHandler(async (r
     }
 
     const uploaded = files.map(f => f.filename);
-    res.json({
-        success: true,
+    apiResponse.ok(res, {
         uploaded,
         message: `Uploaded ${uploaded.length} certificate file(s)`,
     });
@@ -253,7 +260,7 @@ router.post('/certificates', certUpload.array('files', 2), asyncHandler(async (r
  */
 router.get('/saldo', asyncHandler(async (req: Request, res: Response) => {
     const saldo = await interApiService.getSaldo();
-    res.json(saldo);
+    apiResponse.ok(res, saldo);
 }));
 
 /**
@@ -303,7 +310,7 @@ router.get('/extrato', asyncHandler(async (req: Request, res: Response) => {
         };
     });
 
-    res.json({ transacoes: transacoesEnriquecidas });
+    apiResponse.ok(res, { transacoes: transacoesEnriquecidas });
 }));
 
 /**
@@ -313,7 +320,7 @@ router.get('/extrato', asyncHandler(async (req: Request, res: Response) => {
 router.post('/pagamento/boleto', validateBody(PagamentoBoletoSchema), asyncHandler(async (req: Request, res: Response) => {
     const dados: PagamentoBoletoRequest = req.body;
     const resultado = await interApiService.pagarBoleto(dados);
-    res.json(resultado);
+    apiResponse.ok(res, resultado);
 }));
 
 /**
@@ -350,7 +357,7 @@ router.post('/pix/cobranca', validateBody(InterPixCobrancaSchema), asyncHandler(
         }
     }
 
-    res.json({ ...cobranca, qrcode: qrcode?.qrcode });
+    apiResponse.ok(res, { ...cobranca, qrcode: qrcode?.qrcode });
 }));
 
 /**
@@ -361,7 +368,7 @@ router.post('/pix/cobranca-vencimento', validateBody(InterPixCobrancaVencimentoS
     const { txid, ...dados } = req.body;
 
     const cobranca = await interApiService.criarPixCobrancaVencimento(txid, dados);
-    res.json(cobranca);
+    apiResponse.ok(res, cobranca);
 }));
 
 /**
@@ -371,7 +378,7 @@ router.post('/pix/cobranca-vencimento', validateBody(InterPixCobrancaVencimentoS
 router.get('/pix/cobranca/:txid', asyncHandler(async (req: Request, res: Response) => {
     const { txid } = req.params;
     const cobranca = await interApiService.consultarPixCobranca(txid);
-    res.json(cobranca);
+    apiResponse.ok(res, cobranca);
 }));
 
 /**
@@ -382,7 +389,7 @@ router.post('/pix/enviar', validateBody(InterPixEnviarSchema), asyncHandler(asyn
     const dados: PixPagamentoRequest = req.body;
 
     const resultado = await interApiService.enviarPix(dados);
-    res.json(resultado);
+    apiResponse.ok(res, resultado);
 }));
 
 /**
@@ -403,7 +410,7 @@ router.get('/pix/recebidos', asyncHandler(async (req: Request, res: Response) =>
     }
 
     const pix = await interApiService.listarPixRecebidos(inicio as string, fim as string);
-    res.json({ pix });
+    apiResponse.ok(res, { pix });
 }));
 
 /**
@@ -413,7 +420,7 @@ router.get('/pix/recebidos', asyncHandler(async (req: Request, res: Response) =>
 router.get('/pix/:e2eid', asyncHandler(async (req: Request, res: Response) => {
     const { e2eid } = req.params;
     const pix = await interApiService.consultarPix(e2eid);
-    res.json(pix);
+    apiResponse.ok(res, pix);
 }));
 
 // ===== Boleto Endpoints =====
@@ -426,7 +433,7 @@ router.post('/boleto', validateBody(InterBoletoEmissaoSchema), asyncHandler(asyn
     const dados: BoletoEmissaoRequest = req.body;
 
     const boleto = await interApiService.emitirBoleto(dados);
-    res.json(boleto);
+    apiResponse.ok(res, boleto);
 }));
 
 /**
@@ -445,7 +452,7 @@ router.get('/boleto', asyncHandler(async (req: Request, res: Response) => {
         tamanhoPagina: tamanhoPagina ? parseInt(tamanhoPagina as string) : undefined,
     });
 
-    res.json(resultado);
+    apiResponse.ok(res, resultado);
 }));
 
 /**
@@ -455,7 +462,7 @@ router.get('/boleto', asyncHandler(async (req: Request, res: Response) => {
 router.get('/boleto/:nossoNumero', asyncHandler(async (req: Request, res: Response) => {
     const { nossoNumero } = req.params;
     const boleto = await interApiService.consultarBoleto(nossoNumero);
-    res.json(boleto);
+    apiResponse.ok(res, boleto);
 }));
 
 /**
@@ -480,7 +487,7 @@ router.post('/boleto/:nossoNumero/cancelar', validateBody(InterBoletoCancelarSch
     const { motivo } = req.body;
 
     await interApiService.cancelarBoleto(nossoNumero, motivo || 'Cancelado pelo usuário');
-    res.json({ success: true, message: 'Boleto cancelado com sucesso' });
+    apiResponse.ok(res, { message: 'Boleto cancelado com sucesso' });
 }));
 
 // ===== Webhook Config Endpoints =====
@@ -493,7 +500,7 @@ router.put('/webhook/pix/config', validateBody(InterWebhookConfigSchema), asyncH
     const { chave, webhookUrl } = req.body;
 
     await interApiService.configurarWebhookPix(chave, webhookUrl);
-    res.json({ success: true, message: 'Webhook configured successfully' });
+    apiResponse.ok(res, { message: 'Webhook configured successfully' });
 }));
 
 /**
@@ -503,7 +510,7 @@ router.put('/webhook/pix/config', validateBody(InterWebhookConfigSchema), asyncH
 router.get('/webhook/pix/config/:chave', asyncHandler(async (req: Request, res: Response) => {
     const { chave } = req.params;
     const webhookConfig = await interApiService.consultarWebhookPix(chave);
-    res.json(webhookConfig);
+    apiResponse.ok(res, webhookConfig);
 }));
 
 /**
@@ -513,7 +520,7 @@ router.get('/webhook/pix/config/:chave', asyncHandler(async (req: Request, res: 
 router.delete('/webhook/pix/config/:chave', asyncHandler(async (req: Request, res: Response) => {
     const { chave } = req.params;
     await interApiService.deletarWebhookPix(chave);
-    res.json({ success: true, message: 'Webhook deleted successfully' });
+    apiResponse.ok(res, { message: 'Webhook deleted successfully' });
 }));
 
 // ===== Utility Endpoints =====
@@ -524,7 +531,7 @@ router.delete('/webhook/pix/config/:chave', asyncHandler(async (req: Request, re
  */
 router.get('/txid/generate', (req: Request, res: Response) => {
     const txid = interApiService.generateTxId();
-    res.json({ txid });
+    apiResponse.ok(res, { txid });
 });
 
 export default router;
