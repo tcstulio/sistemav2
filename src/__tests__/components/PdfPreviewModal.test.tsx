@@ -80,8 +80,9 @@ describe('PdfPreviewModal', () => {
 
         render(<PdfPreviewModal {...baseProps} />);
 
-        // Wait for modal to render the download button
-        await waitFor(() => screen.getByText('Baixar'));
+        // Wait for modal to render the download button and finish loading
+        // (button is disabled while isLoading — must wait for it to be enabled)
+        await waitFor(() => expect(screen.getByText('Baixar').closest('button')).not.toBeDisabled());
         fireEvent.click(screen.getByText('Baixar'));
 
         expect(mockDownloadDocument).toHaveBeenCalledWith('invoice', '42');
