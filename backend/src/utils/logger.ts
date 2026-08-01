@@ -5,14 +5,30 @@ type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const configuredLevel = process.env.LOG_LEVEL;
-const logLevel: LogLevel = configuredLevel === 'debug' || configuredLevel === 'info' || configuredLevel === 'warn' || configuredLevel === 'error' ? configuredLevel : 'info';
+const logLevel: LogLevel =
+    configuredLevel === 'debug' || configuredLevel === 'info' || configuredLevel === 'warn' || configuredLevel === 'error'
+        ? configuredLevel
+        : 'info';
 const useJsonFormat = process.env.LOG_FORMAT === 'json';
 
-const humanFormat = winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.printf(({ timestamp, level, message }) => `${timestamp} [${level.toUpperCase()}] ${message}`),
+const humanReadableFormat = winston.format.printf(
+    ({ timestamp, level, message }) => `${timestamp} [${level.toUpperCase()}] ${message}`,
 );
-const logFormat = useJsonFormat ? winston.format.json() : humanFormat;
+
+const baseFormat = winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+);
+
+const fileFormat = useJsonFormat
+    ? winston.format.combine(baseFormat, winston.format.json())
+    : winston.format.combine(baseFormat, humanReadableFormat);
+
+const consoleFormat = winston.format.combine(
+    winston.format.colorize(),
+    baseFormat,
+    useJsonFormat ? winston.format.json() : humanReadableFormat,
+);
 
 const transports: winston.transport[] = [
     new DailyRotateFile({
@@ -20,19 +36,24 @@ const transports: winston.transport[] = [
         filename: 'app-%DATE%.log',
         datePattern: 'YYYY-MM-DD',
         maxFiles: '14d',
-        format: logFormat,
+        format: fileFormat,
     }),
 ];
 
 if (!isProduction) {
     transports.push(
         new winston.transports.Console({
-            format: winston.format.combine(winston.format.colorize(), logFormat),
+            format: consoleFormat,
         }),
     );
 }
 
-const winstonInstance = winston.createLogger({ level: logLevel, format: logFormat, transports });
+const winstonInstance = winston.createLogger({
+    level: logLevel,
+    format: baseFormat,
+    transports,
+    defaultMeta: {},
+});
 
 export const MAX_LOG_BUFFER = 500;
 
@@ -41,20 +62,24 @@ export interface LogEntry {
     level: string;
     message: string;
     meta?: unknown;
+    context?: string;
 }
 
 const logBuffer: LogEntry[] = [];
 
-function pushToBuffer(level: string, msg: string, data?: unknown): void {
+function pushToBuffer(level: string, msg: string, data?: unknown, context?: string): void {
     const entry: LogEntry = { timestamp: new Date().toISOString(), level, message: msg };
     if (data !== undefined) entry.meta = data;
+    if (context) entry.context = context;
     logBuffer.push(entry);
     if (logBuffer.length > MAX_LOG_BUFFER) logBuffer.shift();
 }
 
 function formatEntry(entry: LogEntry): string {
     const ts = entry.timestamp.replace('T', ' ').substring(0, 19);
-    const metaStr = entry.meta ? ` ${typeof entry.meta === 'string' ? entry.meta : JSON.stringify(entry.meta).substring(0, 300)}` : '';
+    const metaStr = entry.meta
+        ? ` ${typeof entry.meta === 'string' ? entry.meta : JSON.stringify(entry.meta).substring(0, 300)}`
+        : '';
     return `${ts} [${entry.level.toUpperCase()}] ${entry.message}${metaStr}`;
 }
 
@@ -73,21 +98,38 @@ export function clearLogBuffer(): void {
 class Logger {
     constructor(private readonly context?: string) {}
 
-    private enrich(message: string, data?: unknown): { message: string; data?: unknown } {
-        return { message: this.context ? `[${this.context}] ${message}` : message, ...(data !== undefined ? { data } : {}) };
+    private formatMessage(message: string): string {
+        return this.context ? `[${this.context}] ${message}` : message;
     }
 
     private log(level: LogLevel, message: string, data?: unknown): void {
-        const enriched = this.enrich(message, data);
-        winstonInstance.log(level, enriched.message, data !== undefined ? { data } : undefined);
-        pushToBuffer(level, enriched.message, data);
+        const formatted = this.formatMessage(message);
+        const meta: Record<string, unknown> = {};
+        if (this.context) meta.context = this.context;
+        if (data !== undefined) meta.data = data;
+        winstonInstance.log(level, formatted, Object.keys(meta).length > 0 ? meta : undefined);
+        pushToBuffer(level, formatted, data, this.context);
     }
 
-    debug(message: string, data?: unknown): void { this.log('debug', message, data); }
-    info(message: string, data?: unknown): void { this.log('info', message, data); }
-    warn(message: string, data?: unknown): void { this.log('warn', message, data); }
-    error(message: string, data?: unknown): void { this.log('error', message, data); }
-    fatal(message: string, data?: unknown): void { this.log('error', message, data); }
+    debug(message: string, data?: unknown): void {
+        this.log('debug', message, data);
+    }
+
+    info(message: string, data?: unknown): void {
+        this.log('info', message, data);
+    }
+
+    warn(message: string, data?: unknown): void {
+        this.log('warn', message, data);
+    }
+
+    error(message: string, data?: unknown): void {
+        this.log('error', message, data);
+    }
+
+    fatal(message: string, data?: unknown): void {
+        this.log('error', message, data);
+    }
 
     child(context: string): Logger {
         return new Logger(this.context ? `${this.context}:${context}` : context);

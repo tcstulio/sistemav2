@@ -166,18 +166,6 @@ vi.mock('../../services/legacy/sessionService', () => ({
     sessionService: mockSessionService,
 }));
 
-const mockPinoInstance = vi.hoisted(() => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    fatal: vi.fn(),
-}));
-
-vi.mock('pino', () => ({
-    default: () => mockPinoInstance,
-}));
-
 vi.mock('../../utils/logger', async (importActual) => {
     const actual = await importActual<typeof import('../../utils/logger')>();
     return {
