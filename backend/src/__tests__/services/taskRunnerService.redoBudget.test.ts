@@ -62,7 +62,9 @@ describe('redoTask — resetBudget (#1567: redo MANUAL zera o teto de rodadas)',
 
         expect(t.roundsUsed).toBe(0);
         expect(t.judgeErrorRequeues).toBe(0);
-        expect(t.status).toBe('running');
+        // #1113: redo apenas ENFILEIRA (status pending) e retorna rápido; o Planner roda no execChain
+        // (async), não no handler HTTP. scheduleExec é mockado, então a chain não promove p/ running.
+        expect(t.status).toBe('pending');
         expect(svc.scheduleExec).toHaveBeenCalled();
     });
 
@@ -74,6 +76,7 @@ describe('redoTask — resetBudget (#1567: redo MANUAL zera o teto de rodadas)',
 
         expect(t.roundsUsed).toBe(15); // preservado (anti-loop do re-despacho)
         expect(t.judgeErrorRequeues).toBe(2);
-        expect(t.status).toBe('running');
+        // #1113: status fica pending (handler não espera o Planner rodar, ele roda no execChain).
+        expect(t.status).toBe('pending');
     });
 });
