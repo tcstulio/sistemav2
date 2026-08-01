@@ -15,10 +15,10 @@ export async function mapWithConcurrency<T, R>(
     let cursor = 0;
     const size = Math.max(1, Math.min(limit, items.length));
     const workers = Array.from({ length: size }, async () => {
-        while (true) {
-            const i = cursor++;
-            if (i >= items.length) break;
+        let i = cursor++;
+        while (i < items.length) {
             results[i] = await fn(items[i], i);
+            i = cursor++;
         }
     });
     await Promise.all(workers);
