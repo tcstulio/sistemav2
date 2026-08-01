@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('child_process', () => ({
     execFile: vi.fn(),
@@ -25,7 +25,7 @@ vi.mock('../../services/taskRunnerService', () => ({
     },
 }));
 
-import { taskPlannerService, PlannerAction, invalidatePlannerCache, resetPlannerThrottle, setPlannerMaxConcurrent } from '../../services/taskPlannerService';
+import { taskPlannerService, PlannerAction, invalidatePlannerCache, resetPlannerThrottle, setPlannerMaxConcurrent, setPlannerTimeoutMs, PLANNER_TIMEOUT_MS, getPlannerThrottleStats } from '../../services/taskPlannerService';
 import { aiJobService } from '../../services/aiJobService';
 import { taskRunnerService } from '../../services/taskRunnerService';
 import type { Task } from '../../services/taskRunnerService';
@@ -176,6 +176,12 @@ describe('taskPlannerService — throttle de concorrência (#1117 / Epic #1113)'
         });
     });
 
+    afterEach(() => {
+        vi.useRealTimers();
+        setPlannerTimeoutMs(PLANNER_TIMEOUT_MS);
+        resetPlannerThrottle();
+    });
+
     it('serializa análises concorrentes com plannerMaxConcurrent=1 (no máximo 1 LLM por vez)', async () => {
         let active = 0;
         let maxActive = 0;
@@ -194,23 +200,54 @@ describe('taskPlannerService — throttle de concorrência (#1117 / Epic #1113)'
         expect(decisions.every((d) => d.action === 'go')).toBe(true);
     });
 
-    it('permite até N análises simultâneas quando plannerMaxConcurrent=N', async () => {
-        setPlannerMaxConcurrent(2);
+    it('limita vinte análises à concorrência configurada em três', async () => {
+        setPlannerMaxConcurrent(3);
         let active = 0;
         let maxActive = 0;
         vi.mocked(aiJobService.runAndWait).mockImplementation(async () => {
             active++;
             maxActive = Math.max(maxActive, active);
-            await new Promise((r) => setTimeout(r, 30));
+            await new Promise((resolve) => setTimeout(resolve, 5));
             active--;
             return { text: JSON.stringify({ action: 'go', reason: 'ok', alreadyResolved: false }) };
         });
 
-        const tasks = [8001, 8002, 8003, 8004].map((n) => makeTask({ issueNumber: n, body: longBody }));
-        const decisions = await Promise.all(tasks.map((t) => taskPlannerService.analyzeTask(t)));
+        const tasks = Array.from({ length: 20 }, (_, i) => makeTask({ issueNumber: 10_000 + i, body: longBody }));
+        const decisions = await Promise.all(tasks.map((task) => taskPlannerService.analyzeTask(task)));
 
-        expect(maxActive).toBe(2);
-        expect(decisions.every((d) => d.action === 'go')).toBe(true);
+        expect(maxActive).toBe(3);
+        expect(decisions.every((decision) => decision.action === 'go')).toBe(true);
+        expect(getPlannerThrottleStats()).toMatchObject({ active: 0, pending: 0, concurrency: 3 });
+    });
+
+    it('retorna fallback após timeout e libera o slot para as próximas análises', async () => {
+        vi.useFakeTimers();
+        setPlannerMaxConcurrent(1);
+        setPlannerTimeoutMs(30_000);
+        let resolveSlow: ((value: { text: string }) => void) | undefined;
+        const slowResult = new Promise<{ text: string }>((resolve) => { resolveSlow = resolve; });
+        let invocation = 0;
+        vi.mocked(aiJobService.runAndWait).mockImplementation(async () => {
+            invocation++;
+            if (invocation === 1) return slowResult;
+            return { text: JSON.stringify({ action: 'go', reason: 'rápida', alreadyResolved: false }) };
+        });
+
+        const slow = taskPlannerService.analyzeTask(makeTask({ issueNumber: 11_001, body: longBody }));
+        await vi.advanceTimersByTimeAsync(0);
+        const next = taskPlannerService.analyzeTask(makeTask({ issueNumber: 11_002, body: longBody }));
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        const timedOut = await slow;
+        const nextDecision = await next;
+        expect(timedOut.action).toBe('go');
+        expect(timedOut.reason).toContain('timeout');
+        expect(nextDecision.reason).toBe('rápida');
+        expect(invocation).toBe(2);
+
+        resolveSlow?.({ text: JSON.stringify({ action: 'go', reason: 'tardia', alreadyResolved: false }) });
+        await slowResult;
+        await Promise.resolve();
     });
 
     it('cache hit NÃO adquire slot do throttle (retorna imediato mesmo com slot ocupado)', async () => {
