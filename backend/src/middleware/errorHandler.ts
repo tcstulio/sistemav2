@@ -21,7 +21,22 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger('ErrorHandler');
 
-// Error codes that are safe to show to users
+// Error codes that are safe to show to users.
+//
+// `RATE_LIMITED` (forma longa, com ED) é o código emitido pela classe `RateLimitError`
+// (mais abaixo) — preservado aqui por retrocompatibilidade com callers que jogam
+// `throw new RateLimitError(...)` esperando que a mensagem chegue ao cliente em
+// produção (caso contrário cai no default genérico do errorHandler).
+//
+// `RATE_LIMIT` (forma curta, sem ED) é o código emitido pelos limiters do
+// `rateLimitFactory` (issue #976 — `loginLimiter`, `aiLimiter`, etc.) — esses
+// limiters NÃO passam pelo errorHandler (escrevem o envelope 429 direto em `res`),
+// então este array NÃO precisa listar `RATE_LIMIT`. Listaríamos só se um desses
+// limiters fosse refatorado p/ delegar via `next(err)` no futuro.
+//
+// Mantemos ambos listados (a forma longa existe e é usada, a forma curta é a nova
+// convenção) para que QUALQUER erro que chegue aqui com status 429 mostre mensagem
+// útil ao cliente em produção. Ver issue #1329.
 const SAFE_ERROR_CODES = [
     'VALIDATION_ERROR',
     'NOT_FOUND',

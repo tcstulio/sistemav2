@@ -110,7 +110,13 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
     const requestBody = sanitizeBodyForLog(options.body);
 
     try {
-        const response = await fetch(proxyUrl, options);
+        // #1329: o backend devolve Set-Cookie httpOnly no /api/auth/login.
+        // Para que o navegador envie/receba o cookie `auth_token` em chamadas subsequentes,
+        // TODOS os fetches do core precisam de `credentials: 'include'`. Sem isto, o
+        // backend não enxerga o cookie e o request volta 401 em qualquer rota autenticada.
+        // Preserva overrides explícitos do caller (options.credentials tem prioridade).
+        const fetchOptions: RequestInit = { credentials: 'include', ...options };
+        const response = await fetch(proxyUrl, fetchOptions);
 
             if (!response.ok) {
                 let errorMsg = `Erro Proxy HTTP ${response.status}`;
@@ -469,37 +475,26 @@ export const fetchCurrentUser = async (config: DolibarrConfig, loginHint?: strin
     return null;
 };
 
-export const login = async (login: string, password: string): Promise<{ token: string, entity: string, message: string, apiKey?: string, user?: DolibarrUser }> => {
+export const login = async (login: string, password: string): Promise<{ success?: boolean, user?: DolibarrUser, message?: string }> => {
     try {
         const response = await fetch(`${AppConfig.API_BASE_URL}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ login, password })
         });
 
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.indexOf("application/json") !== -1) {
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Falha no Login');
-
-            if (data.apiKey) {
-                try {
-                    const tempConfig: DolibarrConfig = {
-                        apiUrl: '',
-                        apiKey: data.apiKey,
-                        themeColor: 'indigo',
-                        darkMode: false
-                    };
-                    const userProfile = await fetchCurrentUser(tempConfig, login);
-                    if (userProfile) {
-                        return { ...data, user: userProfile };
-                    }
-                } catch (userErr) {
-                    log.warn('Failed to fetch user profile after login', userErr);
-                }
+            if (!response.ok) {
+                const message = (data && typeof data.error === 'object' && data.error?.message)
+                    ? data.error.message
+                    : (typeof data.error === 'string' ? data.error : 'Falha no Login');
+                throw new Error(message || 'Falha no Login');
             }
 
-            return data;
+            return { success: true, user: data?.data?.user ?? data?.user, message: data?.message };
         } else {
             const text = await response.text();
             log.error(`Login: Non-JSON response: ${text}`);

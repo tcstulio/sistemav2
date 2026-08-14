@@ -294,6 +294,34 @@ describe('requireDolibarrLogin', () => {
         expect(next).toHaveBeenCalled();
     });
 
+    it('reads session token from cookies.auth_token (#1329 httpOnly cookie migration)', async () => {
+        const user = { id: 8 };
+        mockDolibarrService.getUserByKey.mockResolvedValue(user);
+
+        const req = mockReq({ cookies: { auth_token: 'auth-token-cookie' } });
+        const res = mockRes();
+        const next = mockNext();
+
+        await requireDolibarrLogin(req, res, next);
+
+        expect(mockDolibarrService.getUserByKey).toHaveBeenCalledWith('auth-token-cookie');
+        expect(next).toHaveBeenCalled();
+    });
+
+    it('prefers auth_token cookie over legacy apiKey cookie (#1329)', async () => {
+        const user = { id: 9 };
+        mockDolibarrService.getUserByKey.mockResolvedValue(user);
+
+        const req = mockReq({ cookies: { auth_token: 'new-cookie', apiKey: 'legacy-cookie' } });
+        const res = mockRes();
+        const next = mockNext();
+
+        await requireDolibarrLogin(req, res, next);
+
+        expect(mockDolibarrService.getUserByKey).toHaveBeenCalledWith('new-cookie');
+        expect(next).toHaveBeenCalled();
+    });
+
     it('returns 401 when user is null from dolibarrService', async () => {
         mockDolibarrService.getUserByKey.mockResolvedValue(null);
 

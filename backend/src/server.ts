@@ -153,15 +153,6 @@ const bankingLimiter = rateLimit({
 // `middleware/rateLimit.ts` (single source of truth) — ver teste
 // `schedulerRoutes.test.ts` (AC #1567: 11ª chamada POST → 429).
 
-// Strict limiter for auth (login attempts)
-const authLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 20,
-    message: { error: 'Too many requests to auth endpoints.' },
-    standardHeaders: true,
-    legacyHeaders: false
-});
-
 // Apply global limiter
 app.use(globalLimiter);
 
@@ -184,7 +175,7 @@ import groupsRoutes from './routes/groupsRoutes';
 import aiRoutes from './routes/aiRoutes';
 import aiJobsRoutes from './routes/aiJobs';
 import authRoutes from './routes/authRoutes';
-import { authMiddleware, requireDolibarrLogin } from './middleware/authMiddleware';
+import { requireDolibarrLogin } from './middleware/authMiddleware';
 // Middleware that skips auth for webhook paths (incoming bank notifications must be public)
 const bankingAuthMiddleware = (req: any, res: any, next: any) => {
     if (req.path.startsWith('/webhook/')) return next();
@@ -198,7 +189,7 @@ app.use('/api/ai', aiLimiter, aiRoutes);
 app.use('/api/ai-jobs', requireDolibarrLogin, aiJobsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', groupsRoutes); // grupos/direitos (sistemav2#820) — mesmo prefixo, paths distintos
-app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/auth', authRoutes);
 
 // Endereço público do túnel cloudflared (sem auth — a URL não é segredo)
 import { tunnelService } from './services/tunnelService';
