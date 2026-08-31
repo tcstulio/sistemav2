@@ -37,13 +37,32 @@ vi.mock('../../services/aiService', () => ({
     aiService: mockAiService,
 }));
 
-// #1030: describeVideo é chamado pelo handler quando há anexo de vídeo. Mock evita HTTP real.
+// #1030: `describeVideo` é chamado pelo handler quando há anexo de vídeo. Mock evita HTTP real.
 // #1546: descreveVideo agora vive em `services/describeVideo.ts` (separado do visionService);
 // o mock precisa apontar para o novo módulo — caso contrário, o handler de aiRoutes importa
 // a função real e dispara o spike do glm-4.6v durante o teste.
-const mockDescribeVideo = vi.hoisted(() => vi.fn());
+// O handler usa o helper compartilhado `describeVideoAttachment` (validate + save-temp +
+// describeVideo + cleanup) que vive em `services/describeVideoAttachment.ts`. Mockamos
+// o helper para isolar o teste de integração do loop do agente (a validação de
+// tamanho/mime/cleanup do helper é coberta em describeVideo.test.ts).
+// `VideoAnalysisError` mora em `services/describeVideo.ts` (fonte tipada do erro); o
+// mock reexporta a classe para os testes conseguirem `new VideoAnalysisError(...)`.
+const mockDescribeVideoAttachment = vi.hoisted(() => vi.fn());
+vi.mock('../../services/describeVideoAttachment', () => ({
+    describeVideoAttachment: mockDescribeVideoAttachment,
+}));
 vi.mock('../../services/describeVideo', () => ({
-    describeVideo: mockDescribeVideo,
+    describeVideo: vi.fn(),
+    VideoAnalysisError: class VideoAnalysisError extends Error {
+        code: string;
+        httpStatus: number;
+        constructor(code: string, message: string, httpStatus: number) {
+            super(message);
+            this.code = code;
+            this.httpStatus = httpStatus;
+            this.name = 'VideoAnalysisError';
+        }
+    },
 }));
 
 vi.mock('../../services/dolibarr', () => ({
@@ -1379,29 +1398,40 @@ describe('#320/#1566: aiLimiter — 21ª chamada POST de AI em 1min → 429', ()
 });
 
 // =====================================================
-// #1030: anexo de vídeo no chat — describeVideo integrado ao handler (runChatReply).
-// Critérios: (a) vídeo pequeno → resposta; (b) vídeo grande → 413; (c) mime inválido → 415;
-// (d) falha transitória → degrada (chat segue); (e) regressão: imagem+pdf continuam ok.
+// #1030/#1546: anexo de vídeo no chat — `describeVideoAttachment` (helper compartilhado
+// com /chat/analyze-video) integrado ao handler (runChatReply). Critérios: (a) vídeo
+// pequeno → descrição injetada; (b) vídeo grande → 413; (c) mime inválido → 415;
+// (d) falha transitória → degrada (chat segue); (e) regressão: imagem+vídeo juntos.
 // =====================================================
-describe('#1030: anexo de vídeo no chat (describeVideo)', () => {
+describe('#1030/#1546: anexo de vídeo no chat (describeVideoAttachment)', () => {
     let app: express.Application;
 
     beforeEach(() => {
         vi.clearAllMocks();
         mockAiService.generateReply.mockResolvedValue({ text: 'Generated reply text' });
-        mockDescribeVideo.mockReset();
+        mockDescribeVideoAttachment.mockReset();
         app = createApp();
     });
 
-    it('(a) vídeo pequeno → descreve e injeta no contexto passado ao agente', async () => {
-        mockDescribeVideo.mockResolvedValueOnce('Um gato brincando com um novelo de lã.');
+    it('(a) vídeo pequeno → descreve via helper e injeta no contexto passado ao agente', async () => {
+        mockDescribeVideoAttachment.mockResolvedValueOnce({
+            description: 'Um gato brincando com um novelo de lã.',
+            filePath: '/tmp/chat-video-x/input.mp4',
+            mimeType: 'video/mp4',
+            bytes: 100,
+            maxBytes: 20 * 1024 * 1024,
+        });
 
         const res = await request(app)
             .post('/api/generate-reply')
             .send({ context: 'teste', video: 'AAAA', videoMimeType: 'video/mp4' });
 
         expect(res.status).toBe(200);
-        expect(mockDescribeVideo).toHaveBeenCalledWith('AAAA', 'video/mp4');
+        expect(mockDescribeVideoAttachment).toHaveBeenCalledTimes(1);
+        const [videoArg, mimeArg, opts] = mockDescribeVideoAttachment.mock.calls[0];
+        expect(videoArg).toBe('AAAA');
+        expect(mimeArg).toBe('video/mp4');
+        expect(opts).toMatchObject({ origin: '/api/ai/generate-reply' });
         expect(mockAiService.generateReply).toHaveBeenCalledTimes(1);
         const ctx = mockAiService.generateReply.mock.calls[0][1];
         expect(ctx).toContain('[VÍDEO ANEXADO');
@@ -1409,8 +1439,9 @@ describe('#1030: anexo de vídeo no chat (describeVideo)', () => {
     });
 
     it('(b) vídeo acima do limite → 413 VIDEO_TOO_LARGE (não chama o agente)', async () => {
-        mockDescribeVideo.mockRejectedValueOnce(
-            Object.assign(new Error('acima do limite'), { code: 'VIDEO_TOO_LARGE', httpStatus: 413 }),
+        const { VideoAnalysisError } = await import('../../services/describeVideo');
+        mockDescribeVideoAttachment.mockRejectedValueOnce(
+            new VideoAnalysisError('VIDEO_TOO_LARGE', 'Vídeo excede o limite de 20.00 MiB', 413),
         );
 
         const res = await request(app)
@@ -1426,8 +1457,9 @@ describe('#1030: anexo de vídeo no chat (describeVideo)', () => {
     });
 
     it('(c) mimeType não suportado → 415 UNSUPPORTED_VIDEO_MIME', async () => {
-        mockDescribeVideo.mockRejectedValueOnce(
-            Object.assign(new Error('mime inválido'), { code: 'UNSUPPORTED_VIDEO_MIME', httpStatus: 415 }),
+        const { VideoAnalysisError } = await import('../../services/describeVideo');
+        mockDescribeVideoAttachment.mockRejectedValueOnce(
+            new VideoAnalysisError('UNSUPPORTED_VIDEO_MIME', 'mime não suportado', 415),
         );
 
         const res = await request(app)
@@ -1439,10 +1471,16 @@ describe('#1030: anexo de vídeo no chat (describeVideo)', () => {
         expect(mockAiService.generateReply).not.toHaveBeenCalled();
     });
 
-    it('(d) falha transitória do provedor → degrada (chat responde 200 com aviso)', async () => {
-        mockDescribeVideo.mockRejectedValueOnce(
-            Object.assign(new Error('vision down'), { code: 'VISION_CALL_FAILED', httpStatus: 502 }),
-        );
+    it('(d) visão indisponível → helper degrada (description null) e agente recebe aviso', async () => {
+        // #1546: o helper absorve 502 do provedor e devolve { description: null } — o handler
+        // injeta um aviso no contexto e segue para o agente (mesmo padrão do describeImage).
+        mockDescribeVideoAttachment.mockResolvedValueOnce({
+            description: null,
+            filePath: '/tmp/chat-video-x/input.mp4',
+            mimeType: 'video/mp4',
+            bytes: 100,
+            maxBytes: 20 * 1024 * 1024,
+        });
 
         const res = await request(app)
             .post('/api/generate-reply')
@@ -1456,7 +1494,13 @@ describe('#1030: anexo de vídeo no chat (describeVideo)', () => {
     });
 
     it('(e) regressão: imagem+vídeo juntos — imagem segue como imageBase64 e vídeo vai ao contexto', async () => {
-        mockDescribeVideo.mockResolvedValueOnce('descrição do vídeo.');
+        mockDescribeVideoAttachment.mockResolvedValueOnce({
+            description: 'descrição do vídeo.',
+            filePath: '/tmp/chat-video-x/input.mp4',
+            mimeType: 'video/mp4',
+            bytes: 100,
+            maxBytes: 20 * 1024 * 1024,
+        });
 
         const res = await request(app)
             .post('/api/generate-reply')
@@ -1471,10 +1515,29 @@ describe('#1030: anexo de vídeo no chat (describeVideo)', () => {
         expect(ctx).toContain('descrição do vídeo.');
     });
 
-    it('sem anexo de vídeo → describeVideo NÃO é chamado (sem regressão no fluxo comum)', async () => {
+    it('sem anexo de vídeo → describeVideoAttachment NÃO é chamado (sem regressão no fluxo comum)', async () => {
         const res = await request(app).post('/api/generate-reply').send({ context: 'teste' });
 
         expect(res.status).toBe(200);
-        expect(mockDescribeVideo).not.toHaveBeenCalled();
+        expect(mockDescribeVideoAttachment).not.toHaveBeenCalled();
+    });
+
+    it('helper NÃO é chamado quando videoMimeType está vazio e helper faz validação', async () => {
+        // #1546: o helper valida o mime — mesmo quando o handler passa string vazia, o helper
+        // rejeita com UNSUPPORTED_VIDEO_MIME (415). Aqui validamos que o handler passa o
+        // mime EXATAMENTE como veio no body (sem fallback mágico) — a validação fica no helper.
+        const { VideoAnalysisError } = await import('../../services/describeVideo');
+        mockDescribeVideoAttachment.mockRejectedValueOnce(
+            new VideoAnalysisError('UNSUPPORTED_VIDEO_MIME', 'mime vazio', 415),
+        );
+
+        const res = await request(app)
+            .post('/api/generate-reply')
+            .send({ context: 'teste', video: 'AAAA', videoMimeType: '' });
+
+        expect(res.status).toBe(415);
+        // mimeArg passado ao helper é a string vazia — helper é quem rejeita.
+        const mimeArg = mockDescribeVideoAttachment.mock.calls[0][1];
+        expect(mimeArg).toBe('');
     });
 });

@@ -29,16 +29,14 @@
  */
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import * as fsp from 'fs/promises';
-import * as os from 'os';
-import * as path from 'path';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
 import { getProgressStream, type ProgressEvent } from '../agent/progressStream';
 import { analyzePdf } from '../services/analyzePdf';
-import { describeVideo, VideoAnalysisError } from '../services/describeVideo';
+import { describeVideoAttachment } from '../services/describeVideoAttachment';
+import { VideoAnalysisError } from '../services/describeVideo';
 import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
 
@@ -250,19 +248,26 @@ router.post(
  * (issue #1030) — esta rota adiciona o ponto de entrada HTTP específico do chat,
  * com validações de tamanho/mime próprias (limite configurável via env).
  *
- *   1. Decodifica base64 → Buffer.
- *   2. Valida tamanho contra `config.chatVideoMaxBytes` (env `CHAT_VIDEO_MAX_BYTES`,
+ * O fluxo da spec — "validar tamanho, salvar temporariamente, chamar describeVideo,
+ * injetar no messages" — vive agora em `describeVideoAttachment` (helper
+ * compartilhado em `services/describeVideo.ts`). Esta rota é uma fina camada HTTP
+ * por cima do helper: parseia o body, mapeia os erros tipados em respostas HTTP
+ * adequadas e devolve `{ text, mimeType, path: "video_url", bytes, maxBytes }`.
+ * O MESMO helper é reusado por `/api/ai/generate-reply` — assim as duas rotas
+ * seguem o fluxo canônico sem divergir (uma validaria, outra não; uma limparia
+ * o tmp, outra vazaria).
+ *
+ *   1. Decodifica base64 + valida mime (zod enum + service).
+ *   2. Helper valida tamanho contra `config.chatVideoMaxBytes` (env `CHAT_VIDEO_MAX_BYTES`,
  *      padrão 20 MiB). Acima disso → 413 com mensagem clara (UX de "reduza o tamanho").
- *   3. Salva o vídeo em diretório temporário (mkdtemp em `os.tmpdir()`) — atende o
- *      requisito da issue ("salvar temporariamente") e dá flexibilidade p/ tools
+ *   3. Helper salva o vídeo em diretório temporário (mkdtemp em `os.tmpdir()`) — atende
+ *      o requisito da issue ("salvar temporariamente") e dá flexibilidade p/ tools
  *      externas (ffmpeg preview, auditoria) operarem no arquivo.
- *   4. Chama `describeVideo({ filePath, mimeType })` que faz POST no glm-4.6v com
- *      `video_url` (data URL). Remove o diretório em `finally` (best-effort).
- *   5. Mapeia os erros tipados do `VideoAnalysisError` em respostas HTTP adequadas:
- *        - UNSUPPORTED_VIDEO_MIME → 415
- *        - VIDEO_TOO_LARGE        → 413 (rejeição dupla: rota + serviço, mesma causa)
- *        - VISION_CALL_FAILED     → 200 com `text: null` (degradação graciosa,
- *                                    mesmo padrão do `analyze-pdf` quando visão cai)
+ *   4. Helper chama `describeVideo({ filePath, mimeType })` que faz POST no glm-4.6v
+ *      com `video_url` (data URL). Remove o diretório em `finally` (best-effort).
+ *   5. Helper mapeia VisionCallFailed (502) em `description: null` (degradação graciosa,
+ *      mesmo padrão do `analyze-pdf` quando visão cai). 413/415 SOBEM como exceção
+ *      para esta rota traduzir em AppError e o errorHandler renderizar o envelope.
  *
  * Critérios de aceite (#1546):
  *   - Vídeo curto (≤ limite) → 200 com `text` populado + `path: "video_url"`.
@@ -289,79 +294,39 @@ router.post(
         }
         const { video, mimeType } = parsed.data;
 
-        const buffer = Buffer.from(video, 'base64');
-        if (!buffer.length) {
-            throw new AppError(400, 'BAD_REQUEST', 'Vídeo vazio após decodificar base64.');
-        }
-
-        // #1546: limite da ROTA (proteção contra uploads grandes). Diferente do
-        // `videoMaxBytes` do service (10 MiB, validado pelo spike #1029): este limite
-        // é maior (20 MiB default) porque é a borda HTTP — aceitamos o upload e
-        // avisamos rápido, sem gastar banda/I/O. O service ainda valida o tamanho
-        // efetivo aceito pelo glm-4.6v com uma mensagem mais técnica.
-        const maxBytes = config.chatVideoMaxBytes;
-        if (buffer.length > maxBytes) {
-            const maxMb = Math.round(maxBytes / 1024 / 1024);
-            const sizeMb = (buffer.length / 1024 / 1024).toFixed(2);
-            throw new AppError(
-                413,
-                'VIDEO_TOO_LARGE',
-                `Vídeo excede o limite de ${maxMb}MB (env CHAT_VIDEO_MAX_BYTES). Recebido: ${sizeMb}MB.`
-            );
-        }
-
-        // #1546: salva temporariamente em diretório ÚNICO por request em os.tmpdir(),
-        // removido em `finally` mesmo se a visão falhar. Extensão reflete o MIME para
-        // que ferramentas externas (ffmpeg, preview) infiram o container correto.
-        const ext = mimeType === 'video/quicktime' ? 'mov' : 'mp4';
-        const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'chat-video-'));
-        const tmpPath = path.join(tmpDir, `input.${ext}`);
-
-        let description: string | null = null;
+        // #1546: delega para o helper compartilhado `describeVideoAttachment` — mesmo
+        // fluxo que `/api/ai/generate-reply` (validar tamanho, salvar temporariamente,
+        // chamar describeVideo com filePath, limpar em finally). Evita divergência entre
+        // as duas rotas (uma validaria e outra não; uma limparia tmp e outra vazaria).
+        let result;
         try {
-            await fsp.writeFile(tmpPath, buffer);
-            log.debug(
-                `/chat/analyze-video: caminho vídeo (mime=${mimeType}, ${buffer.length} bytes, ` +
-                `limite=${maxBytes})`,
-            );
-            description = await describeVideo({ filePath: tmpPath }, mimeType);
+            result = await describeVideoAttachment(video, mimeType, {
+                maxBytes: config.chatVideoMaxBytes,
+                origin: '/chat/analyze-video',
+            });
         } catch (videoErr: unknown) {
-            // Mapeia erros tipados do serviço em respostas HTTP adequadas. 502 do
-            // service (visão indisponível / file não pôde ser lido) DEGRADA (200
-            // com text: null) — o chat segue sem o vídeo, mesmo padrão do describeImage.
+            // 413/415 são erros do usuário — rejeitam a request com mensagem PT-BR clara.
+            // Outros VideoAnalysisError (programmer error) sobem para o errorHandler.
             if (videoErr instanceof VideoAnalysisError) {
                 const code = videoErr.code;
                 if (code === 'UNSUPPORTED_VIDEO_MIME' || code === 'VIDEO_TOO_LARGE') {
                     throw new AppError(videoErr.httpStatus, code, videoErr.message);
                 }
-                log.warn(
-                    `/chat/analyze-video: visão indisponível (${code}); seguindo sem descrição`,
-                    { mimeType, bytes: buffer.length },
-                );
-                description = null;
-            } else {
-                throw videoErr;
             }
-        } finally {
-            try {
-                await fsp.rm(tmpDir, { recursive: true, force: true });
-            } catch {
-                /* best-effort cleanup; tmpdir é purgável pelo SO depois */
-            }
+            throw videoErr;
         }
 
-        log.debug(
-            `/chat/analyze-video: processado via video_url (mime=${mimeType}, ` +
-            `descrição=${description ? description.length : 0} chars)`,
-        );
         // path sempre é `video_url` — distingue dos caminhos de imagem
         // (`pdf_parse` / `ocr_vision` do analyze-pdf) nos logs estruturados e na
-        // resposta para o consumer.
+        // resposta para o consumer. `description` já vem null quando o provedor caiu
+        // (degradação graciosa idêntica à do `describeImage` em `aiService`).
         return ok(res, {
-            text: description,
-            mimeType,
+            text: result.description,
+            mimeType: result.mimeType,
             // `path` discrimina o caminho multimodal usado; `null` quando a visão caiu.
             path: 'video_url' as const,
+            bytes: result.bytes,
+            maxBytes: result.maxBytes,
         });
     }),
 );

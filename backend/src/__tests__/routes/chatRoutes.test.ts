@@ -46,14 +46,33 @@ vi.mock('../../utils/logger', () => ({
     },
 }));
 
+// #1546: `describeVideoAttachment` chama `describeVideo` internamente, que usa
+// `axios.isAxiosError` para descrever erros do provedor. O setup global mocka axios
+// SEM essa função; precisamos adicioná-la localmente para o helper não quebrar.
+vi.mock('axios', async () => {
+    const actual = await vi.importActual<typeof import('axios')>('axios');
+    return {
+        default: {
+            ...(actual.default as any),
+            post: vi.fn(),
+            isAxiosError: (e: unknown) => !!(e as any)?.isAxiosError,
+        },
+    };
+});
+
 // #1547 — analyzePdf é o serviço de extração/OCR; mockamos p/ isolar o teste de rota.
 const mockAnalyzePdf = vi.hoisted(() => vi.fn());
 vi.mock('../../services/analyzePdf', () => ({ analyzePdf: mockAnalyzePdf }));
 
-// #1546 — describeVideo (do describeVideo.ts — explicitamente separado do visionService
-// pela issue) é o serviço de descrição de vídeo; mockamos p/ isolar a rota. O mock do
-// VideoAnalysisError permite testar a propagação tipada dos códigos 415/413/502 (mapeados
-// em respostas HTTP específicas).
+// #1546 — `describeVideo` (chamada interna de visão no glm-4.6v) e `describeVideoAttachment`
+// (helper compartilhado com fluxo da spec — validate + save-temp + cleanup) ficam em
+// `services/describeVideo.ts`. Mockamos apenas o `describeVideo` interno (POST ao glm-4.6v
+// é caro e NÃO determinístico em CI); `describeVideoAttachment` roda de verdade para
+// preservar o teste de cleanup do diretório temporário (best-effort). O helper vive
+// inline no mesmo módulo — graças ao import binding do ES modules, o mock de
+// `describeVideo` substitui a referência interna do helper, isolando o teste de
+// integração do loop do agente (a validação de tamanho/mime/cleanup do helper é
+// coberta em describeVideo.test.ts).
 const mockDescribeVideo = vi.hoisted(() => vi.fn());
 vi.mock('../../services/describeVideo', async () => {
     const actual = await vi.importActual<typeof import('../../services/describeVideo')>('../../services/describeVideo');
@@ -425,8 +444,9 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             // path `video_url` distingue dos caminhos de imagem (pdf_parse/ocr_vision).
             expect(res.body.data.path).toBe('video_url');
 
-            // describeVideo foi chamado exatamente uma vez, com filePath apontando pra um
-            // arquivo existente no disco (a rota salva o vídeo temporariamente).
+            // describeVideo (interno) foi chamado exatamente uma vez, com filePath apontando
+            // para um arquivo existente no disco — o helper `describeVideoAttachment`
+            // (não mockado) faz o save-temp + cleanup.
             expect(mockDescribeVideo).toHaveBeenCalledTimes(1);
             const [inputArg, mimeArg] = mockDescribeVideo.mock.calls[0];
             expect(mimeArg).toBe('video/mp4');
@@ -434,7 +454,7 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             expect(typeof inputArg.filePath).toBe('string');
         });
 
-        it('aceita mimeType video/quicktime (MOV) e passa para describeVideo com esse MIME', async () => {
+        it('aceita mimeType video/quicktime (MOV) e salva com extensão .mov', async () => {
             const app = createApp(stream);
             const video = Buffer.alloc(256);
             const res = await request(app)
@@ -445,7 +465,7 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             expect(res.body.data.mimeType).toBe('video/quicktime');
             const [inputArg, mimeArg] = mockDescribeVideo.mock.calls[0];
             expect(mimeArg).toBe('video/quicktime');
-            // Arquivo salvo com extensão .mov quando mime é video/quicktime.
+            // Arquivo salvo com extensão .mov quando mime é video/quicktime (decisão do helper).
             expect(inputArg.filePath.endsWith('.mov')).toBe(true);
         });
 
@@ -501,9 +521,8 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
         });
 
         it('415 quando describeVideo lança UNSUPPORTED_VIDEO_MIME (mime chegou ao service)', async () => {
-            // Defesa em profundidade: se um mime novo chegar à rota e o service ainda não
-            // foi atualizado, queremos rejeitar com 415 (não 500). Aqui simulamos esse
-            // caminho mockando a exceção do service.
+            // Defesa em profundidade: se um mime novo chegar ao helper e o describeVideo
+            // interno ainda não foi atualizado, queremos rejeitar com 415 (não 500).
             const { VideoAnalysisError } = await import('../../services/describeVideo');
             mockDescribeVideo.mockRejectedValueOnce(
                 new VideoAnalysisError('UNSUPPORTED_VIDEO_MIME', 'mime não suportado', 415),
@@ -518,7 +537,7 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
 
         it('degrada graciosamente quando describeVideo lança VISION_CALL_FAILED (502 do service)', async () => {
             // Mesmo padrão do `analyze-pdf`: visão indisponível NÃO quebra o chat — o caller
-            // recebe `text: null` e decide como prosseguir.
+            // recebe `text: null` e decide como prosseguir. O helper absorve o 502.
             const { VideoAnalysisError } = await import('../../services/describeVideo');
             mockDescribeVideo.mockRejectedValueOnce(
                 new VideoAnalysisError('VISION_CALL_FAILED', 'provedor caiu', 502),
@@ -580,8 +599,11 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
         });
 
         it('remove o diretório temporário após o processamento (best-effort cleanup)', async () => {
-            // Captura o filePath passado ao service e verifica que o arquivo NÃO existe mais
-            // após a resposta — garantia de que o vídeo não fica persistido no disco.
+            // Captura o filePath passado ao `describeVideo` interno pelo helper e verifica
+            // que o arquivo NÃO existe mais após a resposta — garantia de que o vídeo
+            // não fica persistido no disco. O cleanup é responsabilidade do helper
+            // `describeVideoAttachment` (testado em describeVideo.test.ts); aqui só
+            // validamos a integração.
             let observedPath = '';
             mockDescribeVideo.mockImplementationOnce(async (input: any) => {
                 observedPath = input?.filePath || '';
@@ -595,6 +617,21 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             expect(observedPath).toMatch(/\.mp4$/);
             const fsp = await import('fs/promises');
             await expect(fsp.access(observedPath)).rejects.toThrow();
+        });
+
+        it('eco do tamanho e limite para o cliente (UX: saber se o tamanho estava no limite)', async () => {
+            // Bônus: a rota ecoa bytes/maxBytes no body p/ o cliente saber qual era o teto
+            // aplicado — útil pra mostrar na UI "envie um vídeo menor que X MiB" sem ter que
+            // conhecer o env var no front.
+            const app = createApp(stream);
+            const video = Buffer.alloc(256, 0x42);
+            const res = await request(app)
+                .post('/api/chat/analyze-video')
+                .send({ video: video.toString('base64'), mimeType: 'video/mp4' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.bytes).toBe(256);
+            expect(res.body.data.maxBytes).toBe(1024); // limite mockado
         });
     });
 });

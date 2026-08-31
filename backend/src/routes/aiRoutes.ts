@@ -25,7 +25,9 @@ import { asyncHandler } from '../utils/asyncHandler';
 // { success:false, error:{ code, message, details? } } independentemente da ordem.
 import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
-import { describeVideo } from '../services/describeVideo';
+import { describeVideoAttachment } from '../services/describeVideoAttachment';
+import { VideoAnalysisError } from '../services/describeVideo';
+import { config } from '../config/env';
 
 const log = createLogger('AI');
 const router = Router();
@@ -199,21 +201,38 @@ async function runChatReply(body: any, user: any, jobId?: string, livenessExpire
             }
         }
 
-        // #1030: anexo de vídeo — descreve via glm-4.6v e injeta no contexto, no MESMO ponto
-        // lógico das imagens (que são descritas dentro de generateReply). Validações de
-        // mime/tamanho (415/413) rejeitam a requisição com mensagem PT-BR; falha transitória
-        // do provedor (502) degrada para aviso — não quebra o chat, igual às imagens (#934).
+        // #1030/#1546: anexo de vídeo — descreve via glm-4.6v e injeta no contexto, no MESMO
+        // ponto lógico das imagens (que são descritas dentro de generateReply). Usa o helper
+        // compartilhado `describeVideoAttachment` (mesmo que /chat/analyze-video) — fluxo
+        // da spec: validar tamanho (chatVideoMaxBytes, default 20 MiB), salvar temporariamente
+        // em os.tmpdir(), chamar describeVideo({ filePath }), injetar descrição no contexto,
+        // limpar tmp em finally. Validações mime/tamanho (415/413) rejeitam a requisição com
+        // mensagem PT-BR; falha transitória do provedor (502) degrada para aviso — não
+        // quebra o chat, igual às imagens (#934).
         if (video) {
             try {
-                const description = await describeVideo(video, (videoMimeType || '').trim());
-                enrichedContext += `\n\n[VÍDEO ANEXADO — conteúdo extraído pela visão (glm-4.6v), trate como o que o usuário enviou]:\n${description}`;
-            } catch (videoErr: any) {
-                const code = videoErr?.code as string | undefined;
-                if (code === 'VIDEO_TOO_LARGE' || code === 'UNSUPPORTED_VIDEO_MIME') {
-                    throw new AppError(videoErr?.httpStatus || 400, code, videoErr?.message || 'Anexo de vídeo inválido.');
+                const result = await describeVideoAttachment(video, (videoMimeType || '').trim(), {
+                    maxBytes: config.chatVideoMaxBytes,
+                    origin: '/api/ai/generate-reply',
+                });
+                if (result.description) {
+                    enrichedContext += `\n\n[VÍDEO ANEXADO — conteúdo extraído pela visão (glm-4.6v), trate como o que o usuário enviou]:\n${result.description}`;
+                } else {
+                    enrichedContext += `\n\n[VÍDEO ANEXADO]: não foi possível analisá-lo (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`;
                 }
-                log.warn('describeVideo falhou; seguindo sem análise de vídeo', { code, error: videoErr?.message });
-                enrichedContext += `\n\n[VÍDEO ANEXADO]: não foi possível analisá-lo (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`;
+            } catch (videoErr: any) {
+                if (videoErr instanceof VideoAnalysisError) {
+                    const code = videoErr.code;
+                    if (code === 'VIDEO_TOO_LARGE' || code === 'UNSUPPORTED_VIDEO_MIME') {
+                        throw new AppError(videoErr.httpStatus, code, videoErr.message || 'Anexo de vídeo inválido.');
+                    }
+                    // VISION_CALL_FAILED (502) é transitório — degrada para aviso, mesmo
+                    // padrão do `describeImage` em aiService (#934). NÃO quebra o chat.
+                    log.warn('describeVideo falhou; seguindo sem análise de vídeo', { code, error: videoErr.message });
+                    enrichedContext += `\n\n[VÍDEO ANEXADO]: não foi possível analisá-lo (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`;
+                } else {
+                    throw videoErr;
+                }
             }
         }
 
