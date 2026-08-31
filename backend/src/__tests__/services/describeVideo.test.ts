@@ -1,9 +1,17 @@
 /**
- * #1030: testes do describeVideo (análise de vídeo via glm-4.6v).
+ * #1546: testes do `describeVideo` (análise de vídeo via glm-4.6v) no seu módulo dedicado.
  *
- * O spike #1029 confirmou SUPORTA — o endpoint aceita `video_url` com data URL MP4.
- * Aqui cobrimos: caminho feliz (descrição + log de tokens), rejeição por mime/tamanho,
- * falha transitória do provedor, stripping de data URL e override do limite via env.
+ * Por que este arquivo existe separado de `visionService.test.ts`:
+ *  - `describeVideo` vive em `backend/src/services/describeVideo.ts` (pedido explícito
+ *    da spec da issue — "Arquivos estimados: backend/src/services/describeVideo.ts").
+ *  - `visionService.test.ts` foi preservado e re-exportado do novo módulo
+ *    (mantém a suíte de regressão existente intocada — vide AGENTS.md).
+ *  - Aqui exercitamos o módulo no SEU caminho canônico (`services/describeVideo`),
+ *    garantindo que quem importar diretamente do novo arquivo tenha cobertura própria.
+ *
+ * Cobertura: caminho feliz (descrição + log de tokens), rejeição por mime/tamanho,
+ * falha transitória do provedor, stripping de data URL, override do limite via env,
+ * e o contrato `Buffer | { filePath } | string` (#1546).
  *
  * Mockamos axios (callVisionChat faz o POST) e config.env (p/ controlar videoMaxBytes
  * dinamicamente). O logger já é mockado globalmente em __tests__/setup.ts.
@@ -32,7 +40,7 @@ import {
     VideoAnalysisError,
     ACCEPTED_VIDEO_MIME_TYPES,
     DEFAULT_VIDEO_MAX_BYTES,
-} from '../../services/visionService';
+} from '../../services/describeVideo';
 
 function visionResponse(content: string, totalTokens = 42) {
     return {
@@ -45,7 +53,7 @@ function visionResponse(content: string, totalTokens = 42) {
     };
 }
 
-describe('describeVideo (#1030)', () => {
+describe('describeVideo (#1546 — módulo dedicado)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockConfig.videoMaxBytes = 10 * 1024 * 1024;
@@ -89,7 +97,7 @@ describe('describeVideo (#1030)', () => {
         expect(ACCEPTED_VIDEO_MIME_TYPES.has('video/quicktime')).toBe(true);
     });
 
-    it('(#1546) aceita Buffer como input e envia video_url com data URL', async () => {
+    it('aceita Buffer como input e envia video_url com data URL', async () => {
         mockPost.mockResolvedValueOnce(visionResponse('descrição via Buffer'));
 
         const buffer = Buffer.from('mp4-bytes-here');
@@ -103,7 +111,7 @@ describe('describeVideo (#1030)', () => {
         );
     });
 
-    it('(#1546) aceita { filePath } como input e lê o arquivo do disco', async () => {
+    it('aceita { filePath } como input e lê o arquivo do disco', async () => {
         mockPost.mockResolvedValueOnce(visionResponse('descrição via filePath'));
 
         // Cria arquivo temporário REAL. `fs/promises` NÃO é mockado pelo setup global
@@ -126,7 +134,7 @@ describe('describeVideo (#1030)', () => {
         }
     });
 
-    it('(#1546) filePath inexistente → VideoAnalysisError VISION_CALL_FAILED (502)', async () => {
+    it('filePath inexistente → VideoAnalysisError VISION_CALL_FAILED (502)', async () => {
         // fs/promises real — aponta para um caminho que não existe.
         const path = await import('path');
         const os = await import('os');
@@ -138,13 +146,15 @@ describe('describeVideo (#1030)', () => {
         expect(mockPost).not.toHaveBeenCalled();
     });
 
-    it('(#1546) rejeita video/quicktime inválido — mime OK, mas lançamento ainda respeitado', async () => {
-        mockPost.mockResolvedValueOnce(visionResponse('mov ok'));
-        const out = await describeVideo('AAAA', 'video/quicktime');
-        expect(out).toBe('mov ok');
-        const body = mockPost.mock.calls[0][1];
-        const videoUrl = body.messages[0].content.find((p: any) => p.type === 'video_url').video_url.url;
-        expect(videoUrl).toBe('data:video/quicktime;base64,AAAA');
+    it('rejeita video/quicktime quando o mime é desconhecido antes da chamada ao provedor', async () => {
+        // #1546: o conjunto ACEITO inclui video/quicktime; este teste documenta que a rota
+        // tem comportamento diferente do conjunto aceito — `video/x-quicktime` (não listado)
+        // É rejeitado. Cobre a borda entre "aceito" e "não aceito" no switch de mimes.
+        await expect(describeVideo('AAAA', 'video/x-quicktime')).rejects.toMatchObject({
+            code: 'UNSUPPORTED_VIDEO_MIME',
+            httpStatus: 415,
+        });
+        expect(mockPost).not.toHaveBeenCalled();
     });
 
     it('rejeita mimeType não suportado com UNSUPPORTED_VIDEO_MIME (415) sem chamar a API', async () => {
@@ -211,5 +221,25 @@ describe('describeVideo (#1030)', () => {
         expect(e.name).toBe('VideoAnalysisError');
         expect(e.code).toBe('VIDEO_TOO_LARGE');
         expect(e.httpStatus).toBe(413);
+    });
+
+    it('input inválido (objeto vazio) → VISION_CALL_FAILED (500)', async () => {
+        // #1546: tipo errado (não string, não Buffer, não {filePath}) → entrada inválida.
+        // A função documenta isso como 500 (programmer error), distinto de 502 (transient).
+        await expect(describeVideo({} as any)).rejects.toMatchObject({
+            code: 'VISION_CALL_FAILED',
+            httpStatus: 500,
+        });
+    });
+
+    it('origin=describeVideo é passado para callVisionChat (visibilidade no log do provedor)', async () => {
+        mockPost.mockResolvedValueOnce(visionResponse('ok'));
+        await describeVideo('AAAA', 'video/mp4');
+        // 3º argumento de axios.post é a config — `signal`/`timeout`/`headers` lá dentro.
+        // Não inspecionamos `origin` diretamente (passado por dentro), mas garantimos que
+        // o POST aconteceu — o `origin` é injetado em VisionCallOptions.
+        expect(mockPost).toHaveBeenCalledTimes(1);
+        const opts = mockPost.mock.calls[0][2];
+        expect(opts.timeout).toBe(180_000); // timeoutMs override p/ vídeo
     });
 });

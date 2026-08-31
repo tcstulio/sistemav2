@@ -35,6 +35,9 @@ import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
 import { getProgressStream, type ProgressEvent } from '../agent/progressStream';
 import { analyzePdf } from '../services/analyzePdf';
+import { describeVideoAttachment } from '../services/describeVideoAttachment';
+import { VideoAnalysisError } from '../services/describeVideo';
+import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('ChatRoutes');
@@ -232,6 +235,99 @@ router.post(
         // Contrato mantido: devolve apenas o texto extraído/OCR (string única).
         const text = await analyzePdf(pdfBuffer);
         return ok(res, { text });
+    }),
+);
+
+/**
+ * POST /chat/analyze-video
+ *
+ * #1546 — Devolve ao agente a descrição textual de um vídeo curto anexado ao chat.
+ * Análogo ao `/chat/analyze-pdf` (decodifica base64 → processa → devolve só o texto
+ * pra o caller decidir como injetar no `messages` do loop de tools do agente). O
+ * serviço de visão é o mesmo `describeVideo` já integrado em `/api/ai/generate-reply`
+ * (issue #1030) — esta rota adiciona o ponto de entrada HTTP específico do chat,
+ * com validações de tamanho/mime próprias (limite configurável via env).
+ *
+ * O fluxo da spec — "validar tamanho, salvar temporariamente, chamar describeVideo,
+ * injetar no messages" — vive agora em `describeVideoAttachment` (helper
+ * compartilhado em `services/describeVideo.ts`). Esta rota é uma fina camada HTTP
+ * por cima do helper: parseia o body, mapeia os erros tipados em respostas HTTP
+ * adequadas e devolve `{ text, mimeType, path: "video_url", bytes, maxBytes }`.
+ * O MESMO helper é reusado por `/api/ai/generate-reply` — assim as duas rotas
+ * seguem o fluxo canônico sem divergir (uma validaria, outra não; uma limparia
+ * o tmp, outra vazaria).
+ *
+ *   1. Decodifica base64 + valida mime (zod enum + service).
+ *   2. Helper valida tamanho contra `config.chatVideoMaxBytes` (env `CHAT_VIDEO_MAX_BYTES`,
+ *      padrão 20 MiB). Acima disso → 413 com mensagem clara (UX de "reduza o tamanho").
+ *   3. Helper salva o vídeo em diretório temporário (mkdtemp em `os.tmpdir()`) — atende
+ *      o requisito da issue ("salvar temporariamente") e dá flexibilidade p/ tools
+ *      externas (ffmpeg preview, auditoria) operarem no arquivo.
+ *   4. Helper chama `describeVideo({ filePath, mimeType })` que faz POST no glm-4.6v
+ *      com `video_url` (data URL). Remove o diretório em `finally` (best-effort).
+ *   5. Helper mapeia VisionCallFailed (502) em `description: null` (degradação graciosa,
+ *      mesmo padrão do `analyze-pdf` quando visão cai). 413/415 SOBEM como exceção
+ *      para esta rota traduzir em AppError e o errorHandler renderizar o envelope.
+ *
+ * Critérios de aceite (#1546):
+ *   - Vídeo curto (≤ limite) → 200 com `text` populado + `path: "video_url"`.
+ *   - Vídeo grande → 413 VIDEO_TOO_LARGE com mensagem clara.
+ *   - Logs distinguem o caminho vídeo do caminho imagem (`/chat/analyze-video` vs
+ *     `/chat/analyze-pdf`) e o `path` da resposta (`video_url`) difere dos demais.
+ *   - Não interfere em imagem: a rota de PDF e a de imagem continuam intactas.
+ */
+const ChatAnalyzeVideoSchema = z.object({
+    video: z.string().min(1, 'Vídeo (base64) é obrigatório.'),
+    mimeType: z.enum(['video/mp4', 'video/quicktime']),
+});
+
+router.post(
+    '/analyze-video',
+    asyncHandler(async (req: Request, res: Response) => {
+        const parsed = ChatAnalyzeVideoSchema.safeParse(req.body);
+        if (!parsed.success) {
+            throw new AppError(
+                400,
+                'BAD_REQUEST',
+                'Campos `video` (base64) e `mimeType` (`video/mp4` ou `video/quicktime`) são obrigatórios.'
+            );
+        }
+        const { video, mimeType } = parsed.data;
+
+        // #1546: delega para o helper compartilhado `describeVideoAttachment` — mesmo
+        // fluxo que `/api/ai/generate-reply` (validar tamanho, salvar temporariamente,
+        // chamar describeVideo com filePath, limpar em finally). Evita divergência entre
+        // as duas rotas (uma validaria e outra não; uma limparia tmp e outra vazaria).
+        let result;
+        try {
+            result = await describeVideoAttachment(video, mimeType, {
+                maxBytes: config.chatVideoMaxBytes,
+                origin: '/chat/analyze-video',
+            });
+        } catch (videoErr: unknown) {
+            // 413/415 são erros do usuário — rejeitam a request com mensagem PT-BR clara.
+            // Outros VideoAnalysisError (programmer error) sobem para o errorHandler.
+            if (videoErr instanceof VideoAnalysisError) {
+                const code = videoErr.code;
+                if (code === 'UNSUPPORTED_VIDEO_MIME' || code === 'VIDEO_TOO_LARGE') {
+                    throw new AppError(videoErr.httpStatus, code, videoErr.message);
+                }
+            }
+            throw videoErr;
+        }
+
+        // path sempre é `video_url` — distingue dos caminhos de imagem
+        // (`pdf_parse` / `ocr_vision` do analyze-pdf) nos logs estruturados e na
+        // resposta para o consumer. `description` já vem null quando o provedor caiu
+        // (degradação graciosa idêntica à do `describeImage` em `aiService`).
+        return ok(res, {
+            text: result.description,
+            mimeType: result.mimeType,
+            // `path` discrimina o caminho multimodal usado; `null` quando a visão caiu.
+            path: 'video_url' as const,
+            bytes: result.bytes,
+            maxBytes: result.maxBytes,
+        });
     }),
 );
 
