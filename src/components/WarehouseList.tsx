@@ -51,6 +51,21 @@ import {
 
 const log = logger.child('WarehouseList');
 
+// #1110/#1583 (Padrão 2 — épico #1087): inputs numéricos sem fallback geram NaN
+// e travam a requisição. Sanitizamos o valor lido do <input type="number"> para
+// garantir que string vazia, NaN, Infinity ou texto não-numérico virem `0` em
+// vez de contaminarem a chamada à API. Validação adicional `Number.isFinite`
+// no submit bloqueia a submissão caso algo escape do guard do input.
+function parseQtyInputValue(raw: string): number {
+    if (raw === '') return 0;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function isValidPositiveQty(qty: number): boolean {
+    return Number.isFinite(qty) && qty > 0;
+}
+
 interface WarehouseStockItem {
     product: Product;
     qty: number;
@@ -524,7 +539,7 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
             toast.warning('Por favor selecione produto e armazéns');
             return;
         }
-        if (!(transferForm.qty > 0) || !Number.isFinite(transferForm.qty)) {
+        if (!isValidPositiveQty(transferForm.qty)) {
             toast.warning('A quantidade deve ser maior que zero');
             return;
         }
@@ -549,7 +564,7 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
             toast.warning('Por favor selecione produto e armazém');
             return;
         }
-        if (!(correctionForm.qty > 0) || !Number.isFinite(correctionForm.qty)) {
+        if (!isValidPositiveQty(correctionForm.qty)) {
             toast.warning('A quantidade deve ser maior que zero');
             return;
         }
@@ -692,7 +707,7 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
-                        <input type="number" min="1" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.qty} onChange={e => setTransferForm({ ...transferForm, qty: e.target.value === '' ? 0 : parseInt(e.target.value) || 0 })} required />
+                        <input type="number" min="1" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.qty} onChange={e => setTransferForm({ ...transferForm, qty: parseQtyInputValue(e.target.value) })} required />
                     </div>
                 </form>
             </Modal>
@@ -743,7 +758,7 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
-                            <input type="number" min="1" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={correctionForm.qty} onChange={e => setCorrectionForm({ ...correctionForm, qty: e.target.value === '' ? 0 : parseInt(e.target.value) || 0 })} required />
+                            <input type="number" min="1" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={correctionForm.qty} onChange={e => setCorrectionForm({ ...correctionForm, qty: parseQtyInputValue(e.target.value) })} required />
                         </div>
                     </div>
                     <div>
