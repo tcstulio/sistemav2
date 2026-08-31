@@ -11,6 +11,22 @@ let installedErrorListener: ((event: ErrorEvent) => void) | null = null;
 let installedRejectionListener: ((event: PromiseRejectionEvent) => void) | null = null;
 
 /**
+ * Normaliza o `VITE_SENTRY_DSN` lido de `import.meta.env`.
+ *
+ * Aceita apenas strings não-vazias que sejam URLs válidas; qualquer outro valor
+ * (incluindo `undefined`, string vazia e a string literal `"undefined"`, que
+ * alguns ambientes produzem quando se atribui `undefined` ao proxy de
+ * `import.meta.env`) é tratado como DSN ausente.
+ */
+function readSentryDsn(): string {
+    const raw = import.meta.env.VITE_SENTRY_DSN;
+    if (typeof raw !== 'string') return '';
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === 'undefined' || trimmed === 'null') return '';
+    return trimmed;
+}
+
+/**
  * Inicializa o Sentry no frontend.
  *
  * No-op quando `VITE_SENTRY_DSN` não está definido — não quebra o app em dev
@@ -21,7 +37,7 @@ let installedRejectionListener: ((event: PromiseRejectionEvent) => void) | null 
  * que encaminham qualquer exceção ao Sentry — independente da origem.
  */
 export function initSentry(): void {
-    const dsn = import.meta.env.VITE_SENTRY_DSN;
+    const dsn = readSentryDsn();
     if (!dsn) return;
 
     Sentry.init({

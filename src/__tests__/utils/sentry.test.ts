@@ -143,7 +143,14 @@ describe('sentry (issue #1773)', () => {
         it('forwards PromiseRejectionEvent with Error reason to Sentry.captureException', async () => {
             initSentry();
             const reason = new Error('rejected promise');
-            const event = new PromiseRejectionEvent('unhandledrejection', { reason, promise: Promise.reject(reason) });
+            // Cria uma promise rejeitada e suprime o unhandled-rejection no nível
+            // do Node (anexa um .catch no-op) — sem isso o Vitest reporta
+            // "Unhandled Rejection" durante o test run e o CI falha, embora a
+            // asserção abaixo continue passando. O `PromiseRejectionEvent`
+            // despachado manualmente continua disparando o listener normalmente.
+            const innerPromise = Promise.reject(reason);
+            innerPromise.catch(() => undefined);
+            const event = new PromiseRejectionEvent('unhandledrejection', { reason, promise: innerPromise });
             window.dispatchEvent(event);
 
             expect(mocks.captureExceptionMock).toHaveBeenCalledTimes(1);
@@ -154,9 +161,11 @@ describe('sentry (issue #1773)', () => {
 
         it('wraps string rejection reasons into Error instances', () => {
             initSentry();
+            const innerPromise = Promise.reject('string-reason');
+            innerPromise.catch(() => undefined);
             const event = new PromiseRejectionEvent('unhandledrejection', {
                 reason: 'string-reason',
-                promise: Promise.reject('string-reason'),
+                promise: innerPromise,
             });
             window.dispatchEvent(event);
 
@@ -169,9 +178,11 @@ describe('sentry (issue #1773)', () => {
         it('serializes non-string, non-Error rejection reasons safely', () => {
             initSentry();
             const reason = { code: 'EBOOM', detail: { nested: true } };
+            const innerPromise = Promise.reject(reason);
+            innerPromise.catch(() => undefined);
             const event = new PromiseRejectionEvent('unhandledrejection', {
                 reason,
-                promise: Promise.reject(reason),
+                promise: innerPromise,
             });
             window.dispatchEvent(event);
 
