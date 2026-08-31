@@ -38,7 +38,7 @@ import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
 import { getProgressStream, type ProgressEvent } from '../agent/progressStream';
 import { analyzePdf } from '../services/analyzePdf';
-import { describeVideo, VideoAnalysisError } from '../services/visionService';
+import { describeVideo, VideoAnalysisError } from '../services/describeVideo';
 import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
 

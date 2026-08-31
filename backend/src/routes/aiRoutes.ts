@@ -25,7 +25,7 @@ import { asyncHandler } from '../utils/asyncHandler';
 // { success:false, error:{ code, message, details? } } independentemente da ordem.
 import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
-import { describeVideo } from '../services/visionService';
+import { describeVideo } from '../services/describeVideo';
 
 const log = createLogger('AI');
 const router = Router();

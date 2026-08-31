@@ -50,12 +50,13 @@ vi.mock('../../utils/logger', () => ({
 const mockAnalyzePdf = vi.hoisted(() => vi.fn());
 vi.mock('../../services/analyzePdf', () => ({ analyzePdf: mockAnalyzePdf }));
 
-// #1546 — describeVideo (do visionService) é o serviço de descrição de vídeo; mockamos
-// p/ isolar a rota. O mock do VideoAnalysisError permite testar a propagação tipada
-// dos códigos 415/413/502 (mapeados em respostas HTTP específicas).
+// #1546 — describeVideo (do describeVideo.ts — explicitamente separado do visionService
+// pela issue) é o serviço de descrição de vídeo; mockamos p/ isolar a rota. O mock do
+// VideoAnalysisError permite testar a propagação tipada dos códigos 415/413/502 (mapeados
+// em respostas HTTP específicas).
 const mockDescribeVideo = vi.hoisted(() => vi.fn());
-vi.mock('../../services/visionService', async () => {
-    const actual = await vi.importActual<typeof import('../../services/visionService')>('../../services/visionService');
+vi.mock('../../services/describeVideo', async () => {
+    const actual = await vi.importActual<typeof import('../../services/describeVideo')>('../../services/describeVideo');
     return {
         ...actual,
         describeVideo: mockDescribeVideo,
@@ -503,7 +504,7 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             // Defesa em profundidade: se um mime novo chegar à rota e o service ainda não
             // foi atualizado, queremos rejeitar com 415 (não 500). Aqui simulamos esse
             // caminho mockando a exceção do service.
-            const { VideoAnalysisError } = await import('../../services/visionService');
+            const { VideoAnalysisError } = await import('../../services/describeVideo');
             mockDescribeVideo.mockRejectedValueOnce(
                 new VideoAnalysisError('UNSUPPORTED_VIDEO_MIME', 'mime não suportado', 415),
             );
@@ -518,7 +519,7 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
         it('degrada graciosamente quando describeVideo lança VISION_CALL_FAILED (502 do service)', async () => {
             // Mesmo padrão do `analyze-pdf`: visão indisponível NÃO quebra o chat — o caller
             // recebe `text: null` e decide como prosseguir.
-            const { VideoAnalysisError } = await import('../../services/visionService');
+            const { VideoAnalysisError } = await import('../../services/describeVideo');
             mockDescribeVideo.mockRejectedValueOnce(
                 new VideoAnalysisError('VISION_CALL_FAILED', 'provedor caiu', 502),
             );

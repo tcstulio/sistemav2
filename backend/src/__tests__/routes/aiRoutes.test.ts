@@ -38,8 +38,11 @@ vi.mock('../../services/aiService', () => ({
 }));
 
 // #1030: describeVideo é chamado pelo handler quando há anexo de vídeo. Mock evita HTTP real.
+// #1546: descreveVideo agora vive em `services/describeVideo.ts` (separado do visionService);
+// o mock precisa apontar para o novo módulo — caso contrário, o handler de aiRoutes importa
+// a função real e dispara o spike do glm-4.6v durante o teste.
 const mockDescribeVideo = vi.hoisted(() => vi.fn());
-vi.mock('../../services/visionService', () => ({
+vi.mock('../../services/describeVideo', () => ({
     describeVideo: mockDescribeVideo,
 }));
 
