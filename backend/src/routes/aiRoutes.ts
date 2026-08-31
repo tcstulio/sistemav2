@@ -337,7 +337,9 @@ router.post('/generate-reply-async', asyncHandler(async (req, res) => {
     // #1011: repassa o jobId ao runChatReply para que cada tool-call atualize o
     // heartbeat. O closure lê `jobId` no microtask (após o assign abaixo retornar).
     let jobId = '';
-    jobId = aiJobService.enqueue(() => runChatReply(body, user, jobId, aiJobService.getLivenessExpiresAt(jobId)), body.module);
+    // #1150: serializa msgs da MESMA sessão (msg2 só inicia após msg1 terminar e persistir).
+    // Sessões distintas continuam paralelas até o limite global MAX_CONCURRENT do aiJobService.
+    jobId = aiJobService.enqueue(() => runChatReply(body, user, jobId, aiJobService.getLivenessExpiresAt(jobId)), body.module, body.sessionId);
     const livenessExpiresAt = aiJobService.getLivenessExpiresAt(jobId);
     // 202 Accepted: job enfileirado (não há helper p/ 202 em apiResponse; envelope manual).
     return res.status(202).json({ success: true, data: { jobId, status: 'queued', livenessExpiresAt } });

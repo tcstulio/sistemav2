@@ -13,6 +13,16 @@ const log = createLogger('AiJob');
 // isolando o listener de tool-calls e o contexto de permissões por job. Isso permite N usuários
 // conversando simultaneamente sem competir pela mesma vaga.
 //
+// #1150: a fila global foi REFORMULADA para serializar por sessionId. Hoje, sem chave de
+// sessão, duas mensagens da MESMA sessão rodavam em paralelo, quebrando o contexto da
+// conversa e podendo duplicar ações imediatas (validate_invoice, notify_team, send_whatsapp,
+// merge_opencode_task) sem idempotência. Agora, cada sessionId tem sua própria 'tail' no
+// `sessionTails` Map — o `enqueue` encadeia `tail = tail.then(() => runJob(), () => runJob())`,
+// garantindo que mensagens da mesma sessão rodem em série (a 2ª só inicia após a 1ª terminar
+// e persistir sua resposta). O paralelismo entre sessões distintas é preservado via um
+// semáforo global separado (`acquireSlot`/`releaseSlot`) que conta jobs em voo entre TODAS
+// as sessões, respeitando MAX_CONCURRENT.
+//
 // #1012: registry persistido em storage durável (arquivo JSON). Cada update() no Map faz
 // write-through atômico no disco; no boot, restore() reidrata os jobs do disco. A data de
 // expiração (30min) é gravada junto (expiresAt) — mesmo após restart, jobs expirados não
@@ -76,13 +86,28 @@ const jobs = new Map<string, AiJob>();
 const TTL_MS = 30 * 60 * 1000; // mantém o resultado 30min p/ o cliente buscar
 const MAX_CONCURRENT = 3;
 
-let running = 0;
-const queue: Array<() => void> = [];
 const deadlineTimers = new Map<string, NodeJS.Timeout>();
 
 // #1011: timestamp do último write-through por job (setJob). Base para o cálculo
 // lastHeartbeat = max(lastWrite, now) no reportProgress — nunca retrocede o heartbeat.
 const lastWriteAt = new Map<string, number>();
+
+// #1150: per-session tail chain. Cada sessionId tem sua própria cauda de promises —
+// encadear `run()` nessa cauda serializa os jobs dessa sessão (a 2ª msg só inicia
+// após a 1ª terminar e persistir). Sessões distintas têm caudas independentes,
+// permitindo paralelismo entre si (limitado pelo semáforo global abaixo).
+const sessionTails = new Map<string, Promise<void>>();
+
+// #1150: contador p/ gerar chaves únicas p/ chamadas sem sessionId. Cada enqueue sem
+// sessionId vira uma "sessão" própria, sem serialização cruzada — preserva o
+// comportamento pré-#1150 de concorrência direta pelo semáforo global.
+let noSessionCounter = 0;
+
+// #1150: semáforo global contando jobs em voo entre TODAS as sessões. MAX_CONCURRENT
+// vagas; ao liberar, a vaga é transferida diretamente ao próximo waiter (sem
+// decrement+increment, evitando race).
+let inflight = 0;
+const semaphoreWaiters: Array<() => void> = [];
 
 function isExpired(j: AiJob, now: number = Date.now()): boolean {
     return j.expiresAt !== undefined && now >= j.expiresAt;
@@ -121,8 +146,49 @@ function toStatusInfo(job: AiJob): AiJobStatusInfo {
         livenessExpiresAt: job.livenessExpiresAt,
         currentProvider: job.currentProvider ?? null,
         progressPct: typeof job.progressPct === 'number' ? clampPct(job.progressPct) : 0,
-        queuePosition: job.status === 'queued' ? queue.length : null,
+        // #1150: estimativa — count de queued jobs (incluindo espera da sessão e do semáforo),
+        // excluindo o próprio. > 0 sempre que houver outro job esperando.
+        queuePosition: job.status === 'queued' ? Math.max(0, countQueuedJobs() - 1) : null,
     };
+}
+
+/** #1150: adquire 1 vaga do semáforo global. Resolve quando `inflight < MAX_CONCURRENT` */
+function acquireSlot(): Promise<void> {
+    if (inflight < MAX_CONCURRENT) {
+        inflight++;
+        return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+        semaphoreWaiters.push(() => {
+            // O releaseSlot() transferiu a vaga p/ nós — contamos a partir daqui.
+            inflight++;
+            resolve();
+        });
+    });
+}
+
+/** #1150: libera 1 vaga. Se houver waiter, transfere a vaga (sem decrement); senão, decrementa. */
+function releaseSlot(): void {
+    const next = semaphoreWaiters.shift();
+    if (next) {
+        next();
+    } else {
+        inflight--;
+    }
+}
+
+/**
+ * #1150: estimativa da posição na fila global. Com a reformulação por sessionId, a ordem
+ * FIFO global deixou de existir (per-session vs. semáforo); expomos este número para que
+ * a API get()/getJobStatus() ainda devolva algo > 0 p/ jobs em espera. Conta todos os
+ * jobs com status 'queued' (seja esperando a vez da sessão, seja esperando vaga do semáforo).
+ */
+function countQueuedJobs(): number {
+    let n = 0;
+    for (const j of jobs.values()) {
+        if (j.status === 'queued') n++;
+    }
+    return n;
 }
 
 /** Write-through: atualiza o Map e persiste atomicamente no storage durável. */
@@ -182,12 +248,6 @@ function cleanup() {
     }
 }
 
-function pump() {
-    if (running >= MAX_CONCURRENT) return;
-    const next = queue.shift();
-    if (next) next();
-}
-
 /**
  * Read-on-startup: reidrata os jobs persistidos para a memória. Jobs não-terminais
  * (queued/running) não podem ser retomados (a fn não é serializável) → marcados como erro
@@ -234,8 +294,16 @@ function restore(): void {
 }
 
 export const aiJobService = {
-    /** Enfileira um job; retorna o jobId imediatamente. `fn` roda em background. */
-    enqueue(fn: () => Promise<any>, label?: string): string {
+    /**
+     * Enfileira um job; retorna o jobId imediatamente. `fn` roda em background.
+     *
+     * #1150: 3º parâmetro opcional `sessionId` — quando fornecido, jobs do mesmo
+     * sessionId são serializados (msg2 só inicia após msg1 terminar e persistir).
+     * Sem sessionId, o job entra direto no pool global do semáforo (MAX_CONCURRENT)
+     * sem encadear em nenhuma sessão específica — preserva o comportamento dos
+     * callers atuais que não passam sessionId.
+     */
+    enqueue(fn: () => Promise<any>, label?: string, sessionId?: string): string {
         cleanup();
         const id = randomUUID();
         const createdAt = Date.now();
@@ -245,24 +313,36 @@ export const aiJobService = {
         scheduleDeadline(job);
         log.info('Job de IA criado', {
             jobId: id,
+            sessionId: sessionId ?? null,
             startedAt: new Date(createdAt).toISOString(),
             livenessExpiresAt,
             maxChainedCalls: MAX_CHAINED_CALLS,
             totalBudgetMs: Date.parse(livenessExpiresAt) - createdAt,
         });
 
-        const run = () => {
-            const current = jobs.get(id);
-            if (!current || current.status === 'error' || current.status === 'done') {
-                pump();
-                return;
-            }
-            running++;
-            const startedAt = Date.now();
-            patchJob(id, { status: 'running', startedAt, lastHeartbeat: startedAt });
-            Promise.resolve()
-                .then(fn)
-                .then((result) => {
+        // #1150: chave de sessão p/ encadear na tail. Sem sessionId → chave única
+        // (sem serialização cruzada entre chamadas anônimas).
+        const sessionKey = sessionId ?? `__no_session_${++noSessionCounter}`;
+
+        // O trabalho real do job: adquire vaga do semáforo, transiciona p/ running,
+        // executa fn(), trata resultado/erro, libera vaga.
+        const run = async (): Promise<void> => {
+            await acquireSlot();
+            try {
+                const current = jobs.get(id);
+                if (!current || current.status === 'error' || current.status === 'done') {
+                    return;
+                }
+                const startedAt = Date.now();
+                patchJob(id, { status: 'running', startedAt, lastHeartbeat: startedAt });
+                log.info('Job de IA iniciando execução', {
+                    jobId: id,
+                    sessionId: sessionId ?? null,
+                    label,
+                    queuePosition: countQueuedJobs(),
+                });
+                try {
+                    const result = await fn();
                     const currentJob = jobs.get(id);
                     if (!currentJob || currentJob.status === 'error' || Date.now() >= Date.parse(currentJob.livenessExpiresAt)) {
                         if (currentJob?.status !== 'error') markDeadlineExceeded(id);
@@ -271,8 +351,13 @@ export const aiJobService = {
                     const finishedAt = Date.now();
                     clearDeadline(id);
                     patchJob(id, { status: 'done', result, finishedAt, expiresAt: finishedAt + TTL_MS });
-                })
-                .catch((e: any) => {
+                    log.info('Job de IA concluído', {
+                        jobId: id,
+                        sessionId: sessionId ?? null,
+                        label,
+                        durationMs: finishedAt - startedAt,
+                    });
+                } catch (e: any) {
                     const currentJob = jobs.get(id);
                     if (!currentJob || currentJob.status === 'error') return;
                     const finishedAt = Date.now();
@@ -286,12 +371,29 @@ export const aiJobService = {
                         finishedAt,
                         expiresAt: finishedAt + TTL_MS,
                     });
-                    log.warn(`Job ${id} falhou: ${error}`);
-                })
-                .finally(() => { running--; cleanup(); pump(); });
+                    log.warn(`Job ${id} falhou: ${error}`, { sessionId: sessionId ?? null, label });
+                }
+            } finally {
+                releaseSlot();
+                cleanup();
+            }
         };
 
-        if (running < MAX_CONCURRENT) run(); else queue.push(run);
+        // #1150: encadeia na tail da sessão. O 2º argumento do `then` garante que uma
+        // rejeição do job anterior NÃO quebra a corrente — o próximo job ainda roda.
+        const prevTail = sessionTails.get(sessionKey) ?? Promise.resolve();
+        const newTail = prevTail.then(() => run(), () => run());
+        sessionTails.set(sessionKey, newTail);
+
+        // GC da tail: quando a corrente terminar e ninguém mais encadeou nesta sessão,
+        // removemos a entrada p/ o Map não crescer indefinidamente em processos longos.
+        // O `.catch(() => {})` engole rejeição hipotética do finally (defesa em profundidade).
+        newTail.finally(() => {
+            if (sessionTails.get(sessionKey) === newTail) {
+                sessionTails.delete(sessionKey);
+            }
+        }).catch(() => { /* chain já é resolvida pelo 2º arg do then acima */ });
+
         return id;
     },
 
@@ -300,8 +402,10 @@ export const aiJobService = {
      * que precisam do valor (ex.: Judge do TaskRunner) sem colidir com jobs de chat —
      * o listener de tool-calls do aiService é global, então toda chamada LLM de longa
      * duração deve passar por aqui.
+     *
+     * #1150: aceita sessionId opcional p/ serializar com o chat quando aplicável.
      */
-    runAndWait<T>(fn: () => Promise<T>, label?: string): Promise<T> {
+    runAndWait<T>(fn: () => Promise<T>, label?: string, sessionId?: string): Promise<T> {
         return new Promise<T>((resolve, reject) => {
             this.enqueue(async () => {
                 try {
@@ -312,7 +416,7 @@ export const aiJobService = {
                     reject(e);
                     throw e;
                 }
-            }, label);
+            }, label, sessionId);
         });
     },
 
@@ -323,7 +427,10 @@ export const aiJobService = {
         const job = jobs.get(id);
         if (!job) return { ok: false, reason: 'missing' };
         if (isExpired(job)) return { ok: false, reason: 'expired' };
-        return { ok: true, job, queueAhead: job.status === 'queued' ? queue.length : 0 };
+        // #1150: estimativa — count de queued jobs (incluindo espera da sessão e do semáforo),
+        // excluindo o próprio job. Garante > 0 sempre que houver outro job esperando.
+        const queueAhead = job.status === 'queued' ? Math.max(0, countQueuedJobs() - 1) : 0;
+        return { ok: true, job, queueAhead };
     },
 
     /**

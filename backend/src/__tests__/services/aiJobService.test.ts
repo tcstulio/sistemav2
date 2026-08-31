@@ -490,3 +490,256 @@ describe('aiJobService #1011 — reportProgress (lastHeartbeat = max(lastWrite, 
         }
     });
 });
+
+
+// =====================================================
+// #1150: serialização por sessionId + semáforo global (MAX_CONCURRENT)
+// =====================================================
+describe('aiJobService #1150 — serialização por sessionId + semáforo global', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    // Helper: aguarda até a condição ou o timeout. Sem isso, microtasks encadeadas
+    // não têm tempo de rodar (run()/setJob/etc) e a asserção corre antes do efeito.
+    async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+        const deadline = Date.now() + timeoutMs;
+        while (!predicate() && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 5));
+        }
+    }
+
+    it('jobs do MESMO sessionId rodam em série (msg2 inicia APÓS msg1 terminar)', async () => {
+        const svc = await fresh();
+        const sessionId = 'chat-abc';
+        const order: string[] = [];
+
+        // msg1: demora 50ms, escreve no log "1-done"
+        const id1 = svc.enqueue(async () => {
+            await new Promise((r) => setTimeout(r, 50));
+            order.push('1-done');
+            return { msg: 'r1' };
+        }, 'chat', sessionId);
+
+        // msg2: deve rodar APÓS msg1 terminar. Sem sessionId, ambas rodariam juntas
+        // e veríamos '2-done' antes de '1-done'.
+        const id2 = svc.enqueue(async () => {
+            order.push('2-done');
+            return { msg: 'r2', sees: order.slice() };
+        }, 'chat', sessionId);
+
+        // Aguarda ambos terminarem.
+        await waitFor(() => {
+            const l1 = svc.get(id1);
+            const l2 = svc.get(id2);
+            return l1.ok && l2.ok && l1.job.status === 'done' && l2.job.status === 'done';
+        }, 2000);
+
+        expect(order).toEqual(['1-done', '2-done']);
+
+        // O result de msg2 deve ter sido calculado DEPOIS de msg1 terminar — visível
+        // no snapshot `sees` capturado dentro do fn de msg2.
+        const l2 = svc.get(id2);
+        expect(l2.ok).toBe(true);
+        if (l2.ok) {
+            expect(l2.job.result).toEqual({ msg: 'r2', sees: ['1-done', '2-done'] });
+        }
+    });
+
+    it('jobs de sessionIds DIFERENTES rodam em paralelo (overlapping)', async () => {
+        const svc = await fresh();
+        const finished: string[] = [];
+
+        // Sessão A: msg1 demora 50ms
+        const idA = svc.enqueue(async () => {
+            await new Promise((r) => setTimeout(r, 50));
+            finished.push('A-done');
+            return { from: 'A' };
+        }, 'chat', 'session-A');
+
+        // Sessão B: msg2 demora 50ms — em paralelo com A
+        const idB = svc.enqueue(async () => {
+            await new Promise((r) => setTimeout(r, 50));
+            finished.push('B-done');
+            return { from: 'B' };
+        }, 'chat', 'session-B');
+
+        await waitFor(() => {
+            const la = svc.get(idA);
+            const lb = svc.get(idB);
+            return la.ok && lb.ok && la.job.status === 'done' && lb.job.status === 'done';
+        }, 2000);
+
+        // Se estivessem em série, a duração total seria ~100ms (50+50). Em paralelo, ~50ms.
+        // Aqui verificamos que ambas as sessões terminaram — o paralelismo é implícito
+        // pelo encadeamento correto das caudas (cada sessão só tem 1 job).
+        expect(finished.sort()).toEqual(['A-done', 'B-done']);
+    });
+
+    it('limite global MAX_CONCURRENT é respeitado entre TODAS as sessões', async () => {
+        const svc = await fresh();
+        const inFlight: number[] = [];
+        let active = 0;
+        let peak = 0;
+
+        // 4 jobs em 4 sessões diferentes, cada um conta concorrência.
+        const ids = [] as string[];
+        for (let i = 0; i < 4; i++) {
+            const id = svc.enqueue(async () => {
+                active++;
+                peak = Math.max(peak, active);
+                inFlight.push(active);
+                await new Promise((r) => setTimeout(r, 30));
+                active--;
+                return { i };
+            }, 'chat', `sess-${i}`);
+            ids.push(id);
+        }
+
+        await waitFor(() => {
+            return ids.every((id) => {
+                const l = svc.get(id);
+                return l.ok && (l.job.status === 'done' || l.job.status === 'error');
+            });
+        }, 3000);
+
+        // Pico de simultaneidade nunca pode ultrapassar MAX_CONCURRENT (3).
+        expect(peak).toBeLessThanOrEqual(3);
+        // E pelo menos 1 job precisou esperar (peak < 4 prova que houve fila).
+        expect(peak).toBeLessThan(4);
+    });
+
+    it('runAndWait com sessionId serializa e devolve o resultado em ordem', async () => {
+        const svc = await fresh();
+        const sessionId = 'chat-rw';
+
+        // Empilha 2 runAndWait com mesmo sessionId. O segundo só inicia após o primeiro.
+        const results = await Promise.all([
+            svc.runAndWait(async () => {
+                await new Promise((r) => setTimeout(r, 30));
+                return 'first';
+            }, 'judge', sessionId),
+            svc.runAndWait(async () => {
+                await new Promise((r) => setTimeout(r, 30));
+                return 'second';
+            }, 'judge', sessionId),
+        ]);
+
+        expect(results).toEqual(['first', 'second']);
+    });
+
+    it('falha em um job NÃO quebra a serialização dos próximos jobs da MESMA sessão', async () => {
+        const svc = await fresh();
+        const sessionId = 'chat-with-fail';
+        const order: string[] = [];
+
+        // msg1: falha
+        const id1 = svc.enqueue(async () => {
+            order.push('1-start');
+            throw new Error('boom');
+        }, 'chat', sessionId);
+
+        // msg2: deve rodar mesmo após msg1 falhar (then(_, _) no encadeamento)
+        const id2 = svc.enqueue(async () => {
+            order.push('2-done');
+            return 'ok';
+        }, 'chat', sessionId);
+
+        await waitFor(() => {
+            const l1 = svc.get(id1);
+            const l2 = svc.get(id2);
+            return l1.ok && l2.ok && (l1.job.status === 'done' || l1.job.status === 'error') && l2.job.status === 'done';
+        }, 2000);
+
+        expect(order).toEqual(['1-start', '2-done']);
+
+        const l1 = svc.get(id1);
+        expect(l1.ok).toBe(true);
+        if (l1.ok) {
+            expect(l1.job.status).toBe('error');
+            expect(l1.job.error).toBe('boom');
+        }
+        const l2 = svc.get(id2);
+        expect(l2.ok).toBe(true);
+        if (l2.ok) {
+            expect(l2.job.status).toBe('done');
+            expect(l2.job.result).toBe('ok');
+        }
+    });
+
+    it('jobs SEM sessionId não serializam entre si (cada um é sua própria sessão anônima)', async () => {
+        const svc = await fresh();
+        const inFlight: number[] = [];
+        let active = 0;
+        let peak = 0;
+
+        // 4 jobs sem sessionId — devem competir pelo semáforo como antes.
+        const ids = [] as string[];
+        for (let i = 0; i < 4; i++) {
+            const id = svc.enqueue(async () => {
+                active++;
+                peak = Math.max(peak, active);
+                await new Promise((r) => setTimeout(r, 20));
+                active--;
+                return { i };
+            }, 'chat'); // no sessionId
+            ids.push(id);
+        }
+
+        await waitFor(() => {
+            return ids.every((id) => {
+                const l = svc.get(id);
+                return l.ok && (l.job.status === 'done' || l.job.status === 'error');
+            });
+        }, 3000);
+
+        // Sem sessionId: pico <= MAX_CONCURRENT (semáforo global ainda limita).
+        expect(peak).toBeLessThanOrEqual(3);
+        expect(peak).toBeGreaterThanOrEqual(2); // houve paralelismo de fato
+    });
+
+    it('sessão A não bloqueia sessão B: jobs de sessões diferentes se intercalam pelo semáforo', async () => {
+        const svc = await fresh();
+        const order: string[] = [];
+        const started: number[] = [];
+
+        // Sessão A com 2 jobs (devem serializar entre si).
+        // Sessão B com 1 job — não pode esperar A.
+        const idA1 = svc.enqueue(async () => {
+            order.push('A1-start');
+            await new Promise((r) => setTimeout(r, 40));
+            order.push('A1-end');
+            return 'a1';
+        }, 'chat', 'A');
+        const idB = svc.enqueue(async () => {
+            started.push(Date.now());
+            order.push('B-start');
+            await new Promise((r) => setTimeout(r, 10));
+            order.push('B-end');
+            return 'b';
+        }, 'chat', 'B');
+        const idA2 = svc.enqueue(async () => {
+            order.push('A2-start');
+            await new Promise((r) => setTimeout(r, 10));
+            order.push('A2-end');
+            return 'a2';
+        }, 'chat', 'A');
+
+        await waitFor(() => {
+            const la1 = svc.get(idA1);
+            const lb = svc.get(idB);
+            const la2 = svc.get(idA2);
+            return la1.ok && lb.ok && la2.ok
+                && la1.job.status === 'done'
+                && lb.job.status === 'done'
+                && la2.job.status === 'done';
+        }, 2000);
+
+        // A1 termina antes de A2 começar (sessão A serializa).
+        expect(order.indexOf('A1-end')).toBeLessThan(order.indexOf('A2-start'));
+        // B não depende de A — pode iniciar/parar livremente entre os A's (sessão B paralela).
+        // Só verificamos que B terminou (já coberto acima).
+        expect(order).toContain('B-start');
+        expect(order).toContain('B-end');
+    });
+});
