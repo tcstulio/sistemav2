@@ -16,6 +16,7 @@ const isDevMode = () => {
 const DevelopmentView: React.FC = () => {
     const { config, currentUser } = useDolibarr();
     const isAdmin = currentUser?.admin === 1;
+    const [activeTab, setActiveTab] = useState<'audit' | 'console' | 'monitor' | 'permissions' | 'llm'>('monitor');
 
     if (!isDevMode()) {
         return (
@@ -26,8 +27,6 @@ const DevelopmentView: React.FC = () => {
             </div>
         );
     }
-
-    const [activeTab, setActiveTab] = useState<'audit' | 'console' | 'monitor' | 'permissions' | 'llm'>('monitor');
 
     if (!config) {
         return <div className="p-10 text-center text-slate-400">Carregando configurações...</div>;
