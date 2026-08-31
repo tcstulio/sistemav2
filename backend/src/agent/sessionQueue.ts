@@ -410,6 +410,11 @@ export class SessionQueue {
      * Devolve a quantidade purgada. O parâmetro `now` é injetável para testes
      * determinísticos do TTL (não dependem do relógio real).
      *
+     * IMPORTANTE: qualquer `waitForIdle()` pendente para uma sessão purgada é
+     * RESOLVIDO (com `undefined`) antes da remoção — sem isso, promises
+     * penduradas indefinidamente virariam memory leak e travariam testes que
+     * esperam a sessão esvaziar.
+     *
      * Roda automaticamente via timer interno (ver `autoCleanupIntervalMs`); também
      * pode ser chamado manualmente para testes ou métricas.
      */
@@ -419,11 +424,24 @@ export class SessionQueue {
             if (state.running) continue;
             if (state.queued.length > 0) continue;
             if (now - state.lastActivityAt >= this.ttlMs) {
-                this.sessions.delete(sessaoId);
+                this.purgeSession(sessaoId, state);
                 purged++;
             }
         }
         return purged;
+    }
+
+    /**
+     * Purga uma sessão específica: resolve todos os `waitForIdle` pendentes,
+     * limpa o estado e remove do Map. Idempotente para sessão inexistente.
+     * Helper compartilhado por `cleanupIdleSessions` e por cenários de teste
+     * que precisam forçar a remoção.
+     */
+    private purgeSession(sessaoId: string, state: SessionState): void {
+        const waiters = state.idleWaiters.splice(0);
+        for (const resolve of waiters) resolve();
+        state.finished.length = 0;
+        this.sessions.delete(sessaoId);
     }
 
     /**

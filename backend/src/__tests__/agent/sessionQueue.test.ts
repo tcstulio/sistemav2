@@ -376,32 +376,32 @@ describe('#1371 SessionQueue', () => {
     });
 
     describe('critério 5: TTL — sem memory leak, sessões ociosas são purgadas', () => {
-        it('cleanupIdleSessions remove sessões ociosas após TTL e mantém as ativas', () => {
+        it('cleanupIdleSessions remove sessões ociosas após TTL e mantém as ativas', async () => {
             const queue = new SessionQueue({
                 autoCleanupIntervalMs: 0,
                 ttlMs: 1000,
             });
             // Sessão com job já finalizado e idle.
-            queue.enqueue('s1', { p: 1 }, delayedExecutor(5));
+            const idS1 = queue.enqueue('s1', { p: 1 }, delayedExecutor(5));
             // Sessão com job em andamento.
-            queue.enqueue('s2', { p: 2 }, abortableExecutor);
+            const idS2 = queue.enqueue('s2', { p: 2 }, abortableExecutor);
 
-            // Avança o "agora" para depois de o job s1 terminar.
-            return (async () => {
-                await queue.waitForIdle('s1');
-                // s1 deve estar no map ainda (TTL não estourou).
-                expect(queue.size()).toBe(2);
+            await queue.waitForJob('s1', idS1);
+            // s1 deve estar no map ainda (TTL não estourou).
+            expect(queue.size()).toBe(2);
 
-                // TTL estourado: s1 deve ser purgada, s2 (com job running) NÃO.
-                const purged = queue.cleanupIdleSessions(Date.now() + 2000);
-                expect(purged).toBe(1);
-                expect(queue.size()).toBe(1);
-                expect(queue.describeSession('s1')).toBeNull();
-                expect(queue.describeSession('s2')).not.toBeNull();
+            // TTL estourado: s1 deve ser purgada, s2 (com job running) NÃO.
+            const purged = queue.cleanupIdleSessions(Date.now() + 2000);
+            expect(purged).toBe(1);
+            expect(queue.size()).toBe(1);
+            expect(queue.describeSession('s1')).toBeNull();
+            expect(queue.describeSession('s2')).not.toBeNull();
 
-                // Limpa s2 também.
-                queue.cancel('s2', queue.describeSession('s2')!.running ? 'qualquer' : 'qualquer');
-            })();
+            // Limpa s2 com o jobId REAL — antes passava uma string inválida,
+            // deixando o `abortableExecutor` (1000ms) pendurado até o afterEach.
+            queue.cancel('s2', idS2);
+            await queue.waitForJob('s2', idS2);
+            expect(queue.getStatus('s2', idS2)).toBe('cancelled');
         });
 
         it('cleanupIdleSessions NÃO purga sessão com job em fila (queued)', () => {
@@ -434,21 +434,42 @@ describe('#1371 SessionQueue', () => {
             expect(queue.size()).toBe(1);
         });
 
-        it('sessão reativada por enqueue reseta o lastActivityAt', () => {
+        it('sessão reativada por enqueue reseta o lastActivityAt', async () => {
             const queue = new SessionQueue({
                 autoCleanupIntervalMs: 0,
                 ttlMs: 1000,
             });
             // Sessão termina em t=0.
             const id = queue.enqueue('s1', 'p', delayedExecutor(5));
-            void id;
-            return (async () => {
-                await queue.waitForIdle('s1');
-                // Em t=500, ainda dentro do TTL.
-                expect(queue.cleanupIdleSessions(Date.now() + 500)).toBe(0);
-                // Em t=1100, fora do TTL — purga.
-                expect(queue.cleanupIdleSessions(Date.now() + 1100)).toBe(1);
-            })();
+            await queue.waitForJob('s1', id);
+            // Em t=500, ainda dentro do TTL.
+            expect(queue.cleanupIdleSessions(Date.now() + 500)).toBe(0);
+            // Em t=1100, fora do TTL — purga.
+            expect(queue.cleanupIdleSessions(Date.now() + 1100)).toBe(1);
+        });
+
+        it('cleanupIdleSessions resolve waitForIdle pendentes (sem leak de promises)', async () => {
+            const queue = new SessionQueue({
+                autoCleanupIntervalMs: 0,
+                ttlMs: 100,
+            });
+            const id = queue.enqueue('s1', 'p', delayedExecutor(5));
+            await queue.waitForJob('s1', id);
+            // Sessão ociosa. Aguarda uma promise de `waitForIdle` que normalmente
+            // só resolveria quando a sessão esvaziasse — mas ela já está vazia.
+            const idlePromise = queue.waitForIdle('s1');
+            // Avança o relógio além do TTL e dispara cleanup.
+            const purged = queue.cleanupIdleSessions(Date.now() + 500);
+            expect(purged).toBe(1);
+            // A promise tem que resolver em vez de pendurar para sempre —
+            // este await é o que detecta o leak que existia antes da correção.
+            await Promise.race([
+                idlePromise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('waitForIdle pendurou após cleanup')), 100),
+                ),
+            ]);
+            expect(queue.size()).toBe(0);
         });
 
         it('validação fail-fast: ttlMs <= 0 lança erro no construtor', () => {
