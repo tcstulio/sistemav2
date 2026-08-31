@@ -43,8 +43,6 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
     const { data: projectsData } = useProjects(config);
     const projects = projectsData || [];
 
-    if (!config) return null;
-
     const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [isLoadingDetail, setIsLoadingDetail] = useState(false);
@@ -99,6 +97,8 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
         initialSortDir: 'desc',
     });
     const filteredShipments = controls.result;
+
+    if (!config) return null;
 
     const handleDownloadPdf = async (e: React.MouseEvent, id: string | number) => {
         e.stopPropagation();

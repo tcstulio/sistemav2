@@ -48,8 +48,6 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
     const proposalLines = proposalLinesData || [];
     const { data: users = [] } = useUsers(config);
 
-    if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
-
     const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'signed' | 'draft' | 'declined'>('all');
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [selectedProposal, setSelectedProposal] = useState<SupplierProposal | null>(null);
@@ -209,7 +207,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                     }))
                 };
 
-                await DolibarrService.createSupplierProposal(config, payload);
+                await DolibarrService.createSupplierProposal(config!, payload);
                 toast.success("Solicitação Criada!");
             }
             // 2. UPDATE FLOW
@@ -221,7 +219,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                     date: new Date(formData.date).getTime() / 1000,
                     note_public: formData.note_public || null,
                 };
-                await DolibarrService.updateSupplierProposal(config, editingId, headerPayload);
+                await DolibarrService.updateSupplierProposal(config!, editingId, headerPayload);
 
                 // Sync Lines
                 const originalLines = proposalLines.filter(l => String(l.parent_id) === String(editingId));
@@ -232,11 +230,11 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                 const linesToAdd = currentLines.filter(cl => !cl.id);
 
                 for (const line of linesToDelete) {
-                    await DolibarrService.deleteSupplierProposalLine(config, editingId, line.id);
+                    await DolibarrService.deleteSupplierProposalLine(config!, editingId, line.id);
                 }
 
                 for (const line of linesToUpdate) {
-                    await DolibarrService.updateSupplierProposalLine(config, editingId, line.id!, {
+                    await DolibarrService.updateSupplierProposalLine(config!, editingId, line.id!, {
                         fk_product: line.productId || null,
                         desc: line.desc,
                         qty: line.qty,
@@ -246,7 +244,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                 }
 
                 for (const line of linesToAdd) {
-                    await DolibarrService.addSupplierProposalLine(config, editingId, {
+                    await DolibarrService.addSupplierProposalLine(config!, editingId, {
                         fk_product: line.productId || null,
                         desc: line.desc,
                         qty: line.qty,
@@ -315,6 +313,8 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
         initialSortDir: 'desc',
     });
     const filteredProposals = controls.result;
+
+    if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
 
     const getStatusBadge = (status: string) => <StatusBadge status={status} config={supplierProposalStatuses} />;
 

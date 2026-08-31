@@ -61,8 +61,6 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
     const proposalLines = proposalLinesData || [];
     const { data: users = [] } = useUsers(config);
 
-    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
-
     // Detect narrow viewport for responsive row height in the virtualised list.
     // The card stacks vertically on mobile (< md = 768px) and needs more height.
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
@@ -209,7 +207,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         setIsSubmitting(true);
         try {
             if (!editingId) {
-                await DolibarrService.createProposal(config, {
+                await DolibarrService.createProposal(config!, {
                     socid: formData.socid,
                     project_id: formData.project_id || null,
                     date: new Date(formData.date).getTime() / 1000,
@@ -225,7 +223,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                 });
                 toast.success("Proposta Criada!");
             } else {
-                await DolibarrService.updateProposal(config, editingId, {
+                await DolibarrService.updateProposal(config!, editingId, {
                     socid: formData.socid,
                     project_id: formData.project_id || null,
                     date: new Date(formData.date).getTime() / 1000,
@@ -239,10 +237,10 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                 const linesToAdd = currentLines.filter(cl => !cl.id);
 
                 for (const line of linesToDelete) {
-                    await DolibarrService.deleteProposalLine(config, editingId, line.id);
+                    await DolibarrService.deleteProposalLine(config!, editingId, line.id);
                 }
                 for (const line of linesToUpdate) {
-                    await DolibarrService.updateProposalLine(config, editingId, line.id!, {
+                    await DolibarrService.updateProposalLine(config!, editingId, line.id!, {
                         fk_product: line.productId || null,
                         desc: line.desc,
                         qty: line.qty,
@@ -251,7 +249,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                     });
                 }
                 for (const line of linesToAdd) {
-                    await DolibarrService.addProposalLine(config, editingId, {
+                    await DolibarrService.addProposalLine(config!, editingId, {
                         fk_product: line.productId || null,
                         desc: line.desc,
                         qty: line.qty,
@@ -325,6 +323,8 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
 
     const { openLink } = useDolibarrLink(config);
     const confirm = useConfirm();
+
+    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
     const handleDuplicate = async (proposalId: string) => {
         const ok = await confirm({ message: 'Duplicar esta proposta como rascunho?' });
