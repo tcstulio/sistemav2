@@ -582,3 +582,255 @@ describe('WarehouseList (#1583) — sanitização de inputs numéricos', () => {
         });
     });
 });
+
+// ---------------------------------------------------------------------------
+// #1110: Inputs numéricos sem fallback NaN — transferência e correção de estoque
+// Cobre o contrato declarado na issue:
+//   - qty vazia vira `0`; nenhuma submissão envia `NaN`
+//   - modais funcionam com campos vazios ou inválidos
+// Estende a suíte #1583 com casos extras: negativos, whitespace,
+// string literal "NaN", alfanumérico, decimal, científica e Infinity.
+// ---------------------------------------------------------------------------
+describe('WarehouseList (#1110) — inputs numéricos sem NaN', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockSvc.getProductWithStock.mockResolvedValue({ stock_warehouse: {} });
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+            canAccess: () => true,
+            canDo: () => true,
+        } as any);
+    });
+
+    it('qty negativa em transferência é rejeitada com toast e não chama API', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '-5' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalled();
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalledWith(
+            expect.anything(), expect.anything(), expect.anything(), expect.anything(), NaN
+        );
+    });
+
+    it('qty negativa em correção é rejeitada com toast e não chama API', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '-3' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ qty: NaN })
+        );
+    });
+
+    it('apenas espaços no qty de transferência viram 0 (sem NaN)', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+        // parseInt('   ') === NaN → fallback 0
+        fireEvent.change(qtyInput, { target: { value: '   ' } });
+        expect(qtyInput.value).not.toBe('NaN');
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalled();
+    });
+
+    it('string literal "NaN" no qty de correção é normalizada para 0', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+        // parseInt('NaN') === NaN → fallback 0
+        fireEvent.change(qtyInput, { target: { value: 'NaN' } });
+        expect(qtyInput.value).not.toBe('NaN');
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ qty: NaN })
+        );
+    });
+
+    it('entrada alfanumérica "5abc" nunca resulta em chamada com NaN', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '5abc' } });
+
+        // input[type=number] descarta parte não-numérica em jsdom — o contrato
+        // exigido pela issue é que NENHUMA chamada receba NaN, independente do
+        // que o navegador extrair do input.
+        fireEvent.submit(form);
+
+        // Se a chamada acontecer, qty tem que ser um número finito > 0
+        // (parseInt('5abc') === 5 em runtime). Se a validação de submit
+        // bloquear (input vazio após jsdom normalizar), também é aceitável.
+        const calls = mockSvc.createStockTransfer.mock.calls;
+        for (const call of calls) {
+            const qty = call[4];
+            expect(Number.isNaN(qty)).toBe(false);
+            expect(Number.isFinite(qty)).toBe(true);
+        }
+        // Nunca chamada com NaN explícito
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalledWith(
+            expect.anything(), expect.anything(), expect.anything(), expect.anything(), NaN
+        );
+    });
+
+    it('entrada decimal "3.7" é truncada para 3 (parseInt) e submetida', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '3.7' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(mockSvc.createStockTransfer).toHaveBeenCalledWith(
+                mockConfig, 'p1', '1', '2', 3
+            );
+        });
+    });
+
+    it('entrada científica "1e2" é truncada para 1 (parseInt para no primeiro não-dígito)', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '1e2' } });
+
+        fireEvent.submit(form);
+
+        // parseInt('1e2') === 1 → submissão com 1
+        await waitFor(() => {
+            expect(mockSvc.createStockTransfer).toHaveBeenCalledWith(
+                mockConfig, 'p1', '1', '2', 1
+            );
+        });
+    });
+
+    it('entrada "Infinity" vira 0 (sem NaN, sem Infinity na chamada)', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+        // parseInt('Infinity') === NaN → fallback 0
+        fireEvent.change(qtyInput, { target: { value: 'Infinity' } });
+        expect(qtyInput.value).not.toBe('NaN');
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ qty: Infinity })
+        );
+    });
+
+    it('modais de transferência e correção aceitam qty vazia sem travar', async () => {
+        // Garante que ambos os fluxos não quebram quando o usuário esvazia
+        // o campo antes de submeter (cenário real: edição + backspace).
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+        const transferForm = document.getElementById('transfer-form') as HTMLFormElement;
+        const tSelects = transferForm.querySelectorAll('select');
+        fireEvent.change(tSelects[0], { target: { value: 'p1' } });
+        fireEvent.change(tSelects[1], { target: { value: '1' } });
+        fireEvent.change(tSelects[2], { target: { value: '2' } });
+        const tQty = transferForm.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(tQty, { target: { value: '' } });
+        fireEvent.submit(transferForm);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalled();
+
+        // Agora repete para correção
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+        const correctionForm = document.getElementById('correction-form') as HTMLFormElement;
+        const cSelects = correctionForm.querySelectorAll('select');
+        fireEvent.change(cSelects[0], { target: { value: 'p1' } });
+        fireEvent.change(cSelects[1], { target: { value: '1' } });
+        const cQty = correctionForm.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(cQty, { target: { value: '' } });
+        fireEvent.submit(correctionForm);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+    });
+});
