@@ -490,3 +490,208 @@ describe('aiJobService #1011 — reportProgress (lastHeartbeat = max(lastWrite, 
         }
     });
 });
+
+
+// =====================================================
+// #1810: cancelamento cooperativo (aiJobService.cancel)
+// =====================================================
+describe('aiJobService #1810 — cancel() cooperativo', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('cancel em job enfileirado: NÃO chama a fn, status = cancelled, retorna { removed: true }', async () => {
+        const svc = await fresh();
+        const worker = vi.fn(async () => ({ unused: true }));
+        // MAX_CONCURRENT=3 → ocupa as 3 vagas com jobs que nunca terminam.
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        const queuedId = svc.enqueue(worker, { label: 'chat', userId: 'u-1', sessionId: 's-1' });
+
+        // 3 vagas ocupadas, queuedId está na fila serial.
+        const result = svc.cancel(queuedId, 'u-1');
+        expect(result).toEqual({ removed: true, jobId: queuedId });
+
+        const lookup = svc.get(queuedId);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) {
+            expect(lookup.job.status).toBe('cancelled');
+            expect(lookup.job.expiresAt).toBeGreaterThan(Date.now() - 1000);
+        }
+
+        // Drena microtasks: a fn NUNCA deve ter sido invocada.
+        await flush();
+        expect(worker).not.toHaveBeenCalled();
+    });
+
+    it('cancel em job rodando: dispara signal abort, status = cancelled, retorna { aborted: true }', async () => {
+        const svc = await fresh();
+        let receivedSignal: AbortSignal | undefined;
+        const worker = vi.fn(async (signal: AbortSignal) => {
+            receivedSignal = signal;
+            return new Promise(() => {}); // nunca resolve — depende do abort
+        });
+        const id = svc.enqueue(worker, { userId: 'u-1' });
+        await flush(); // worker entra em running, controller criado
+
+        expect(receivedSignal).toBeDefined();
+        expect(receivedSignal!.aborted).toBe(false);
+
+        const result = svc.cancel(id, 'u-1');
+        expect(result).toEqual({ aborted: true, jobId: id });
+        expect(receivedSignal!.aborted).toBe(true);
+        expect(receivedSignal!.reason).toBe('user_cancelled');
+
+        const lookup = svc.get(id);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) expect(lookup.job.status).toBe('cancelled');
+    });
+
+    it('cancel em job de outro userId: lança "forbidden" (código CANCEL_FORBIDDEN)', async () => {
+        const svc = await fresh();
+        // Ocupa as 3 vagas para o job alvo ficar na fila serial.
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        const id = svc.enqueue(() => new Promise(() => {}), { userId: 'owner' });
+
+        expect(() => svc.cancel(id, 'intruder')).toThrow(/forbidden/);
+
+        const lookup = svc.get(id);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) expect(lookup.job.status).toBe('queued'); // intocado
+    });
+
+    it('cancel é idempotente: 2ª chamada em job já cancelled devolve { noop: true, reason: "terminal" }', async () => {
+        const svc = await fresh();
+        // Ocupa as 3 vagas para o job alvo ficar na fila serial.
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        const id = svc.enqueue(() => new Promise(() => {}), { userId: 'u-1' });
+
+        const first = svc.cancel(id, 'u-1');
+        expect(first).toEqual({ removed: true, jobId: id });
+
+        const second = svc.cancel(id, 'u-1');
+        expect(second).toEqual({ noop: true, jobId: id, reason: 'terminal' });
+    });
+
+    it('cancel em id desconhecido: { noop: true, reason: "missing" } (idempotente, sem throw)', async () => {
+        const svc = await fresh();
+        const result = svc.cancel('nao-existe', 'u-1');
+        expect(result).toEqual({ noop: true, jobId: 'nao-existe', reason: 'missing' });
+    });
+
+    it('cancel em job done: { noop: true, reason: "terminal" } (NÃO tenta abortar)', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(async () => ({ ok: 1 }), { userId: 'u-1' });
+        await flush(); // termina
+
+        const result = svc.cancel(id, 'u-1');
+        expect(result).toEqual({ noop: true, jobId: id, reason: 'terminal' });
+    });
+
+    it('cancel invoca persistSessionMessage (queue) com (jobId, sessionId, userId)', async () => {
+        const svc = await fresh();
+        // Ocupa as 3 vagas para o job alvo ficar na fila.
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        const persist = vi.fn();
+        const id = svc.enqueue(() => new Promise(() => {}), {
+            userId: 'u-1', sessionId: 's-1', persistSessionMessage: persist,
+        });
+
+        svc.cancel(id, 'u-1');
+
+        expect(persist).toHaveBeenCalledTimes(1);
+        expect(persist).toHaveBeenCalledWith(id, 's-1', 'u-1');
+    });
+
+    it('cancel invoca persistSessionMessage (running) de forma síncrona, sem esperar a fn terminar', async () => {
+        const svc = await fresh();
+        const persist = vi.fn();
+        // Fn que espera 5s antes de resolver — o cancel() NÃO deve esperar isso.
+        const id = svc.enqueue(
+            (_signal) => new Promise((res) => setTimeout(() => res(1), 5000)),
+            { userId: 'u-1', sessionId: 's-1', persistSessionMessage: persist },
+        );
+        await flush(); // entra em running
+
+        // Chama cancel() — persist deve ser chamado IMEDIATAMENTE, sem esperar a fn.
+        const result = svc.cancel(id, 'u-1');
+        expect(result).toEqual({ aborted: true, jobId: id });
+        expect(persist).toHaveBeenCalledTimes(1);
+        expect(persist).toHaveBeenCalledWith(id, 's-1', 'u-1');
+    });
+
+    it('cleanup: jobs cancelados expiram e são purgados do disco', async () => {
+        const past = Date.now() - 1000;
+        const svc = await fresh([
+            { id: 'can', status: 'cancelled', createdAt: 1, finishedAt: past, expiresAt: past },
+        ]);
+        svc.restore();
+
+        // Antes do enqueue: ainda marcado como cancelled (expirado).
+        expect(svc.get('can')).toEqual({ ok: false, reason: 'expired' });
+
+        // enqueue dispara cleanup() que purga.
+        svc.enqueue(async () => 1);
+        await flush();
+        expect(storage.deleted).toContain('can');
+    });
+
+    it('restore: job com status cancelled no disco volta como cancelled (NÃO virando error)', async () => {
+        const future = Date.now() + 60000;
+        const svc = await fresh([
+            {
+                id: 'was-cancelled', status: 'cancelled',
+                createdAt: 1, finishedAt: 2, expiresAt: future,
+            },
+        ]);
+        // fresh() já chamou restore() na importação.
+        const lookup = svc.get('was-cancelled');
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) {
+            expect(lookup.job.status).toBe('cancelled');
+            expect(lookup.job.finishedAt).toBe(2);
+        }
+    });
+
+    it('runningControllers é limpo quando a fn reage ao abort e termina (sem leak)', async () => {
+        const svc = await fresh();
+        // Fn reativa: quando o signal abortar, rejeita com DOMException AbortError.
+        // O `.catch` no worker traduz para status='cancelled' e o `finally` remove
+        // o controller do mapa.
+        const id = svc.enqueue(
+            (signal) => new Promise((_, reject) => {
+                signal.addEventListener('abort', () => {
+                    const e: any = new Error('aborted');
+                    e.name = 'AbortError';
+                    reject(e);
+                });
+            }),
+            { userId: 'u-1' },
+        );
+        await flush();
+
+        expect(svc.getAbortSignal(id)).toBeDefined();
+
+        svc.cancel(id, 'u-1');
+        await flush();
+
+        // O `finally` rodou (a promise rejeitou com AbortError) → controller removido.
+        expect(svc.getAbortSignal(id)).toBeUndefined();
+    });
+
+    it('getAbortSignal: definido enquanto running, undefined após concluir', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(() => new Promise(() => {}));
+        await flush();
+
+        expect(svc.getAbortSignal(id)).toBeDefined();
+        expect(svc.getAbortSignal('id-inexistente')).toBeUndefined();
+    });
+});

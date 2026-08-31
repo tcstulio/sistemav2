@@ -18,8 +18,14 @@ const log = createLogger('AiJob');
 // expiração (30min) é gravada junto (expiresAt) — mesmo após restart, jobs expirados não
 // voltam como vivos (GET devolve 404 { reason: 'expired' }). Compatível com a coordenação
 // serial do issue #29 (runAndWait continua usando a mesma fila MAX=3).
+//
+// #1810: cancelamento cooperativo — `runningControllers` (Map<jobId, AbortController>) é criado
+// quando o job entra em `running` e removido em `finally`; `cancel()` aborta o controller
+// (jobs rodando) ou remove da fila + marca `cancelled` (jobs enfileirados). A fn recebe o
+// `AbortSignal` como 2º argumento opcional, para integração com a sub-task #0 (signal em
+// postChatCompletion). Idempotente por construção (terminal/inexistente -> `{ noop: true }`).
 
-export type AiJobStatus = 'queued' | 'running' | 'done' | 'error';
+export type AiJobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled';
 
 export interface AiJob {
     id: string;
@@ -40,6 +46,10 @@ export interface AiJob {
     currentProvider?: string | null;
     /** #1011: progresso 0..100 reportado pelo agente. */
     progressPct?: number;
+    /** #1810: dono do job (autorização do cancel()). */
+    userId?: string;
+    /** #1810: id da sessão de chat (persistência da msg `cancelled`). */
+    sessionId?: string;
 }
 
 /** Resultado do lookup de um job: distingue 'expirado' de 'inexistente' (GET 404). */
@@ -51,8 +61,10 @@ export type AiJobLookup =
  * #1011: status externo do endpoint de heartbeat (/ai-jobs/:id/status). 'expired' é
  * conceitual — é devolvido como 404 { reason: 'expired' } (TTL purgado), nunca no
  * corpo 200, pois um job expirado já não está "vivo" para reportar metadados.
+ * #1810: 'cancelled' distingue cancelamento explícito do usuário de 'failed' (erro
+ * técnico). O frontend usa isso para reidratar a UI sem confundir com erro.
  */
-export type AiJobStatusExternal = 'pending' | 'running' | 'done' | 'failed' | 'expired';
+export type AiJobStatusExternal = 'pending' | 'running' | 'done' | 'failed' | 'cancelled' | 'expired';
 
 /** #1011: metadados leves do job (sem o `result` completo) para /ai-jobs/:id/status. */
 export interface AiJobStatusInfo {
@@ -80,6 +92,22 @@ let running = 0;
 const queue: Array<() => void> = [];
 const deadlineTimers = new Map<string, NodeJS.Timeout>();
 
+// #1810: mapa de AbortControllers para jobs em execução. Criado no entry point do worker
+// (não no enqueue), removido em `finally`. `cancel()` aborta o controller quando o job
+// está rodando. Apenas jobs `running` vivem aqui — queued é tratado pelo `cancelledBeforeRun`.
+const runningControllers = new Map<string, AbortController>();
+// #1810: ids de jobs enfileirados marcados para cancelamento ANTES de entrarem em execução.
+// Quando o worker puxar esse id da fila, ele marca `cancelled` e NÃO chama a fn. Separar
+// essa flag da `runningControllers` evita race entre `cancel()` e `pump()`.
+const cancelledBeforeRun = new Set<string>();
+
+type PersistFn = (jobId: string, sessionId: string, userId: string) => void;
+// #1810: persisters por job — `cancel()` precisa disparar a persistência de forma
+// SÍNCRONA (não espera o axios abortar), mas o callback foi passado inline ao
+// `enqueue` e não está acessível fora do closure do `run()`. Guardamos uma referência
+// aqui para o `cancel()` poder chamá-lo. Removido no `finally` do worker.
+const runningPersisters = new Map<string, PersistFn>();
+
 // #1011: timestamp do último write-through por job (setJob). Base para o cálculo
 // lastHeartbeat = max(lastWrite, now) no reportProgress — nunca retrocede o heartbeat.
 const lastWriteAt = new Map<string, number>();
@@ -99,6 +127,7 @@ function mapStatusExternal(s: AiJobStatus): Exclude<AiJobStatusExternal, 'expire
         case 'running': return 'running';
         case 'done': return 'done';
         case 'error': return 'failed';
+        case 'cancelled': return 'cancelled';
     }
 }
 
@@ -140,7 +169,7 @@ function patchJob(id: string, changes: Partial<AiJob>): void {
 
 function markDeadlineExceeded(id: string): void {
     const job = jobs.get(id);
-    if (!job || job.status === 'done' || job.status === 'error') return;
+    if (!job || job.status === 'done' || job.status === 'error' || job.status === 'cancelled') return;
     clearDeadline(id);
     const finishedAt = Date.now();
     patchJob(id, {
@@ -177,6 +206,10 @@ function cleanup() {
             clearDeadline(id);
             jobs.delete(id);
             lastWriteAt.delete(id);
+            // #1810: limpa entradas dos mapas de cancelamento dos jobs expirados.
+            runningControllers.delete(id);
+            runningPersisters.delete(id);
+            cancelledBeforeRun.delete(id);
             deleteJob(id);
         }
     }
@@ -221,6 +254,14 @@ function restore(): void {
                 job.expiresAt = job.expiresAt ?? now + TTL_MS;
                 saveJob(job);
             }
+            // #1810: jobs cancelados em sessão são TERMINAIS e voltam como 'cancelled'
+            // (o usuário escolheu parar — não é um erro técnico do restart). Restaura
+            // telsmpo e expiração para o cliente rehidratar corretamente.
+            if (job.status === 'cancelled') {
+                job.finishedAt = job.finishedAt ?? now;
+                job.expiresAt = job.expiresAt ?? now + TTL_MS;
+                saveJob(job);
+            }
             jobs.set(job.id, job);
             // #1011: lastWrite base para reportProgress em jobs restaurados (terminais
             // não emitem progresso, mas mantemos o ts consistente caso o estado mude).
@@ -233,16 +274,60 @@ function restore(): void {
     }
 }
 
+/** #1810: tipo da função de trabalho. Opcionalmente recebe o `AbortSignal` para
+ * integrar com o `axios({ signal })` / `fetch(signal)` (sub-task #0). Mantém retrocompat
+ * com a assinatura anterior zero-arg: a checagem `arguments.length` decide se invocamos
+ * com ou sem o signal — sem quebrar callers externos (TaskRunner, Judge, etc.).
+ */
+export type AiJobWorker = (() => Promise<any>) | ((signal: AbortSignal) => Promise<any>);
+
+/** #1810: opções estendidas do enqueue. `userId` autoriza o `cancel()`; `sessionId` +
+ * `persistSessionMessage` permitem persistir a msg `cancelled` na sessão para o frontend
+ * rehidratar após refresh (a persistência fica na camada de rota — o serviço só chama
+ * o callback, mantendo aiJobService sem dependência direta do chatSessionService).
+ */
+export interface EnqueueOptions {
+    label?: string;
+    userId?: string;
+    sessionId?: string;
+    persistSessionMessage?: (jobId: string, sessionId: string, userId: string) => void;
+}
+
+/** #1810: resultado discriminatório de `cancel()`. Uma única chave não-null: o caller
+ * sabe exatamente o que aconteceu (e.g. UI mostra "cancelando…" só em `aborted`).
+ */
+export type CancelResult =
+    | { removed: true; jobId: string }
+    | { aborted: true; jobId: string }
+    | { noop: true; jobId: string; reason: 'missing' | 'terminal' };
+
 export const aiJobService = {
     /** Enfileira um job; retorna o jobId imediatamente. `fn` roda em background. */
-    enqueue(fn: () => Promise<any>, label?: string): string {
+    enqueue(fn: AiJobWorker, labelOrOptions?: string | EnqueueOptions): string {
+        const opts: EnqueueOptions = typeof labelOrOptions === 'string'
+            ? { label: labelOrOptions }
+            : (labelOrOptions || {});
         cleanup();
         const id = randomUUID();
         const createdAt = Date.now();
         const livenessExpiresAt = getAiJobLivenessExpiresAt(createdAt);
-        const job: AiJob = { id, status: 'queued', createdAt, livenessExpiresAt, label };
+        const job: AiJob = {
+            id,
+            status: 'queued',
+            createdAt,
+            livenessExpiresAt,
+            label: opts.label,
+            userId: opts.userId,
+            sessionId: opts.sessionId,
+        };
         setJob(job);
         scheduleDeadline(job);
+        // #1810: registra o persister ANTES do run() ser despachado. Assim `cancel()`
+        // sobre job enfileirado (status='queued' no Map) consegue invocar a
+        // persistência síncrona sem depender do worker ter rodado.
+        if (opts.persistSessionMessage && opts.sessionId && opts.userId) {
+            runningPersisters.set(id, opts.persistSessionMessage);
+        }
         log.info('Job de IA criado', {
             jobId: id,
             startedAt: new Date(createdAt).toISOString(),
@@ -253,17 +338,62 @@ export const aiJobService = {
 
         const run = () => {
             const current = jobs.get(id);
-            if (!current || current.status === 'error' || current.status === 'done') {
+            if (!current) {
+                pump();
+                return;
+            }
+            // #1810: cancelamento solicitado antes do job entrar em execução. Marcamos
+            // como 'cancelled' e NÃO chamamos a fn (zero chamadas ao LLM). O callback de
+            // persistência é invocado aqui para o frontend rehidratar a sessão.
+            if (cancelledBeforeRun.has(id)) {
+                cancelledBeforeRun.delete(id);
+                const finishedAt = Date.now();
+                clearDeadline(id);
+                patchJob(id, { status: 'cancelled', finishedAt, expiresAt: finishedAt + TTL_MS });
+                if (opts.sessionId && opts.userId && opts.persistSessionMessage) {
+                    try { opts.persistSessionMessage(id, opts.sessionId, opts.userId); } catch (e: any) {
+                        log.warn(`Falha ao persistir msg cancelled (queue) para ${id}: ${e?.message || e}`);
+                    }
+                }
+                runningPersisters.delete(id);
+                log.info(`Job ${id} cancelado antes de iniciar (fila)`);
+                pump();
+                return;
+            }
+            if (current.status === 'error' || current.status === 'done' || current.status === 'cancelled') {
+                runningPersisters.delete(id);
                 pump();
                 return;
             }
             running++;
             const startedAt = Date.now();
             patchJob(id, { status: 'running', startedAt, lastHeartbeat: startedAt });
+            // #1810: cria o AbortController e armazena no mapa. `cancel()` chama abort()
+            // quando o job está rodando; o `finally` abaixo remove do mapa (sempre).
+            const controller = new AbortController();
+            runningControllers.set(id, controller);
+            const persistCancelled = () => {
+                if (opts.sessionId && opts.userId && opts.persistSessionMessage) {
+                    try { opts.persistSessionMessage(id, opts.sessionId, opts.userId); } catch (e: any) {
+                        log.warn(`Falha ao persistir msg cancelled (running) para ${id}: ${e?.message || e}`);
+                    }
+                }
+            };
+            // Chama a fn com o signal quando a assinatura aceita; cai pra zero-arg
+            // quando o caller (TaskRunner/Judge) ainda usa a forma antiga — não quebra
+            // compatibilidade enquanto a sub-task #0 (#1809) não é mergeada.
+            const invoke = (): Promise<any> => {
+                if (fn.length >= 1) return Promise.resolve().then(() => (fn as (s: AbortSignal) => Promise<any>)(controller.signal));
+                return Promise.resolve().then(() => (fn as () => Promise<any>)());
+            };
             Promise.resolve()
-                .then(fn)
+                .then(invoke)
                 .then((result) => {
                     const currentJob = jobs.get(id);
+                    // #1810: se o job foi marcado 'cancelled' durante a execução (ex.: o
+                    // promise resolveu APOS o abort mas antes do throw), o resultado é
+                    // descartado — a UI vai ler status='cancelled' no polling.
+                    if (currentJob?.status === 'cancelled') return;
                     if (!currentJob || currentJob.status === 'error' || Date.now() >= Date.parse(currentJob.livenessExpiresAt)) {
                         if (currentJob?.status !== 'error') markDeadlineExceeded(id);
                         return;
@@ -274,9 +404,25 @@ export const aiJobService = {
                 })
                 .catch((e: any) => {
                     const currentJob = jobs.get(id);
+                    // #1810: abort do cancel() chega aqui como DOMException 'AbortError'
+                    // (message = 'user_cancelled' setado por controller.abort(reason)).
+                    // Se o job JÁ foi marcado 'cancelled' pelo cancel(), não sobrescreve
+                    // com 'error' — preserva o vocabulário externo.
+                    if (currentJob?.status === 'cancelled') return;
                     if (!currentJob || currentJob.status === 'error') return;
+                    const isAbort = e?.name === 'AbortError' || controller.signal.aborted;
                     const finishedAt = Date.now();
                     clearDeadline(id);
+                    if (isAbort && controller.signal.reason === 'user_cancelled') {
+                        patchJob(id, {
+                            status: 'cancelled',
+                            finishedAt,
+                            expiresAt: finishedAt + TTL_MS,
+                        });
+                        persistCancelled();
+                        log.info(`Job ${id} cancelado em execução (signal aborted)`);
+                        return;
+                    }
                     const error = e?.code === 'deadline_exceeded' || e?.message === 'deadline_exceeded'
                         ? 'deadline_exceeded'
                         : (e?.message || String(e));
@@ -288,7 +434,15 @@ export const aiJobService = {
                     });
                     log.warn(`Job ${id} falhou: ${error}`);
                 })
-                .finally(() => { running--; cleanup(); pump(); });
+                .finally(() => {
+                    // #1810: cleanup do controller no finally (sucesso/erro/cancelamento)
+                    // — garante que runningControllers não vaza entries de jobs terminais.
+                    runningControllers.delete(id);
+                    runningPersisters.delete(id);
+                    running--;
+                    cleanup();
+                    pump();
+                });
         };
 
         if (running < MAX_CONCURRENT) run(); else queue.push(run);
@@ -371,6 +525,82 @@ export const aiJobService = {
     /** Reidrata jobs do disco (read-on-startup). Exposto p/ testes/restart manual. */
     restore() {
         restore();
+    },
+
+    /**
+     * #1810: cancelamento cooperativo de job.
+     *
+     * Três casos (exatamente um retorna truthy na resposta):
+     *  1. Job enfileirado (status='queued'): marca `cancelled` AGORA, adiciona o id
+     *     ao `cancelledBeforeRun` para que o worker NÃO chame a fn quando o `pump()`
+     *     despachar. Retorna `{ removed: true }`. Zero chamadas ao LLM.
+     *  2. Job rodando (status='running', em `runningControllers`): chama
+     *     `controller.abort('user_cancelled')` — o axios/fetch em curso lança
+     *     DOMException 'AbortError'; o `.catch` no worker traduz para
+     *     status='cancelled' e dispara o `persistSessionMessage`. O status em memória
+     *     é atualizado AQUI para a UI ter resposta síncrona. Retorna `{ aborted: true }`.
+     *  3. Job inexistente OU terminal (done/error/cancelled): noop idempotente.
+     *
+     * Autorização: se o `userId` não bater com o dono do job (`job.userId`), lança
+     * `Error('forbidden')` (rota mapeia para 403).
+     */
+    cancel(jobId: string, userId: string): CancelResult {
+        const job = jobs.get(jobId);
+        if (!job) return { noop: true, jobId, reason: 'missing' };
+
+        if (job.userId !== undefined && job.userId !== userId) {
+            const err = new Error('forbidden') as Error & { code?: string };
+            err.code = 'CANCEL_FORBIDDEN';
+            throw err;
+        }
+
+        if (job.status === 'queued') {
+            cancelledBeforeRun.add(jobId);
+            const finishedAt = Date.now();
+            clearDeadline(jobId);
+            patchJob(jobId, { status: 'cancelled', finishedAt, expiresAt: finishedAt + TTL_MS });
+            const persist = runningPersisters.get(jobId);
+            if (persist && job.sessionId && job.userId) {
+                try { persist(jobId, job.sessionId, job.userId); } catch (e: any) {
+                    log.warn(`Falha ao persistir msg cancelled (queue) para ${jobId}: ${e?.message || e}`);
+                }
+                runningPersisters.delete(jobId);
+            }
+            log.info(`Job ${jobId} cancelado na fila`);
+            return { removed: true, jobId };
+        }
+
+        if (job.status === 'running') {
+            const controller = runningControllers.get(jobId);
+            if (controller) controller.abort('user_cancelled');
+            const finishedAt = Date.now();
+            clearDeadline(jobId);
+            patchJob(jobId, { status: 'cancelled', finishedAt, expiresAt: finishedAt + TTL_MS });
+            // Persistência síncrona aqui (não esperamos o axios abortar): o frontend
+            // vai rehidratar com a msg `cancelled` mesmo que a fn nunca chame o signal.
+            const persist = runningPersisters.get(jobId);
+            if (persist && job.sessionId && job.userId) {
+                try { persist(jobId, job.sessionId, job.userId); } catch (e: any) {
+                    log.warn(`Falha ao persistir msg cancelled (running) para ${jobId}: ${e?.message || e}`);
+                }
+                runningPersisters.delete(jobId);
+            }
+            return { aborted: true, jobId };
+        }
+
+        return { noop: true, jobId, reason: 'terminal' };
+    },
+
+    /** #1810: expor o signal atual p/ testes/integrações. Undefined se o job não está rodando. */
+    getAbortSignal(jobId: string): AbortSignal | undefined {
+        return runningControllers.get(jobId)?.signal;
+    },
+
+    /** #1810: limpa controllers/flags órfãos. Exposto para testes que reciclam o módulo. */
+    _resetForTest() {
+        runningControllers.clear();
+        cancelledBeforeRun.clear();
+        runningPersisters.clear();
     },
 };
 
