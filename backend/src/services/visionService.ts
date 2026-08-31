@@ -19,6 +19,7 @@
  */
 
 import axios, { AxiosError } from 'axios';
+import * as fsp from 'fs/promises';
 import { config } from '../config/env';
 import { logger } from '../utils/logger';
 
@@ -330,8 +331,15 @@ export function logVisionInit(): void {
  * se quiser limitar ao estritamente validado.
  */
 
-/** MimeTypes aceitos (spike validou video/mp4; video/webm aceito por analogia do endpoint). */
-export const ACCEPTED_VIDEO_MIME_TYPES: ReadonlySet<string> = new Set(['video/mp4', 'video/webm']);
+/** MimeTypes aceitos. Spike #1029 validou `video/mp4`; `video/webm` aceito por analogia
+ *  do endpoint; `video/quicktime` (#1546 — MOV do iPhone) também passa pelo mesmo
+ *  decoder MP4 do glm-4.6v (mesma família H.264/HEVC). Restringir se quiser limitar
+ *  ao estritamente validado em produção. */
+export const ACCEPTED_VIDEO_MIME_TYPES: ReadonlySet<string> = new Set([
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+]);
 
 /**
  * Limite padrão (bytes decodificados) quando config.videoMaxBytes não definido. Spike
@@ -357,12 +365,6 @@ export class VideoAnalysisError extends Error {
     }
 }
 
-/** Tamanho aproximado (bytes) do payload decodificado a partir do base64, sem alocar Buffer. */
-function approxDecodedBytes(base64: string): number {
-    const noPad = base64.replace(/=+$/, '');
-    return Math.floor((noPad.length * 3) / 4);
-}
-
 /** Extrai o mimeType de uma data URL (`data:video/mp4;base64,...`) ou devolve undefined. */
 function mimeFromDataUrl(s: string): string | undefined {
     const m = /^data:([^;,]+)(?:;[^,]*)?,/.exec(s);
@@ -376,22 +378,72 @@ const VIDEO_DESC_PROMPT = `Analise este vídeo em detalhes, em português.
 - Seja factual; não invente o que não estiver presente.`;
 
 /**
+ * Input aceito por `describeVideo` (#1546). Três formas suportadas, discriminadas pelo
+ * tipo em runtime:
+ *
+ *  - `string`  → base64 puro OU data URL `data:video/mp4;base64,...`. Compat com a
+ *                integração já existente em `aiRoutes.ts` (issue #1030).
+ *  - `Buffer`  → bytes brutos do vídeo em memória. Útil para tools / testes.
+ *  - `{ filePath }` → caminho em disco; a função lê, descreve e libera a referência.
+ *                O handler do chat (#1546) salva temporariamente o anexo do usuário
+ *                para suportar auditoria / preview externo, e passa o `filePath`.
+ */
+export type DescribeVideoInput =
+    | string
+    | Buffer
+    | { filePath: string };
+
+/**
  * Descreve o conteúdo de um vídeo via glm-4.6v (`video_url`), análoga ao `describeImage`.
- * Usa o cliente JÁ configurado (callVisionChat). Aceita `videoBase64` como data URL
- * (`data:video/mp4;base64,...`) ou base64 puro — neste caso `mimeType` é obrigatório.
+ * Usa o cliente JÁ configurado (callVisionChat). Suporta três formatos de input:
+ *
+ *  - `string` (data URL ou base64 puro) — compat com a integração original (#1030).
+ *  - `Buffer` — bytes brutos do vídeo.
+ *  - `{ filePath }` — caminho em disco (lê o arquivo, descarta a referência após).
  *
  * Lança `VideoAnalysisError` em:
  *  - UNSUPPORTED_VIDEO_MIME (mimeType fora de ACCEPTED_VIDEO_MIME_TYPES) → 415
  *  - VIDEO_TOO_LARGE (bytes decodificados > config.videoMaxBytes) → 413
- *  - VISION_CALL_FAILED (provedor indisponível / resposta vazia) → 502
+ *  - VISION_CALL_FAILED (provedor indisponível / resposta vazia / file não existe) → 502
  *
  * O chamador (handler do chat) decide: 413/415 são erros do usuário e DEVEM rejeitar a
  * requisição; 502 é transitório e degrada para aviso (não quebra o chat), como nas imagens.
  */
-export async function describeVideo(videoBase64: string, mimeType: string): Promise<string> {
-    const clean = videoBase64.replace(/^data:[^,]+,/, '');
-    const mime = (mimeType || mimeFromDataUrl(videoBase64) || '').toLowerCase().split(';')[0].trim();
+export async function describeVideo(input: DescribeVideoInput, mimeType?: string): Promise<string> {
+    // 1) Normaliza o input para `{ buffer, mimeHint }`. `mimeHint` é o mime declarado
+    //    pelo caller (ou extraído do prefixo data:). Validação final do mime acontece
+    //    depois de sabermos o mime efetivo.
+    let buffer: Buffer;
+    let mimeHint: string | undefined;
+    if (typeof input === 'string') {
+        const clean = input.replace(/^data:[^,]+,/, '');
+        buffer = Buffer.from(clean, 'base64');
+        mimeHint = mimeType || mimeFromDataUrl(input) || undefined;
+    } else if (Buffer.isBuffer(input)) {
+        buffer = input;
+        mimeHint = mimeType;
+    } else if (input && typeof input.filePath === 'string') {
+        try {
+            buffer = await fsp.readFile(input.filePath);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.warn('describeVideo: falha ao ler arquivo', { filePath: input.filePath, error: msg });
+            throw new VideoAnalysisError(
+                'VISION_CALL_FAILED',
+                'Não foi possível ler o arquivo de vídeo temporário.',
+                502,
+            );
+        }
+        mimeHint = mimeType;
+    } else {
+        throw new VideoAnalysisError(
+            'VISION_CALL_FAILED',
+            'Entrada inválida para describeVideo: esperava string base64, Buffer ou { filePath }.',
+            500,
+        );
+    }
 
+    const mime = (mimeHint || '').toLowerCase().split(';')[0].trim();
     if (!ACCEPTED_VIDEO_MIME_TYPES.has(mime)) {
         throw new VideoAnalysisError(
             'UNSUPPORTED_VIDEO_MIME',
@@ -401,7 +453,7 @@ export async function describeVideo(videoBase64: string, mimeType: string): Prom
     }
 
     const maxBytes = config.videoMaxBytes || DEFAULT_VIDEO_MAX_BYTES;
-    const bytes = approxDecodedBytes(clean);
+    const bytes = buffer.length;
     if (bytes > maxBytes) {
         const sentMiB = (bytes / 1024 / 1024).toFixed(2);
         const limitMiB = (maxBytes / 1024 / 1024).toFixed(2);
@@ -412,7 +464,7 @@ export async function describeVideo(videoBase64: string, mimeType: string): Prom
         );
     }
 
-    const dataUrl = `data:${mime};base64,${clean}`;
+    const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
     const startMs = Date.now();
     try {
         const result = await callVisionChat(

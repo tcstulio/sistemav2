@@ -32,6 +32,17 @@ export const config = {
     // #1029 confirmou glm-4.6v aceitando MP4 data URL de ≥8.48 MiB; ceiling exato indeterminado
     // — default conservador de 10 MiB dá folga sobre o provado. Override via VIDEO_MAX_BYTES.
     videoMaxBytes: parseInt(process.env.VIDEO_MAX_BYTES || String(10 * 1024 * 1024), 10),
+    // #1546 — limite do endpoint `POST /chat/analyze-video` (tamanho máximo do anexo
+    // de vídeo enviado pelo usuário, em BYTES do buffer decodificado). Diferente do
+    // `videoMaxBytes` (que limita o que o glm-4.6v aceita), este limite protege a rota
+    // ANTES de gastar I/O em uploads claramente grandes — UX honesta com o usuário
+    // ("reduza o tamanho") em vez de timeout obscuro. Default 20 MiB conforme spec
+    // da issue. Piso de 1 MiB para evitar config malformada (zero/negativo).
+    chatVideoMaxBytes: (() => {
+        const raw = parseInt(process.env.CHAT_VIDEO_MAX_BYTES || String(20 * 1024 * 1024), 10);
+        const min = 1024 * 1024;
+        return Number.isFinite(raw) && raw >= min ? raw : 20 * 1024 * 1024;
+    })(),
     minimaxApiKey: process.env.MINIMAX_API_KEY || '',
     // Chave da ASSINATURA MiniMax (Subscription Key do Token Plan) — separada da API key
     // pay-as-you-go. Usada pelos endpoints de MÍDIA (TTS/voz/imagem/vídeo) quando presente;
