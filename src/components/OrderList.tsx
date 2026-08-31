@@ -364,9 +364,6 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const { data: projectsData } = useProjects(config);
     const projects = projectsData || [];
 
-    // Fallback if config is null
-    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
-
     const [filterStatus, setFilterStatus] = useState<'all' | 'validated' | 'processing' | 'delivered'>('all');
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
@@ -425,7 +422,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         try {
             if (isEditingOrder) {
                 // Atualiza cabeçalho (data)
-                await DolibarrService.updateObject(config, 'orders', editOrderId!, {
+                await DolibarrService.updateObject(config!, 'orders', editOrderId!, {
                     date: Math.floor(new Date(newOrder.date).getTime() / 1000),
                 });
 
@@ -434,13 +431,13 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                     .filter(l => !newOrder.items.some(it => it.id === l.id))
                     .map(l => l.id);
                 for (const lineId of removedLineIds) {
-                    await DolibarrService.deleteOrderLine(config, editOrderId!, lineId);
+                    await DolibarrService.deleteOrderLine(config!, editOrderId!, lineId);
                 }
 
                 // Linhas alteradas: presentes em items com id e com diff
                 for (const item of newOrder.items) {
                     if (item.id && lineChanged(item)) {
-                        await DolibarrService.updateOrderLine(config, editOrderId!, item.id, {
+                        await DolibarrService.updateOrderLine(config!, editOrderId!, item.id, {
                             desc: item.desc,
                             qty: item.qty,
                             subprice: item.price,
@@ -452,7 +449,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                 // Novas linhas: sem id
                 for (const item of newOrder.items) {
                     if (!item.id) {
-                        await DolibarrService.addOrderLine(config, editOrderId!, {
+                        await DolibarrService.addOrderLine(config!, editOrderId!, {
                             fk_product: item.productId || undefined,
                             desc: item.desc,
                             qty: item.qty,
@@ -467,7 +464,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                     setSelectedOrder({ ...selectedOrder, date: Math.floor(new Date(newOrder.date).getTime() / 1000) });
                 }
             } else {
-                await DolibarrService.createOrder(config, {
+                await DolibarrService.createOrder(config!, {
                     socid: newOrder.socid,
                     date: new Date(newOrder.date).getTime() / 1000,
                     lines: newOrder.items.map(it => ({
@@ -574,6 +571,8 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         initialSortDir: 'desc',
     });
     const filteredOrders = controls.result;
+
+    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
     const openInDolibarr = (id: string) => {
         const baseUrl = config.apiUrl.replace('/api/index.php', '');

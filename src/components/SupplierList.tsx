@@ -58,8 +58,6 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     // Mutations
     const { createSupplier, updateSupplier } = useSupplierMutations(config);
 
-    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
-
     const { data: contacts = [] } = useContacts(config);
 
     const [selectedSupplier, setSelectedSupplier] = useState<ThirdParty | null>(null);
@@ -173,6 +171,8 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
 
         return products.filter(p => suppliedProductIds.has(String(p.id)));
     }, [selectedSupplier, currentSupplierOrders, products]);
+
+    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
     const openReceptionModal = (orderId: string, prefillProduct?: string) => {
         setReceptionForm({

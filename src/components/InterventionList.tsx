@@ -50,8 +50,6 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
         setSelectedIntervention({ ...intervention, lines: linkedLines });
     };
 
-    if (!config) return null;
-
     const [filterStatus, setFilterStatus] = useState<'all' | 'me' | 'draft' | 'validated' | 'done'>('all');
     const [selectedIntervention, setSelectedIntervention] = useState<Intervention | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
@@ -160,6 +158,8 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
             return true;
         });
     }, [controls.result, filterStatus, config]);
+
+    if (!config) return null;
 
     const handleSubmitIntervention = async (e: React.FormEvent) => {
         e.preventDefault();

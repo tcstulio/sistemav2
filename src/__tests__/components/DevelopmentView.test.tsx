@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -70,5 +70,88 @@ describe('DevelopmentView — aba Config IA integra o AgentConfigEditor (#1005)'
         render(<DevelopmentView />);
         await user.click(screen.getByText('Config IA'));
         expect(screen.getByTestId('agent-config-editor')).toHaveAttribute('data-is-admin', 'false');
+    });
+});
+
+describe('DevelopmentView — Rules of Hooks (#1822, épico #1082)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
+    it('renderiza o fallback "Carregando configurações..." quando config é null', () => {
+        mockedUseDolibarr.mockReturnValue({
+            config: null,
+            currentUser: { id: '1', login: 'admin', admin: 1 },
+        });
+        render(<DevelopmentView />);
+        expect(screen.getByText('Carregando configurações...')).toBeInTheDocument();
+        expect(screen.queryByText('Console de Desenvolvedor')).not.toBeInTheDocument();
+    });
+
+    it('renderiza o fallback de dev-mode bloqueado mesmo com config presente', () => {
+        vi.stubEnv('DEV', false);
+        vi.stubEnv('VITE_ENABLE_DEV_CONSOLE', '');
+        mockedUseDolibarr.mockReturnValue({
+            config: { themeColor: 'indigo' },
+            currentUser: { id: '1', login: 'admin', admin: 1 },
+        });
+        render(<DevelopmentView />);
+        expect(screen.getByText('Console indisponível')).toBeInTheDocument();
+        expect(screen.queryByText('Console de Desenvolvedor')).not.toBeInTheDocument();
+    });
+
+    it('renderiza o console completo quando config existe e dev-mode está ativo', () => {
+        mockedUseDolibarr.mockReturnValue({
+            config: { themeColor: 'indigo' },
+            currentUser: { id: '1', login: 'admin', admin: 1 },
+        });
+        render(<DevelopmentView />);
+        expect(screen.getByText('Console de Desenvolvedor')).toBeInTheDocument();
+        expect(screen.getByTestId('monitor-tab')).toBeInTheDocument();
+    });
+
+    it('não viola Rules of Hooks ao alternar config null → presente (useState permanece na mesma ordem)', () => {
+        // 1º render: config null → cai no fallback "Carregando configurações...".
+        mockedUseDolibarr.mockReturnValue({
+            config: null,
+            currentUser: { id: '1', login: 'admin', admin: 1 },
+        });
+        const { rerender } = render(<DevelopmentView />);
+        expect(screen.getByText('Carregando configurações...')).toBeInTheDocument();
+
+        // 2º render: config presente → useState(activeTab) já foi registrada no 1º render,
+        // então o React não quebra (useState permanece na mesma posição na ordem de hooks).
+        mockedUseDolibarr.mockReturnValue({
+            config: { themeColor: 'indigo' },
+            currentUser: { id: '1', login: 'admin', admin: 1 },
+        });
+        expect(() => rerender(<DevelopmentView />)).not.toThrow();
+        expect(screen.getByText('Monitor de Sync')).toBeInTheDocument();
+    });
+
+    it('preserva o estado activeTab entre re-renders com config presente (hook order estável)', async () => {
+        mockedUseDolibarr.mockReturnValue({
+            config: { themeColor: 'indigo' },
+            currentUser: { id: '1', login: 'admin', admin: 1 },
+        });
+        const user = userEvent.setup();
+        const { rerender } = render(<DevelopmentView />);
+
+        // Troca para a aba "Auditoria do Sistema" para setar activeTab.
+        await user.click(screen.getByText('Auditoria do Sistema'));
+        expect(screen.getByTestId('audit-tab')).toBeInTheDocument();
+
+        // Re-render simulando nova referência de config (mesmo conteúdo) — o state
+        // deve persistir porque useState foi chamado no mesmo lugar nos dois renders.
+        mockedUseDolibarr.mockReturnValue({
+            config: { themeColor: 'indigo' },
+            currentUser: { id: '1', login: 'admin', admin: 1 },
+        });
+        rerender(<DevelopmentView />);
+        expect(screen.getByTestId('audit-tab')).toBeInTheDocument();
     });
 });

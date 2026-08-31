@@ -16,22 +16,22 @@ const isDevMode = () => {
 const DevelopmentView: React.FC = () => {
     const { config, currentUser } = useDolibarr();
     const isAdmin = currentUser?.admin === 1;
-
-    if (!isDevMode()) {
-        return (
-            <div className="flex flex-col items-center justify-center h-full p-8 text-slate-400">
-                <Terminal size={48} className="mb-4 opacity-30" />
-                <p className="text-lg font-medium">Console indisponível</p>
-                <p className="text-sm">Disponível apenas em ambiente de desenvolvimento.</p>
-            </div>
-        );
-    }
-
     const [activeTab, setActiveTab] = useState<'audit' | 'console' | 'monitor' | 'permissions' | 'llm'>('monitor');
 
-    if (!config) {
-        return <div className="p-10 text-center text-slate-400">Carregando configurações...</div>;
-    }
+    const devModeFallback = !isDevMode() ? (
+        <div className="flex flex-col items-center justify-center h-full p-8 text-slate-400">
+            <Terminal size={48} className="mb-4 opacity-30" />
+            <p className="text-lg font-medium">Console indisponível</p>
+            <p className="text-sm">Disponível apenas em ambiente de desenvolvimento.</p>
+        </div>
+    ) : null;
+
+    const configFallback = !config ? (
+        <div className="p-10 text-center text-slate-400">Carregando configurações...</div>
+    ) : null;
+
+    if (devModeFallback) return devModeFallback;
+    if (!config) return configFallback;
 
     const themeColor = config.themeColor || 'indigo';
 
