@@ -8,6 +8,7 @@
  * - Exposes itself on `window.__logger` only in DEV — Vite/Rollup tree-shake removes
  *   the assignment in production builds, so `__logger` nunca aparece em `dist/`.
  */
+import { captureException as sentryCaptureException } from './sentry';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -198,12 +199,12 @@ function defaultSentrySender(error: Error, context?: Record<string, unknown>): v
         sentrySenderRef(error, context);
         return;
     }
-    // Lazy import para evitar ciclo: logger ← sentry, e sentry NÃO importa logger.
-    // Resolve dinâmico mantém compat com bundlers e funciona em build normal.
-    void import('./sentry').then((mod) => {
-        sentrySenderRef = (err, ctx) => mod.captureException(err, ctx);
-        sentrySenderRef(error, context);
-    }).catch(() => { /* no-op: Sentry opcional */ });
+    // Import estático: `sentry.ts` NÃO importa `logger.ts`, então não há ciclo.
+    // `sentryCaptureException` é no-op se `initSentry()` ainda não foi chamado —
+    // perda zero de eventos. Isso elimina a race condition do import dinâmico
+    // da implementação anterior (primeira chamada ao `logger.error()` resolvia
+    // só em microtask, perdendo erros SINCRONOS muito iniciais).
+    sentryCaptureException(error, context);
 }
 
 /** Injeta um sender customizado (usado pelos testes para capturar chamadas). */

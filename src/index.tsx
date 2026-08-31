@@ -14,10 +14,14 @@ import { installReportCapture } from './utils/reportContext';
 import { ConfirmProvider } from './hooks/useConfirm';
 import { PromptProvider } from './hooks/usePrompt';
 
-// Logger estruturado é importado primeiro para que `captureException` (lazy) já
-// esteja pronto quando o Sentry (inicializado abaixo) começar a usá-lo.
+// NOTA (issue #1773): a issue referencia `src/main.tsx`, mas o entry point real
+// deste projeto é `src/index.tsx` (configurado em `vite.config.ts` e em
+// `index.html`). Não há `src/main.tsx` — o PR (#1786) modifica este arquivo.
+
 // Sentry init: no-op sem VITE_SENTRY_DSN. Quando inicializado, instala
 // listeners globais de `error` e `unhandledrejection` que encaminham ao Sentry.
+// `@sentry/react` já estava presente em `dependencies` desde o PR #507; este
+// PR (#1786) não precisou (re)instalar — o `package-lock.json` mantém a versão.
 initSentry();
 logger.info('frontend boot', 'app', { mode: import.meta.env.MODE });
 

@@ -161,19 +161,42 @@ describe('logger prod-mode behavior (issue #1773)', () => {
         consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         __setSentrySenderForTests(null);
-        // Garante um `window.__logger` limpo entre testes
-        delete (window as unknown as { __logger?: unknown }).__logger;
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
         __setSentrySenderForTests(null);
-        delete (window as unknown as { __logger?: unknown }).__logger;
     });
 
     it('exports a dev singleton (default vitest env) for `window.__logger`', () => {
         // Em dev, o módulo já atribuiu `window.__logger` no top-level.
         expect((window as unknown as { __logger?: unknown }).__logger).toBe(logger);
+    });
+
+    it('does NOT assign `window.__logger` when `import.meta.env.DEV === false`', async () => {
+        // Re-importa o módulo sob um env de PROD para validar a guarda de DCE:
+        // o bloco `if (import.meta.env.DEV === true)` deve ser eliminado em build
+        // e, equivalentemente em runtime, NÃO atribuir `window.__logger` quando
+        // DEV é false.
+        vi.resetModules();
+        delete (window as unknown as { __logger?: unknown }).__logger;
+        const envRef = import.meta.env as unknown as Record<string, unknown>;
+        const originalDev = envRef.DEV;
+        const originalProd = envRef.PROD;
+        envRef.DEV = false;
+        envRef.PROD = true;
+        try {
+            await import('../../utils/logger');
+            expect((window as unknown as { __logger?: unknown }).__logger).toBeUndefined();
+        } finally {
+            envRef.DEV = originalDev;
+            envRef.PROD = originalProd;
+            vi.resetModules();
+            // Re-importa em modo DEV para restaurar o singleton no window
+            // (caso outros testes posteriores dependam dele).
+            const reimported = await import('../../utils/logger');
+            (window as unknown as { __logger?: unknown }).__logger = reimported.logger;
+        }
     });
 
     it('prod logger (isProduction=true) does NOT expose `window.__logger`', () => {

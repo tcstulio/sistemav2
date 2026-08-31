@@ -1,16 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import React from 'react';
 
-const captureExceptionMock = vi.fn();
+const mocks = vi.hoisted(() => {
+    const captureExceptionMock = vi.fn();
+    const initMock = vi.fn();
+    const browserTracingIntegrationMock = vi.fn(() => ({ name: 'BrowserTracing' }));
+    return { captureExceptionMock, initMock, browserTracingIntegrationMock };
+});
 
 vi.mock('@sentry/react', () => {
-    const captureException = (...args: unknown[]) => captureExceptionMock(...args);
-    const init = vi.fn();
-    const browserTracingIntegration = vi.fn(() => ({ name: 'BrowserTracing' }));
+    // Vitest spy detection só funciona quando exportamos a vi.fn() diretamente.
+    // Encapsulamos em funções anônimas só para repassar a chamada.
+    const captureException: (...args: unknown[]) => void = (...args) => (mocks.captureExceptionMock as (...a: unknown[]) => void)(...args);
     return {
-        init,
+        init: mocks.initMock,
         captureException,
-        browserTracingIntegration,
-        default: { init, captureException, browserTracingIntegration },
+        browserTracingIntegration: mocks.browserTracingIntegrationMock,
+        default: {
+            init: mocks.initMock,
+            captureException,
+            browserTracingIntegration: mocks.browserTracingIntegrationMock,
+        },
     };
 });
 
@@ -33,7 +43,9 @@ describe('sentry (issue #1773)', () => {
     let addEventListenerSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-        captureExceptionMock.mockClear();
+        mocks.captureExceptionMock.mockClear();
+        mocks.initMock.mockClear();
+        mocks.browserTracingIntegrationMock.mockClear();
         __resetSentryForTests();
         // Garante que cada teste começa com DSN definido (alguns testes
         // verificam o comportamento sem DSN e o reativam depois).
@@ -43,7 +55,9 @@ describe('sentry (issue #1773)', () => {
 
     afterEach(() => {
         __resetSentryForTests();
-        captureExceptionMock.mockClear();
+        mocks.captureExceptionMock.mockClear();
+        mocks.initMock.mockClear();
+        mocks.browserTracingIntegrationMock.mockClear();
         addEventListenerSpy.mockRestore();
         setSentryDsn(ORIGINAL_DSN as string | undefined);
     });
@@ -78,8 +92,8 @@ describe('sentry (issue #1773)', () => {
         it('forwards window ErrorEvent to Sentry.captureException with extra metadata', () => {
             initSentry();
             const handler = addEventListenerSpy.mock.calls
-                .map((call) => call[0] as string)
-                .filter((name) => name === 'error');
+                .map((call: unknown[]) => call[0] as string)
+                .filter((name: string) => name === 'error');
             expect(handler).toContain('error');
 
             const realErr = new Error('real error from window');
@@ -92,8 +106,8 @@ describe('sentry (issue #1773)', () => {
             });
             window.dispatchEvent(errorEvent);
 
-            expect(captureExceptionMock).toHaveBeenCalledTimes(1);
-            const [errArg, ctxArg] = captureExceptionMock.mock.calls[0];
+            expect(mocks.captureExceptionMock).toHaveBeenCalledTimes(1);
+            const [errArg, ctxArg] = mocks.captureExceptionMock.mock.calls[0];
             expect(errArg).toBe(realErr);
             expect(ctxArg).toMatchObject({
                 extra: {
@@ -118,8 +132,8 @@ describe('sentry (issue #1773)', () => {
             Object.defineProperty(errorEvent, 'error', { value: undefined });
             window.dispatchEvent(errorEvent);
 
-            expect(captureExceptionMock).toHaveBeenCalledTimes(1);
-            const [errArg] = captureExceptionMock.mock.calls[0];
+            expect(mocks.captureExceptionMock).toHaveBeenCalledTimes(1);
+            const [errArg] = mocks.captureExceptionMock.mock.calls[0];
             expect(errArg).toBeInstanceOf(Error);
             expect((errArg as Error).message).toBe('synthetic message');
         });
@@ -132,8 +146,8 @@ describe('sentry (issue #1773)', () => {
             const event = new PromiseRejectionEvent('unhandledrejection', { reason, promise: Promise.reject(reason) });
             window.dispatchEvent(event);
 
-            expect(captureExceptionMock).toHaveBeenCalledTimes(1);
-            const [errArg, ctxArg] = captureExceptionMock.mock.calls[0];
+            expect(mocks.captureExceptionMock).toHaveBeenCalledTimes(1);
+            const [errArg, ctxArg] = mocks.captureExceptionMock.mock.calls[0];
             expect(errArg).toBe(reason);
             expect(ctxArg).toMatchObject({ extra: { source: 'unhandledrejection' } });
         });
@@ -146,8 +160,8 @@ describe('sentry (issue #1773)', () => {
             });
             window.dispatchEvent(event);
 
-            expect(captureExceptionMock).toHaveBeenCalledTimes(1);
-            const [errArg] = captureExceptionMock.mock.calls[0];
+            expect(mocks.captureExceptionMock).toHaveBeenCalledTimes(1);
+            const [errArg] = mocks.captureExceptionMock.mock.calls[0];
             expect(errArg).toBeInstanceOf(Error);
             expect((errArg as Error).message).toBe('string-reason');
         });
@@ -161,8 +175,8 @@ describe('sentry (issue #1773)', () => {
             });
             window.dispatchEvent(event);
 
-            expect(captureExceptionMock).toHaveBeenCalledTimes(1);
-            const [errArg] = captureExceptionMock.mock.calls[0];
+            expect(mocks.captureExceptionMock).toHaveBeenCalledTimes(1);
+            const [errArg] = mocks.captureExceptionMock.mock.calls[0];
             expect(errArg).toBeInstanceOf(Error);
             expect((errArg as Error).message).toBe(JSON.stringify(reason));
         });
@@ -174,8 +188,8 @@ describe('sentry (issue #1773)', () => {
             // anteriores a ele, resetamos spies, e chamamos installGlobalErrorListeners
             // mais uma vez para verificar que o flag trava a segunda instalação.
             initSentry();
-            const errorCallsBefore = addEventListenerSpy.mock.calls.filter((c) => c[0] === 'error').length;
-            const rejectionCallsBefore = addEventListenerSpy.mock.calls.filter((c) => c[0] === 'unhandledrejection').length;
+            const errorCallsBefore = addEventListenerSpy.mock.calls.filter((c: unknown[]) => c[0] === 'error').length;
+            const rejectionCallsBefore = addEventListenerSpy.mock.calls.filter((c: unknown[]) => c[0] === 'unhandledrejection').length;
 
             // Resetar spy para contar SOMENTE as chamadas adicionais.
             addEventListenerSpy.mockClear();
@@ -183,8 +197,8 @@ describe('sentry (issue #1773)', () => {
             installGlobalErrorListeners();
             installGlobalErrorListeners();
 
-            const newErrorCalls = addEventListenerSpy.mock.calls.filter((c) => c[0] === 'error').length;
-            const newRejectionCalls = addEventListenerSpy.mock.calls.filter((c) => c[0] === 'unhandledrejection').length;
+            const newErrorCalls = addEventListenerSpy.mock.calls.filter((c: unknown[]) => c[0] === 'error').length;
+            const newRejectionCalls = addEventListenerSpy.mock.calls.filter((c: unknown[]) => c[0] === 'unhandledrejection').length;
             expect(newErrorCalls).toBe(0);
             expect(newRejectionCalls).toBe(0);
             expect(errorCallsBefore).toBe(1);
@@ -199,25 +213,71 @@ describe('sentry (issue #1773)', () => {
             const event = new ErrorEvent('error', { message: 'manual' });
             window.dispatchEvent(event);
             // Nenhuma captura esperada porque Sentry não foi inicializado.
-            expect(captureExceptionMock).not.toHaveBeenCalled();
+            expect(mocks.captureExceptionMock).not.toHaveBeenCalled();
         });
     });
 
     describe('captureException()', () => {
         it('is a no-op when Sentry is not initialized', () => {
             captureException(new Error('boom'));
-            expect(captureExceptionMock).not.toHaveBeenCalled();
+            expect(mocks.captureExceptionMock).not.toHaveBeenCalled();
         });
 
         it('forwards to Sentry.captureException with extra context when initialized', () => {
             initSentry();
-            captureExceptionMock.mockClear();
+            mocks.captureExceptionMock.mockClear();
             const err = new Error('manual capture');
             captureException(err, { tag: 'manual' });
-            expect(captureExceptionMock).toHaveBeenCalledTimes(1);
-            const [errArg, ctxArg] = captureExceptionMock.mock.calls[0];
+            expect(mocks.captureExceptionMock).toHaveBeenCalledTimes(1);
+            const [errArg, ctxArg] = mocks.captureExceptionMock.mock.calls[0];
             expect(errArg).toBe(err);
             expect(ctxArg).toMatchObject({ extra: { tag: 'manual' } });
+        });
+    });
+
+    describe('React integration (AC: throw new Error dentro de componente → Sentry)', () => {
+        it('captures an error thrown by a React component child via the ErrorBoundary → Sentry path', async () => {
+            // Cobre o AC literal: "VITE_SENTRY_DSN configurado → throw new Error('teste')
+            // dentro de um componente React captura no Sentry". Em produção, o
+            // `ErrorBoundary` (src/components/ui/ErrorBoundary.tsx) captura erros
+            // da árvore filha e chama `captureException(error, ...)` diretamente —
+            // nosso `initSentry()` precisa estar ativo (initialized=true) para que
+            // `captureException` encaminhe ao Sentry.
+            const { render } = await import('@testing-library/react');
+
+            const { ErrorBoundary } = await import('../../components/ui/ErrorBoundary');
+
+            initSentry();
+            mocks.captureExceptionMock.mockClear();
+
+            const Boom: React.FC = () => {
+                throw new Error('teste');
+            };
+
+            // Suprime o ruído do React quando um erro é lançado em render sem boundary
+            // (React 19 ainda loga o erro antes do ErrorBoundary capturá-lo).
+            const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+            const { unmount } = render(
+                React.createElement(
+                    ErrorBoundary as React.ComponentType<{ componentName: string; children?: React.ReactNode }>,
+                    { componentName: 'TestBoom' },
+                    React.createElement(Boom)
+                )
+            );
+
+            expect(mocks.captureExceptionMock).toHaveBeenCalled();
+            const [errArg, ctxArg] = mocks.captureExceptionMock.mock.calls[0];
+            expect(errArg).toBeInstanceOf(Error);
+            expect((errArg as Error).message).toBe('teste');
+            expect(ctxArg).toMatchObject({
+                extra: {
+                    componentName: 'TestBoom',
+                },
+            });
+
+            consoleErrorSpy.mockRestore();
+            unmount();
         });
     });
 });
