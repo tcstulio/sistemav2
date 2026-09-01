@@ -39,6 +39,10 @@ import { describeVideoAttachment } from '../services/describeVideoAttachment';
 import { VideoAnalysisError } from '../services/describeVideo';
 import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
+// #1059: cancelamento propagado até a chamada HTTP da OpenAI. O `cancel(jobId)` do
+// aiJobService aciona o AbortController registrado no enqueue, que `postChatCompletion`
+// lê via `getSignal(jobId)` para abortar axios + retry loop em ≤2s.
+import { aiJobService } from '../services/aiJobService';
 
 const log = createLogger('ChatRoutes');
 
@@ -154,21 +158,35 @@ router.get(
 /**
  * POST /chat/jobs/:id/cancel
  *
- * Sinaliza cancelamento via flag no estado do job (Map<jobId, JobState>). O agentLoop
- * checa `stream.isCancelled(jobId)` a cada iteração e fecha o job emitindo um evento
- * terminal `cancelled` com payload `{summary}` (resumo das tool_calls já completadas).
+ * #1059: cancelamento de job propagado até a chamada HTTP do LLM. Combina DUAS
+ * alavancas complementares:
+ *   1. `stream.requestCancel(jobId)` — flag que o agentLoop checa no topo de cada
+ *      iteração (cobertura rápida: o loop quebra mesmo entre tool-calls).
+ *   2. `aiJobService.cancel(jobId, { reason, actor })` — AbortController registrado
+ *      no enqueue do job. `postChatCompletion` lê `getSignal(jobId)` para abortar
+ *      a request axios EM VOO (≤2s) e o loop de retry sem esperar backoff.
  *
- * Tempo de resposta alvo: ≤1s. `requestCancel` é O(1) (seta um flag). O handler NÃO
- * espera o loop encerrar — isso é o trabalho do SSE consumer que recebe o evento terminal.
+ * As duas alavancas juntas garantem cancelamento ≤2s do clique, seja o job `queued`
+ * (fila serial) ou `running` (axios em vôo / retry-loop esperando backoff).
  *
- * Idempotência: pode ser chamado várias vezes para o mesmo jobId sem efeito colateral.
- * Cancel em job inexistente: cria o estado com a flag setada — quando o loop começar
- * (se vier), verá o flag no topo e fecha imediatamente. Cancel em job já fechado: no-op.
+ * Ownership (#1059): só o DONO do job (userId/login) OU admin pode cancelar. O
+ * `aiJobService.cancel` já implementa a checagem fail-closed cross-user — aqui
+ * só traduzimos o resultado em HTTP:
+ *   - `{ cancelled: true, status: 'queued'|'running' }` → 200 `{ status: 'cancelling' }`
+ *   - `{ cancelled: false, reason: 'not_cancellable' }` → 403 (cross-user)
+ *   - `{ cancelled: false, reason: 'missing'|'expired' }` → 404
+ *   - `{ cancelled: false, reason: 'already_terminal' }` → 409 (job já finalizado)
+ *
+ * Tempo de resposta: ≤1s (tudo é O(1) — set flag + aciona controller). O handler NÃO
+ * espera o loop encerrar; o SSE consumer recebe o evento terminal `cancelled` quando o
+ * trabalho de fato para.
  *
  * Códigos:
- *   - 200: cancel registrado (sempre — a presença do jobId não é validada; o caller
- *     já conhece o id pelo POST /generate-reply-async anterior).
+ *   - 200: cancel registrado (queued/running) ou já terminal (200 idempotente — UX).
  *   - 401: auth (delegado).
+ *   - 403: cross-user cancel (actor ≠ owner).
+ *   - 404: jobId desconhecido / expirado.
+ *   - 409: job já em estado terminal (done|error) — útil para o cliente distinguir.
  */
 router.post(
     '/jobs/:id/cancel',
@@ -178,8 +196,50 @@ router.post(
             throw new AppError(400, 'BAD_REQUEST', 'jobId é obrigatório.');
         }
         const stream = getProgressStream();
+
+        // #1059: identidade do chamador (Dolibarr user) — propagada para o aiJobService
+        // checar propriedade. Admin (admin==='1'/'1'/true) sempre pode cancelar (ator
+        // ausente é admin implícito no service). `user.id` é o ID Dolibarr preferido;
+        // `login` é o fallback (cobre usuários sem id resolvido na sessão).
+        const user = (req as any).user || {};
+        const actor = {
+            userId: user.id ? String(user.id) : '',
+            userLogin: user.login ? String(user.login) : '',
+        };
+        const isAdmin = user.admin === '1' || user.admin === 1 || user.admin === true;
+
+        const reason = 'user-cancel';
+        // 1) Marca a flag para o agentLoop (cobre o tool-loop rápido).
         stream.requestCancel(jobId);
-        log.debug(`Cancel registrado para job ${jobId}`);
+        // 2) Aciona o AbortController — corta a request HTTP em vôo e/ou remove da fila.
+        const result = aiJobService.cancel(jobId, {
+            reason,
+            ...(isAdmin ? {} : { actor }),
+        });
+
+        if (!result.cancelled) {
+            // 404 vs 403 vs 409: o cliente usa isso para decidir retry / refresh / etc.
+            if (result.reason === 'missing') {
+                throw new AppError(404, 'JOB_NOT_FOUND', 'Job não encontrado.');
+            }
+            if (result.reason === 'expired') {
+                throw new AppError(404, 'JOB_EXPIRED', 'Job expirado.');
+            }
+            if (result.reason === 'not_cancellable') {
+                // Cross-user: message inclui o login do dono para audit/log no client.
+                const owner = aiJobService.getOwner(jobId);
+                const ownerLogin = owner?.userLogin || 'desconhecido';
+                throw new AppError(403, 'JOB_FORBIDDEN', `Apenas o dono do job (${ownerLogin}) pode cancelá-lo.`);
+            }
+            // already_terminal: o job já está done/error. Devolvemos 200 idempotente para
+            // duas chamadas sucessivas não gerarem inconsistência visual — o cliente que
+            // quiser saber se o cancel FOI útil pode re-checar `GET /jobs/:id`.
+            // NÃO cancelamos o request.
+            log.debug(`Cancel em job já terminal: ${jobId}`);
+            return ok(res, { jobId, status: 'already_terminal' });
+        }
+
+        log.info(`Job ${jobId} cancelado via POST /cancel (status=${result.status})`);
         return ok(res, { jobId, status: 'cancelling' });
     }),
 );

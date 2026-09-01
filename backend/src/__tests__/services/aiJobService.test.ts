@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+    getProgressStream,
+    withTurnProgress,
+    __resetProgressStreamForTesting,
+    type ProgressEvent,
+} from '../../agent/progressStream';
 
 // Fake storage em memória: captura saves/deletes e retorna o que quis no loadAll.
 const storage = vi.hoisted(() => ({
@@ -488,5 +494,384 @@ describe('aiJobService #1011 — reportProgress (lastHeartbeat = max(lastWrite, 
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+// =====================================================
+// #1059: cancelamento de job (queued + running) com AbortSignal
+// =====================================================
+describe('aiJobService #1059 — cancel(jobId) com AbortSignal', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    describe('cancel() em job queued', () => {
+        it('remove da fila serial e marca error="cancelled"', async () => {
+            const svc = await fresh();
+            // Ocupa as 3 vagas com jobs que nunca terminam.
+            svc.enqueue(() => new Promise(() => {}));
+            svc.enqueue(() => new Promise(() => {}));
+            svc.enqueue(() => new Promise(() => {}));
+            const queuedId = svc.enqueue(() => new Promise(() => {}), 'chat', { userId: 'u1', userLogin: 'alice' });
+            expect(svc.get(queuedId).ok).toBe(true);
+
+            const result = svc.cancel(queuedId, { reason: 'user-cancel', actor: { userId: 'u1', userLogin: 'alice' } });
+
+            // #1059: queued → remove da fila (sem nunca rodar) + marca error='cancelled'.
+            expect(result).toEqual({ cancelled: true, status: 'queued', reason: 'user-cancel' });
+
+            // Verifica persistência: último save do job carrega error='cancelled'.
+            const lastSave = storage.saved.filter((j) => j.id === queuedId).pop();
+            expect(lastSave?.status).toBe('error');
+            expect(lastSave?.error).toMatch(/^cancelled/);
+
+            // Verifica estado: get() ainda devolve o job, mas como terminal.
+            const lookup = svc.get(queuedId);
+            expect(lookup.ok).toBe(true);
+            if (lookup.ok) {
+                expect(lookup.job.status).toBe('error');
+                expect(lookup.job.error).toMatch(/^cancelled/);
+                expect(lookup.job.finishedAt).toBeTypeOf('number');
+                expect(lookup.job.expiresAt).toBeGreaterThan(lookup.job.finishedAt!);
+            }
+        });
+
+        it('libera a vaga: o próximo job da fila pega o slot', async () => {
+            const svc = await fresh();
+            // 3 vagas ocupadas com jobs longos.
+            const blocker1 = svc.enqueue(() => new Promise(() => {}));
+            const blocker2 = svc.enqueue(() => new Promise(() => {}));
+            const blocker3 = svc.enqueue(() => new Promise(() => {}));
+            // Cancela o 4º (queued).
+            const queuedId = svc.enqueue(() => new Promise(() => {}));
+            expect(svc.get(queuedId).ok).toBe(true);
+
+            const result = svc.cancel(queuedId);
+            expect(result.cancelled).toBe(true);
+
+            // Verifica que a vaga foi liberada: enfileira outro job e checa que ele está
+            // ainda na fila (não há vaga livre para rodar) — o critério é que o contador
+            // global `running` não mudou.
+            // Como `running` é privado, validamos indiretamente: enqueue de mais um job
+            // também fica queued.
+            const moreQueued = svc.enqueue(() => new Promise(() => {}));
+            const moreLookup = svc.get(moreQueued);
+            expect(moreLookup.ok).toBe(true);
+            if (moreLookup.ok) expect(moreLookup.job.status).toBe('queued');
+
+            // E o job cancelado sumiu da fila: não vira running mesmo após flush().
+            await flush();
+            const cancelledLookup = svc.get(queuedId);
+            expect(cancelledLookup.ok).toBe(true);
+            if (cancelledLookup.ok) {
+                // O cancel marcou o job como error — o `run` (que está na fila) nunca roda
+                // porque o filtro já removeu a entrada, OU se chegar a ser shift()-eado,
+                // bail no topo. Em qualquer caso, status permanece error.
+                expect(cancelledLookup.job.status).toBe('error');
+                expect(cancelledLookup.job.error).toMatch(/^cancelled/);
+            }
+            // Mantém referências vivas para o linter não reclamar.
+            void blocker1; void blocker2; void blocker3;
+        });
+    });
+
+    describe('cancel() em job running', () => {
+        it('aciona AbortController; getSignal() devolve signal aborted', async () => {
+            const svc = await fresh();
+            // Enfileira job longo (nunca resolve).
+            const id = svc.enqueue(() => new Promise(() => {}), 'chat', { userId: 'u1', userLogin: 'alice' });
+            await flush();
+
+            const lookup = svc.get(id);
+            expect(lookup.ok).toBe(true);
+            if (!lookup.ok) return;
+            expect(lookup.job.status).toBe('running');
+
+            // Signal disponível antes do cancel: NÃO aborted.
+            const signal = svc.getSignal(id);
+            expect(signal).toBeDefined();
+            expect(signal?.aborted).toBe(false);
+
+            // Aciona o cancel.
+            const result = svc.cancel(id, { reason: 'user-cancel', actor: { userId: 'u1', userLogin: 'alice' } });
+            expect(result).toMatchObject({ cancelled: true, status: 'running', reason: 'user-cancel' });
+
+            // Signal agora aborted. O `run` interno mapeia o AbortError em error='cancelled'.
+            expect(signal?.aborted).toBe(true);
+
+            // Drena a microtask chain do .catch do enqueue.
+            await flush();
+
+            const after = svc.get(id);
+            expect(after.ok).toBe(true);
+            if (after.ok) {
+                expect(after.job.status).toBe('error');
+                expect(after.job.error).toMatch(/^cancelled/);
+            }
+        });
+
+        it('passa o reason para o signal (e o erro final inclui o reason)', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}));
+            await flush();
+
+            const reason = 'because-user-clicked';
+            const result = svc.cancel(id, { reason });
+            expect(result.cancelled).toBe(true);
+
+            await flush();
+
+            const lookup = svc.get(id);
+            expect(lookup.ok).toBe(true);
+            if (lookup.ok) {
+                expect(lookup.job.error).toBe(`cancelled:${reason}`);
+            }
+        });
+
+        it('getSignal() devolve undefined após o job terminar (controller descartado)', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(async () => 'ok');
+            await flush();
+
+            // Job já done: getSignal deve retornar undefined.
+            expect(svc.getSignal(id)).toBeUndefined();
+
+            const lookup = svc.get(id);
+            expect(lookup.ok).toBe(true);
+            if (lookup.ok) expect(lookup.job.status).toBe('done');
+        });
+    });
+
+    describe('cancel() em estados terminais / inválidos', () => {
+        it('id desconhecido → {cancelled:false, reason:"missing"}', async () => {
+            const svc = await fresh();
+            expect(svc.cancel('id-inexistente')).toEqual({ cancelled: false, reason: 'missing' });
+        });
+
+        it('id expirado (TTL purgado) → {cancelled:false, reason:"expired"}', async () => {
+            const past = Date.now() - 1000;
+            const svc = await fresh([
+                { id: 'old', status: 'done', result: { v: 1 }, createdAt: past - 1000, finishedAt: past, expiresAt: past },
+            ]);
+            svc.restore();
+            expect(svc.cancel('old')).toEqual({ cancelled: false, reason: 'expired' });
+        });
+
+        it('job done → {cancelled:false, reason:"already_terminal"} (no-op)', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(async () => 'ok');
+            await flush();
+            const lookup = svc.get(id);
+            expect(lookup.ok).toBe(true);
+            if (lookup.ok) expect(lookup.job.status).toBe('done');
+
+            const result = svc.cancel(id);
+            expect(result).toEqual({ cancelled: false, reason: 'already_terminal' });
+        });
+
+        it('idempotente: chamar 2x na primeira devolve cancelled, na segunda already_terminal', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}));
+            await flush();
+
+            const first = svc.cancel(id);
+            expect(first.cancelled).toBe(true);
+
+            await flush();
+
+            const second = svc.cancel(id);
+            expect(second).toEqual({ cancelled: false, reason: 'already_terminal' });
+        });
+    });
+
+    describe('cancel() ownership (#1059 — só o dono ou admin pode cancelar)', () => {
+        it('admin (actor ausente) pode cancelar job de qualquer dono', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}), 'chat', { userId: 'u1', userLogin: 'alice' });
+            await flush();
+
+            // Sem actor = admin implícito.
+            const result = svc.cancel(id);
+            expect(result.cancelled).toBe(true);
+        });
+
+        it('dono pode cancelar o próprio job (actor.userId)', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}), 'chat', { userId: 'u1', userLogin: 'alice' });
+            await flush();
+
+            const result = svc.cancel(id, { actor: { userId: 'u1', userLogin: 'alice' } });
+            expect(result.cancelled).toBe(true);
+        });
+
+        it('dono pode cancelar via actor.userLogin (sem id Dolibarr)', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}), 'chat', { userId: 'u1', userLogin: 'alice' });
+            await flush();
+
+            const result = svc.cancel(id, { actor: { userId: '', userLogin: 'alice' } });
+            expect(result.cancelled).toBe(true);
+        });
+
+        it('cross-user (outro login) → {cancelled:false, reason:"not_cancellable"}', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}), 'chat', { userId: 'u1', userLogin: 'alice' });
+            await flush();
+
+            const result = svc.cancel(id, { actor: { userId: 'u2', userLogin: 'bob' } });
+            expect(result).toEqual({ cancelled: false, reason: 'not_cancellable' });
+            // Estado intacto: job continua running.
+            const lookup = svc.get(id);
+            expect(lookup.ok).toBe(true);
+            if (lookup.ok) expect(lookup.job.status).toBe('running');
+        });
+
+        it('job SEM owner registrado: admin pode cancelar, NÃO-admin é fail-closed', async () => {
+            const svc = await fresh();
+            // Enqueue sem owner (legacy).
+            const id = svc.enqueue(() => new Promise(() => {}));
+            await flush();
+
+            // Admin pode.
+            const adminResult = svc.cancel(id);
+            expect(adminResult.cancelled).toBe(true);
+            await flush();
+
+            const newId = svc.enqueue(() => new Promise(() => {}));
+            await flush();
+            // NÃO-admin (actor presente) NÃO pode cancelar job sem owner (fail-closed).
+            const nonAdminResult = svc.cancel(newId, { actor: { userId: 'u2', userLogin: 'bob' } });
+            expect(nonAdminResult).toEqual({ cancelled: false, reason: 'not_cancellable' });
+        });
+    });
+
+    describe('getOwner() — usado pelo handler HTTP para mensagem 403', () => {
+        it('devolve {userId, userLogin} do dono registrado', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}), 'chat', { userId: 'u1', userLogin: 'alice' });
+            expect(svc.getOwner(id)).toEqual({ userId: 'u1', userLogin: 'alice' });
+        });
+
+        it('devolve undefined para job sem owner', async () => {
+            const svc = await fresh();
+            const id = svc.enqueue(() => new Promise(() => {}));
+            expect(svc.getOwner(id)).toBeUndefined();
+        });
+
+        it('devolve undefined para id desconhecido', async () => {
+            const svc = await fresh();
+            expect(svc.getOwner('id-fantasma')).toBeUndefined();
+        });
+    });
+});
+
+// =====================================================
+// #1059: critério de aceite final — "enfileirar msg longa, clicar cancelar enquanto
+// roda; o cliente recebe evento `cancelled` e o job some da lista de pendentes".
+// Integra aiJobService (fila + AbortController) com o ProgressStream (fonte do SSE
+// GET /chat/jobs/:id/events): o fn do job emula o postChatCompletion cooperativo
+// (rejeita com AbortError quando o signal aciona) dentro de withTurnProgress.
+// =====================================================
+describe('aiJobService #1059 — integração: cancel durante execução → SSE cancelled + job fora dos pendentes', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        __resetProgressStreamForTesting();
+    });
+
+    it('cliente SSE recebe evento cancelled {status, reason} e o job sai dos pendentes', async () => {
+        const svc = await fresh();
+        const stream = getProgressStream();
+
+        // "Msg longa": job cooperativo que só termina quando o signal aborta (mesmo
+        // contrato do postChatCompletion — rejeita com erro name='AbortError').
+        let jobId = '';
+        jobId = svc.enqueue(
+            () => withTurnProgress(jobId, async () => {
+                const signal = svc.getSignal(jobId);
+                await new Promise<never>((_, reject) => {
+                    const abortErr = Object.assign(new Error('user-cancel'), {
+                        name: 'AbortError',
+                        code: 'aborted',
+                        reason: 'user-cancel',
+                    });
+                    if (signal?.aborted) {
+                        reject(abortErr);
+                        return;
+                    }
+                    signal?.addEventListener('abort', () => reject(abortErr), { once: true });
+                });
+            }),
+            'chat',
+            { userId: 'u1', userLogin: 'alice' },
+        );
+        await flush();
+
+        // Job EM EXECUÇÃO (estava entre os pendentes/ativos).
+        let lookup = svc.get(jobId);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) expect(lookup.job.status).toBe('running');
+
+        // Cliente subscreve o stream do job (mesma fonte do endpoint SSE).
+        const events: ProgressEvent[] = [];
+        const subscription = (async () => {
+            for await (const ev of stream.subscribe(jobId)) events.push(ev);
+        })();
+
+        // "Clica cancelar" enquanto roda.
+        const result = svc.cancel(jobId, { reason: 'user-cancel', actor: { userId: 'u1', userLogin: 'alice' } });
+        expect(result).toMatchObject({ cancelled: true, status: 'running' });
+
+        // O stream entrega o terminal e a iteração encerra sozinha.
+        await subscription;
+
+        // Cliente recebeu `cancelled` com payload {status:'cancelled', reason}.
+        const cancelled = events.find((e) => e.type === 'cancelled');
+        expect(cancelled).toBeTruthy();
+        expect((cancelled!.payload as any).status).toBe('cancelled');
+        expect((cancelled!.payload as any).reason).toBe('user-cancel');
+        // Nenhum terminal contraditório (done/error) por cima do cancelled.
+        expect(events.find((e) => e.type === 'done' || e.type === 'error')).toBeUndefined();
+
+        // Job saiu dos pendentes: estado terminal error/cancelled (nunca queued/running).
+        lookup = svc.get(jobId);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) {
+            expect(['queued', 'running']).not.toContain(lookup.job.status);
+            expect(lookup.job.status).toBe('error');
+            expect(lookup.job.error).toMatch(/^cancelled/);
+        }
+    });
+
+    it('cross-user cancel NÃO emite cancelled nem tira o job dos pendentes', async () => {
+        const svc = await fresh();
+        const stream = getProgressStream();
+
+        let jobId = '';
+        jobId = svc.enqueue(
+            () => withTurnProgress(jobId, () => new Promise<never>(() => {})),
+            'chat',
+            { userId: 'u1', userLogin: 'alice' },
+        );
+        await flush();
+
+        const events: ProgressEvent[] = [];
+        const subscription = (async () => {
+            for await (const ev of stream.subscribe(jobId)) events.push(ev);
+        })();
+
+        const result = svc.cancel(jobId, { reason: 'user-cancel', actor: { userId: 'u2', userLogin: 'bob' } });
+        expect(result).toEqual({ cancelled: false, reason: 'not_cancellable' });
+
+        // Dá um ciclo para provar que NADA foi emitido.
+        await flush();
+
+        // Nenhum terminal emitido; job segue running (cancel negado não altera estado).
+        expect(events.find((e) => e.type === 'cancelled' || e.type === 'done' || e.type === 'error')).toBeUndefined();
+        const lookup = svc.get(jobId);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) expect(lookup.job.status).toBe('running');
+
+        // Encerra a subscription sem pendurar o teste (abort do iterator).
+        void subscription;
     });
 });

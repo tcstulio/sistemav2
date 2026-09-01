@@ -21,6 +21,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     ProgressStream,
     getProgressStream,
+    withTurnProgress,
     __resetProgressStreamForTesting,
     type ProgressEvent,
 } from '../../agent/progressStream';
@@ -140,6 +141,18 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
             expect(last.type).toBe('cancelled');
             expect((last.payload as any).reason).toBe('user-disconnect');
             expect(stream.isClosed('job')).toBe(true);
+        });
+
+        // #1059: o payload do terminal `cancelled` carrega {status:'cancelled', reason}
+        // — contrato que o frontend usa para atualizar a UI sem consultar GET /jobs/:id.
+        it('cancel() (#1059): payload inclui {status:"cancelled", reason}', () => {
+            stream.emit('job', 'thinking', { phase: 'start' });
+            stream.cancel('job', 'user-cancel');
+            const buf = stream.getBuffer('job');
+            const last = buf[buf.length - 1];
+            expect(last.type).toBe('cancelled');
+            expect((last.payload as any).status).toBe('cancelled');
+            expect((last.payload as any).reason).toBe('user-cancel');
         });
 
         it('close() em job inexistente é no-op (não joga)', () => {
@@ -565,6 +578,84 @@ describe('#1574 — ProgressStream (núcleo de streaming SSE)', () => {
             expect(list).toHaveLength(2);
             expect(list[0]!.summary).toBe('');
             expect(list[1]!.summary).toBe('');
+        });
+    });
+
+    // ── #1059: withTurnProgress mapeia AbortError no terminal `cancelled` ─────────────
+    describe('withTurnProgress #1059 — AbortError → terminal cancelled {status, reason}', () => {
+        beforeEach(() => {
+            __resetProgressStreamForTesting();
+        });
+
+        afterEach(() => {
+            __resetProgressStreamForTesting();
+        });
+
+        it('AbortError fecha o stream com cancelled {status:"cancelled", reason} e re-lança', async () => {
+            const stream2 = getProgressStream();
+            const abortErr: any = new Error('user-cancel');
+            abortErr.name = 'AbortError';
+            abortErr.code = 'aborted';
+            abortErr.reason = 'user-cancel';
+
+            await expect(
+                withTurnProgress('job-wtp', async () => {
+                    throw abortErr;
+                }),
+            ).rejects.toBe(abortErr);
+
+            const buf = stream2.getBuffer('job-wtp');
+            const cancelledEv = buf.find((e) => e.type === 'cancelled');
+            expect(cancelledEv).toBeTruthy();
+            expect((cancelledEv!.payload as any).status).toBe('cancelled');
+            expect((cancelledEv!.payload as any).reason).toBe('user-cancel');
+            // NÃO emite terminal `error` (nem `done`) por cima — o frontend diferencia
+            // cancelamento de falha pelo event type.
+            expect(buf.find((e) => e.type === 'error')).toBeUndefined();
+            expect(buf.find((e) => e.type === 'done')).toBeUndefined();
+            expect(stream2.isClosed('job-wtp')).toBe(true);
+        });
+
+        it('AbortError SEM reason: payload usa reason default "cancelled"', async () => {
+            const stream2 = getProgressStream();
+            const abortErr: any = new Error('aborted');
+            abortErr.name = 'AbortError';
+
+            await expect(
+                withTurnProgress('job-wtp-2', async () => {
+                    throw abortErr;
+                }),
+            ).rejects.toBe(abortErr);
+
+            const cancelledEv = stream2.getBuffer('job-wtp-2').find((e) => e.type === 'cancelled');
+            expect(cancelledEv).toBeTruthy();
+            expect((cancelledEv!.payload as any).status).toBe('cancelled');
+            expect((cancelledEv!.payload as any).reason).toBe('cancelled');
+        });
+
+        it('erro genérico continua fechando com error {message} (legado preservado)', async () => {
+            const stream2 = getProgressStream();
+            await expect(
+                withTurnProgress('job-wtp-3', async () => {
+                    throw new Error('boom');
+                }),
+            ).rejects.toThrow('boom');
+
+            const buf = stream2.getBuffer('job-wtp-3');
+            expect(buf.find((e) => e.type === 'cancelled')).toBeUndefined();
+            const errEv = buf.find((e) => e.type === 'error');
+            expect(errEv).toBeTruthy();
+            expect((errEv!.payload as any).message).toBe('boom');
+        });
+
+        it('sucesso continua fechando com done {result} (legado preservado)', async () => {
+            const stream2 = getProgressStream();
+            const result = await withTurnProgress('job-wtp-4', async () => ({ text: 'pronto' }));
+            expect(result.text).toBe('pronto');
+            const buf = stream2.getBuffer('job-wtp-4');
+            const doneEv = buf.find((e) => e.type === 'done');
+            expect(doneEv).toBeTruthy();
+            expect((doneEv!.payload as any).result).toBe('pronto');
         });
     });
 });

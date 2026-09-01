@@ -163,9 +163,11 @@ export async function runAgentLoop(
     // #1575: cancelamento assíncrono via flag (POST /chat/jobs/:id/cancel). Se o cancel
     // chegou ANTES do loop começar, emitimos 'cancelled' com summary (vazio) e fechamos
     // o job — o caller ainda recebe uma resposta rápida sem executar tool alguma.
+    // #1059: payload inclui `{ status: 'cancelled', reason }` para o frontend distinguir
+    // do terminal `error` sem precisar consultar `GET /jobs/:id`.
     if (stream.isCancelled(opts.jobId)) {
         const summary = buildCancelSummary(stream.getCompletedToolCalls(opts.jobId));
-        stream.close(opts.jobId, 'cancelled', { reason: 'user-cancel', summary });
+        stream.close(opts.jobId, 'cancelled', { status: 'cancelled', reason: 'user-cancel', summary });
         const result: AgentLoopResult = {
             text: summary,
             usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
@@ -211,7 +213,8 @@ export async function runAgentLoop(
             // final trata como abort (path já testado). Aqui só chegamos com signal vivo.
             if (stream.isCancelled(opts.jobId)) {
                 const summary = buildCancelSummary(stream.getCompletedToolCalls(opts.jobId));
-                stream.close(opts.jobId, 'cancelled', { reason: 'user-cancel', summary });
+                // #1059: payload inclui `{ status, reason }` para o contrato SSE.
+                stream.close(opts.jobId, 'cancelled', { status: 'cancelled', reason: 'user-cancel', summary });
                 lastText = summary;
                 aborted = true;
                 break;
@@ -270,7 +273,8 @@ export async function runAgentLoop(
                 // usuário clicou em "cancelar".
                 if (stream.isCancelled(opts.jobId)) {
                     const summary = buildCancelSummary(stream.getCompletedToolCalls(opts.jobId));
-                    stream.close(opts.jobId, 'cancelled', { reason: 'user-cancel', summary });
+                    // #1059: payload inclui `{ status, reason }` para o contrato SSE.
+                    stream.close(opts.jobId, 'cancelled', { status: 'cancelled', reason: 'user-cancel', summary });
                     lastText = summary;
                     aborted = true;
                     break;
@@ -320,7 +324,8 @@ export async function runAgentLoop(
                         // Interrupção do usuário: terminal ÚNICO 'cancelled' (o turno pausa
                         // aguardando input). `aborted` encerra os loops e, com o job fechado,
                         // o bloco final NÃO emite 'done' por cima.
-                        stream.close(opts.jobId, 'cancelled', { reason: 'user-interrupt', question: e.question });
+                        // #1059: payload inclui `{ status, reason }` para o contrato SSE.
+                        stream.close(opts.jobId, 'cancelled', { status: 'cancelled', reason: 'user-interrupt', question: e.question });
                         aborted = true;
                         break;
                     }
@@ -338,7 +343,8 @@ export async function runAgentLoop(
                 // devemos gastar outra iteração de LLM).
                 if (stream.isCancelled(opts.jobId)) {
                     const summary = buildCancelSummary(stream.getCompletedToolCalls(opts.jobId));
-                    stream.close(opts.jobId, 'cancelled', { reason: 'user-cancel', summary });
+                    // #1059: payload inclui `{ status, reason }` para o contrato SSE.
+                    stream.close(opts.jobId, 'cancelled', { status: 'cancelled', reason: 'user-cancel', summary });
                     lastText = summary;
                     aborted = true;
                     break;

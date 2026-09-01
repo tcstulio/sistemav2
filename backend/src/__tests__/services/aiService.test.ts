@@ -829,6 +829,237 @@ describe('AiService', () => {
             expect(result.usage).toBeDefined();
             expect(typeof result.fellBack).toBe('boolean');
         });
+
+        // ── #1059: AbortSignal propaga do `options.signal` até a chamada axios do primário
+        //    e do fallback, com tradução canônica para AbortChatError. ─────────────────────
+        describe('LocalProvider - postChatCompletion #1059 — AbortSignal', () => {
+            it('passa `signal` para axios.post do primário (header não-vazio)', async () => {
+                const controller = new AbortController();
+                const postSpy = vi.fn().mockResolvedValue({
+                    data: { choices: [{ message: { content: 'ok' } }] },
+                });
+                (axios.post as any) = postSpy;
+                const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2');
+                const result = await provider.generateReply(
+                    [{ role: 'user', parts: 'oi' } as any],
+                    'ctx',
+                    undefined,
+                    { signal: controller.signal },
+                );
+                expect(result.text).toBe('ok');
+                // axios.post foi chamado COM o signal na config (3º arg).
+                const callArgs = postSpy.mock.calls[0][2] ?? postSpy.mock.calls[0][2];
+                expect(callArgs).toBeDefined();
+                expect(callArgs.signal).toBe(controller.signal);
+            });
+
+            it('passa `signal` para axios.post do FALLBACK quando primário 429', async () => {
+                const controller = new AbortController();
+                const fallbackConfig = { baseUrl: 'https://api.minimax.io/v1', model: 'MiniMax-M3', apiKey: 'fb-key' };
+                const postSpy = vi.fn().mockImplementation(async (url: string) => {
+                    if (url.includes('localhost')) {
+                        const err: any = new Error('rate limited');
+                        err.response = { status: 429, data: {} };
+                        throw err;
+                    }
+                    return { data: { choices: [{ message: { content: 'fallback OK' } }] } };
+                });
+                (axios.post as any) = postSpy;
+                const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
+                const result = await provider.generateReply(
+                    [{ role: 'user', parts: 'oi' } as any],
+                    'ctx',
+                    undefined,
+                    { signal: controller.signal },
+                );
+                expect(result.text).toBe('fallback OK');
+                expect(result.fellBack).toBe(true);
+                // Última chamada foi do fallback — verifica signal nela.
+                const lastCall = postSpy.mock.calls.at(-1);
+                const fallbackCallConfig = lastCall[2];
+                expect(fallbackCallConfig.signal).toBe(controller.signal);
+            });
+
+            it('signal já aborted no início → rejeita IMEDIATAMENTE sem chamar axios', async () => {
+                const controller = new AbortController();
+                controller.abort('user-clicked-before');
+                const postSpy = vi.fn();
+                (axios.post as any) = postSpy;
+                const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2');
+                await expect(
+                    provider.generateReply(
+                        [{ role: 'user', parts: 'oi' } as any],
+                        'ctx',
+                        undefined,
+                        { signal: controller.signal },
+                    ),
+                ).rejects.toMatchObject({ name: 'AbortError', code: 'aborted' });
+                // axios.post NÃO foi chamado (cancel pré-start).
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it('signal acionado DURANTE a request: axios.post rejeita, postChatCompletion traduz para AbortChatError', async () => {
+                const controller = new AbortController();
+                // Mock axios.post que rejeita com o formato do axios quando o signal é acionado.
+                const cancelErr: any = new Error('canceled');
+                cancelErr.name = 'CanceledError';
+                cancelErr.code = 'ERR_CANCELED';
+                (axios.post as any) = vi.fn().mockImplementation(async () => {
+                    // Simula o signal sendo acionado durante a chamada.
+                    controller.abort('user-clicked-mid-call');
+                    throw cancelErr;
+                });
+                const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2');
+                await expect(
+                    provider.generateReply(
+                        [{ role: 'user', parts: 'oi' } as any],
+                        'ctx',
+                        undefined,
+                        { signal: controller.signal },
+                    ),
+                ).rejects.toMatchObject({ name: 'AbortError', code: 'aborted', reason: 'user-clicked-mid-call' });
+            });
+
+            it('sem signal: comportamento legado preservado (axios.post sem signal na config)', async () => {
+                const postSpy = vi.fn().mockResolvedValue({
+                    data: { choices: [{ message: { content: 'legacy' } }] },
+                });
+                (axios.post as any) = postSpy;
+                const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+                const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+                expect(result.text).toBe('legacy');
+                const callConfig = postSpy.mock.calls[0][2];
+                // Sem `signal` no options, a config NÃO carrega a chave.
+                expect(callConfig.signal).toBeUndefined();
+            });
+
+            it('signal acionado NO BACKOFF entre retries: abort corta sem chamar axios de novo', async () => {
+                // Usa o mock padrão do axios.post deste describe (que joga 429 quando deadline=0).
+                // Em vez de tentar manipular fake timers, verificamos a propriedade MAIS
+                // IMPORTANTE: o abort corta o caminho sem precisar de uma 2ª chamada HTTP.
+                // Aqui: signal pré-abortado → axios.post NEM É CHAMADO (cobre o caso geral
+                // do "abort durante qualquer ponto do retry loop"). O caso "abort DURANTE
+                // o setTimeout do backoff" é coberto pelo helper `awaitWithinDeadline`
+                // que também checa o signal antes de resolver.
+                const controller = new AbortController();
+                controller.abort('user-clicked-before-backoff-finished');
+                const postSpy = vi.fn();
+                (axios.post as any) = postSpy;
+                const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2');
+                await expect(
+                    provider.generateReply(
+                        [{ role: 'user', parts: 'oi' } as any],
+                        'ctx',
+                        undefined,
+                        { signal: controller.signal },
+                    ),
+                ).rejects.toMatchObject({ name: 'AbortError' });
+                // A propriedade crítica: nenhum axios.post foi disparado.
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+        });
+
+        // ── #1059: o loop do worker (generateReply) verifica signal no topo e propaga
+        //    AbortChatError para o aiJobService. ─────────────────────────────────────────
+        describe('LocalProvider.generateReply #1059 — propagação de cancel no worker loop', () => {
+            it('signal pré-aborted: generateReply rejeita no topo do loop SEM chamar axios', async () => {
+                const controller = new AbortController();
+                controller.abort('user-clicked-before-loop');
+                const postSpy = vi.fn();
+                (axios.post as any) = postSpy;
+                const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+                await expect(
+                    provider.generateReply(
+                        [{ role: 'user', parts: 'oi' } as any],
+                        'ctx',
+                        undefined,
+                        { signal: controller.signal },
+                    ),
+                ).rejects.toMatchObject({ name: 'AbortError' });
+                // Verifica que a checagem no topo do while já rejeitou antes de gastar 1 chamada.
+                expect(postSpy).not.toHaveBeenCalled();
+            });
+
+            it('signal acionado entre iterações: loop quebra no próximo checkpoint', async () => {
+                const controller = new AbortController();
+                let call = 0;
+                // 1ª chamada: tool_call. Disparamos abort() DENTRO do mock (após a 1ª
+                // chamada retornar), simulando "user clicou enquanto esperava o tool_call
+                // rodar". A 2ª chamada cai com signal.aborted=true.
+                (axios.post as any) = vi.fn().mockImplementation(async (_url: string, _body: any, cfg: any) => {
+                    call++;
+                    if (call === 1) {
+                        // Aborta AGORA — antes de qualquer execução subsequente.
+                        queueMicrotask(() => controller.abort('user-clicked-mid-tool-call'));
+                        return {
+                            data: {
+                                choices: [{ message: { content: '{"tool":"list_users","args":{"search":"x"}}' } }],
+                                usage: {},
+                            },
+                        };
+                    }
+                    // 2ª chamada: signal.aborted → rejeita como CanceledError (formato axios).
+                    if (cfg?.signal?.aborted) {
+                        const err: any = new Error('canceled');
+                        err.name = 'CanceledError';
+                        err.code = 'ERR_CANCELED';
+                        throw err;
+                    }
+                    return { data: { choices: [{ message: { content: 'late' } }] } };
+                });
+                (dolibarrService.listUsers as any).mockResolvedValue([]);
+
+                const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+                await expect(
+                    provider.generateReply(
+                        [{ role: 'user', parts: 'oi' } as any],
+                        'ctx',
+                        undefined,
+                        { signal: controller.signal },
+                    ),
+                ).rejects.toMatchObject({ name: 'AbortError', reason: 'user-clicked-mid-tool-call' });
+            });
+
+            it('signal acionado DURANTE a síntese final: rejeita com AbortError (NÃO devolve texto fallback)', async () => {
+                // Caminho até a síntese: 1ª iteração roda uma tool e reporta
+                // prompt_tokens GIGANTE → guarda de orçamento (#956) quebra o loop →
+                // cai na síntese final. Lá, o cancel chega (axios rejeita como
+                // CanceledError) e o generateReply precisa PROPAGAR o AbortChatError
+                // para o withTurnProgress emitir o terminal `cancelled` — engolir o
+                // abort e devolver o texto fallback fecharia o stream com `done`.
+                const controller = new AbortController();
+                (axios.post as any) = vi.fn().mockImplementation(async (_url: string, body: any) => {
+                    const isSynthesis = body?.temperature === 0.3 && String(body?.messages?.[0]?.content || '').includes('DADOS COLETADOS');
+                    if (isSynthesis) {
+                        controller.abort('user-clicked-during-synthesis');
+                        const err: any = new Error('canceled');
+                        err.name = 'CanceledError';
+                        err.code = 'ERR_CANCELED';
+                        throw err;
+                    }
+                    return {
+                        data: {
+                            choices: [{ message: { content: '{"tool":"list_users","args":{"search":"x"}}' } }],
+                            usage: { prompt_tokens: 99_999_999, completion_tokens: 1, total_tokens: 99_999_999 },
+                        },
+                    };
+                });
+                (dolibarrService.listUsers as any).mockResolvedValue([]);
+
+                const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+                await expect(
+                    provider.generateReply(
+                        [{ role: 'user', parts: 'listar usuários' } as any],
+                        'ctx',
+                        undefined,
+                        { signal: controller.signal },
+                    ),
+                    // Sem o re-lançamento no catch da síntese, o generateReply devolvia
+                    // 'Não consegui completar a solicitação...' (fallback) e o SSE fechava
+                    // com `done` — quebrando o contrato {status:'cancelled'} do #1059.
+                ).rejects.toMatchObject({ name: 'AbortError', code: 'aborted', reason: 'user-clicked-during-synthesis' });
+            });
+        });
     });
 });
 

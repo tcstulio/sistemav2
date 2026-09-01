@@ -356,7 +356,18 @@ router.post('/generate-reply-async', asyncHandler(async (req, res) => {
     // #1011: repassa o jobId ao runChatReply para que cada tool-call atualize o
     // heartbeat. O closure lê `jobId` no microtask (após o assign abaixo retornar).
     let jobId = '';
-    jobId = aiJobService.enqueue(() => runChatReply(body, user, jobId, aiJobService.getLivenessExpiresAt(jobId)), body.module);
+    // #1059: ownership do job — usado pelo `aiJobService.cancel()` para checar
+    // propriedade (cross-user cancel → 403). `user.id` é o Dolibarr id; `login`
+    // é o fallback (cobre usuários sem id resolvido na sessão).
+    const owner = {
+        userId: user?.id ? String(user.id) : '',
+        userLogin: user?.login ? String(user.login) : '',
+    };
+    jobId = aiJobService.enqueue(
+        () => runChatReply(body, user, jobId, aiJobService.getLivenessExpiresAt(jobId)),
+        body.module,
+        owner,
+    );
     const livenessExpiresAt = aiJobService.getLivenessExpiresAt(jobId);
     // 202 Accepted: job enfileirado (não há helper p/ 202 em apiResponse; envelope manual).
     return res.status(202).json({ success: true, data: { jobId, status: 'queued', livenessExpiresAt } });
@@ -545,10 +556,17 @@ router.post('/analyze/sales-forecast', asyncHandler(async (req, res) => {
 // polling de GET /jobs/:id. O resultado vem em job.result (a string JSON do forecast).
 router.post('/analyze/sales-forecast-async', asyncHandler(async (req, res) => {
     const { invoices, context } = SalesForecastSchema.parse(req.body);
+    const user = (req as any).user;
+    // #1059: ownership — mesmo padrão do chat (`user.id` Dolibarr, `login` fallback).
+    const owner = {
+        userId: user?.id ? String(user.id) : '',
+        userLogin: user?.login ? String(user.login) : '',
+    };
     let jobId = '';
     jobId = aiJobService.enqueue(
         async () => ({ result: await aiService.generateSalesForecast(invoices, context, 'banking', aiJobService.getLivenessExpiresAt(jobId)) }),
-        'forecast'
+        'forecast',
+        owner,
     );
     const livenessExpiresAt = aiJobService.getLivenessExpiresAt(jobId);
     // 202 Accepted (envelope manual — não há helper p/ 202 em apiResponse).

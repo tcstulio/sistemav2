@@ -95,6 +95,23 @@ vi.mock('../../config/env', () => ({
 // chatRoutes.ts usa o singleton de progressStream — para isolar os testes, trocamos pelo
 // nosso (mesmo padrão de progressStream.test.ts e aiJobService.test.ts).
 import { ProgressStream, __setProgressStreamForTesting, __resetProgressStreamForTesting } from '../../agent/progressStream';
+// #1059: o endpoint /cancel chama `aiJobService.cancel()` para propagar o AbortSignal.
+// Mockamos aqui para isolar os testes da rota do estado real do aiJobService (que tem
+// sua própria suíte em aiJobService.test.ts). O default é "cancelled successfully" —
+// testes individuais sobrescrevem via `mockCancel.mockReturnValueOnce(...)`.
+const mockCancel = vi.hoisted(() => vi.fn((_jobId: string) => ({ cancelled: true, status: 'queued' as const, reason: 'user-cancel' })));
+const mockGetOwner = vi.hoisted(() => vi.fn((_jobId: string) => ({ userId: '1', userLogin: 'testadmin' })));
+vi.mock('../../services/aiJobService', async () => {
+    const actual = await vi.importActual<typeof import('../../services/aiJobService')>('../../services/aiJobService');
+    return {
+        ...actual,
+        aiJobService: {
+            ...actual.aiJobService,
+            cancel: (...args: any[]) => mockCancel(...args),
+            getOwner: (...args: any[]) => mockGetOwner(...args),
+        },
+    };
+});
 import chatRoutes from '../../routes/chatRoutes';
 
 function createApp(stream: ProgressStream) {
@@ -137,6 +154,13 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
 
     beforeEach(() => {
         stream = new ProgressStream({ ttlMs: 60_000, maxBufferSize: 500, autoCleanupIntervalMs: 0 });
+        // #1059: reseta os mocks do aiJobService para isolar cada teste. O default
+        // configurado no hoisted mock é "cancelled successfully" — testes individuais
+        // sobrescrevem via `mockCancel.mockReturnValueOnce(...)`.
+        mockCancel.mockClear();
+        mockCancel.mockImplementation((_jobId: string) => ({ cancelled: true, status: 'queued' as const, reason: 'user-cancel' }));
+        mockGetOwner.mockClear();
+        mockGetOwner.mockImplementation((_jobId: string) => ({ userId: '1', userLogin: 'testadmin' }));
     });
 
     afterEach(() => {
@@ -146,6 +170,10 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
 
     describe('POST /chat/jobs/:id/cancel', () => {
         it('retorna 200 com {jobId, status:"cancelling"} em ≤1s', async () => {
+            // #1059: o `aiJobService.cancel()` é a fonte da verdade para o status
+            // (queued/running → cancelling, missing/expired → 404). Mockado aqui para
+            // devolver `cancelled: true` (default no beforeEach). O teste preserva a
+            // asserção original: 200 + payload {jobId, status:'cancelling'} + ≤1s.
             const app = createApp(stream);
             const start = Date.now();
             const res = await request(app).post('/api/chat/jobs/job-x/cancel');
@@ -194,15 +222,63 @@ describe('chatRoutes #1575 — SSE + cancel assíncrono', () => {
             expect(res.status).toBe(404);
         });
 
-        it('permite cancelar job que NÃO existe (cria o estado com a flag setada)', async () => {
+        it('404 quando o jobId é desconhecido (aiJobService.cancel devolve {reason:"missing"})', async () => {
+            // #1059: aiJobService.cancel validou existência. Se o job não existe (não foi
+            // enfileirado por /generate-reply-async), a rota devolve 404. O `requestCancel`
+            // no ProgressStream ainda é chamado (cria o estado com a flag), então o efeito
+            // de cancel em jobs "futuros" (criados depois) continua funcionando — o flag
+            // estará setado quando o loop começar.
+            mockCancel.mockReturnValueOnce({ cancelled: false, reason: 'missing' });
             const app = createApp(stream);
-            // Job nunca emitiu nada — singleton não tem JobState para ele.
             expect(stream.has('job-future')).toBe(false);
             const res = await request(app).post('/api/chat/jobs/job-future/cancel');
-            expect(res.status).toBe(200);
-            // Após o cancel, o estado EXISTE (requestCancel chama ensureJob).
+            // HTTP 404 é o sinal canônico para o cliente (AppError → errorHandler → 404).
+            expect(res.status).toBe(404);
+            // requestCancel AINDA é chamado (best-effort: jobs que vierem depois já
+            // pegam a flag). Aqui verificamos o efeito no stream — o estado foi criado.
             expect(stream.has('job-future')).toBe(true);
             expect(stream.isCancelled('job-future')).toBe(true);
+        });
+
+        // ── #1059: novos casos de borda introduzidos pelo aiJobService.cancel ─────────
+        it('404 quando o job está expirado (TTL purgado)', async () => {
+            mockCancel.mockReturnValueOnce({ cancelled: false, reason: 'expired' });
+            const app = createApp(stream);
+            const res = await request(app).post('/api/chat/jobs/job-old/cancel');
+            expect(res.status).toBe(404);
+        });
+
+        it('403 quando o chamador NÃO é o dono (cross-user cancel)', async () => {
+            // Mock cancel devolve "not_cancellable" — checagem fail-closed do aiJobService.
+            mockCancel.mockReturnValueOnce({ cancelled: false, reason: 'not_cancellable' });
+            const app = createApp(stream);
+            const res = await request(app).post('/api/chat/jobs/job-cancel-3/cancel');
+            expect(res.status).toBe(403);
+        });
+
+        it('200 com status:"already_terminal" quando o job já está done/error (idempotente)', async () => {
+            // Mock cancel devolve "already_terminal" — UX: cancel tardio não é erro.
+            mockCancel.mockReturnValueOnce({ cancelled: false, reason: 'already_terminal' });
+            const app = createApp(stream);
+            const res = await request(app).post('/api/chat/jobs/job-done/cancel');
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.status).toBe('already_terminal');
+        });
+
+        it('propaga o `status: queued|running` do aiJobService.cancel() no body', async () => {
+            // Status 'running' (AbortSignal acionado) vs 'queued' (job removido da fila
+            // serial) — o cliente usa isso pra UX diferenciada.
+            mockCancel.mockReturnValueOnce({ cancelled: true, status: 'running', reason: 'user-cancel' });
+            const app = createApp(stream);
+            const res = await request(app).post('/api/chat/jobs/job-running/cancel');
+            expect(res.status).toBe(200);
+            expect(res.body.data.status).toBe('cancelling');
+            // aiJobService.cancel foi chamado com o actor correto (admin: '1' no mockUser).
+            expect(mockCancel).toHaveBeenCalledWith(
+                'job-running',
+                expect.objectContaining({ reason: 'user-cancel' }),
+            );
         });
     });
 

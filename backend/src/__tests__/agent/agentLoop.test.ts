@@ -271,6 +271,24 @@ describe('#1575 — cancelamento via flag no JobState (requestCancel / isCancell
             expect(buf.filter((e) => e.type === 'cancelled')).toHaveLength(1);
         });
 
+        // #1059: o terminal `cancelled` carrega {status:'cancelled', reason} — contrato
+        // SSE que o frontend usa para atualizar a UI sem consultar GET /jobs/:id.
+        it('#1059: payload do cancelled inclui {status:"cancelled", reason}', async () => {
+            const stream = makeStream();
+            stream.requestCancel('job-cancel');
+
+            await runAgentLoop(
+                baseOpts({ jobId: 'job-cancel' }),
+                baseDeps(stream, { llmCall: scriptedLlm(['CALL x {}']), executeToolFn: vi.fn(async () => 'ok') }),
+            );
+
+            const cancelledEv = stream.getBuffer('job-cancel').find((e) => e.type === 'cancelled');
+            expect(cancelledEv).toBeTruthy();
+            expect((cancelledEv!.payload as any).status).toBe('cancelled');
+            expect(typeof (cancelledEv!.payload as any).reason).toBe('string');
+            expect((cancelledEv!.payload as any).reason).toBe('user-cancel');
+        });
+
         it('buildCancelSummary: lista tool_calls completadas com args e summary', async () => {
             const { buildCancelSummary } = await import('../../agent/agentLoop');
             const result = buildCancelSummary([

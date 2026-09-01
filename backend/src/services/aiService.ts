@@ -25,6 +25,10 @@ import {
     PRIMARY_CALL_TIMEOUT_MS,
     RETRY_DEADLINE_MS,
 } from './aiJobBudget';
+// #1059: aiJobService NÃO importa aiService (verifica na mão — `jobs`/`queue`/etc. são
+// tipos puros), então o import é seguro. Usado apenas para resolver o signal do job
+// quando `options.signal` não foi passado explicitamente pelo caller.
+import { aiJobService } from './aiJobService';
 export { MARCIANO_IDENTITY_PROMPT };
 export {
     CLIENT_MAX_WAIT_MS,
@@ -46,6 +50,46 @@ export class DeadlineExceededError extends Error {
     constructor() {
         super('deadline_exceeded');
         this.name = 'DeadlineExceededError';
+    }
+}
+
+/**
+ * #1059: mesmo padrão da Web Platform (`fetch`, `AbortController`, `agentLoop.ts`).
+ * Marca o sinal como cancelado p/ o caller diferenciar `cancelled` de qualquer outro
+ * erro (500, deadline, etc). Lançado por `postChatCompletion` quando o `AbortSignal`
+ * é acionado pelo `aiJobService.cancel(jobId)` — o SSE handler converte em
+ * `{status:'cancelled', reason}` sem cair em 500.
+ *
+ * `e.code === 'aborted'` casa com o que o axios escreve em `error.code` quando
+ * cancela o request via `signal`. Usamos o nome canônico para o `instanceof` /
+ * `e.name === 'AbortError'`.
+ */
+export class AbortChatError extends Error {
+    readonly code = 'aborted';
+    readonly reason?: string;
+    constructor(reason?: string) {
+        super(typeof reason === 'string' && reason ? reason : 'aborted');
+        this.name = 'AbortError';
+        this.reason = reason;
+    }
+}
+
+/** #1059: identifica qualquer erro proveniente de cancelamento (axios, AbortSignal, ou nosso). */
+export function isAbortError(e: unknown): boolean {
+    if (!e || typeof e !== 'object') return false;
+    const err = e as { name?: string; code?: string };
+    return err.name === 'AbortError' || err.code === 'aborted';
+}
+
+/**
+ * #1059: helper que rejeita IMEDIATAMENTE se o signal já estiver abortado, OU rejeita
+ * caso ele dispare enquanto esperamos. Usado no loop de retry do `postChatCompletion`
+ * para cortar esperas de backoff quando o usuário clica em cancelar — sem ele, um
+ * backoff de 32s atrasaria o cancel em até 32s, acima do SLA de 2s do #1575.
+ */
+function assertNotAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) {
+        throw new AbortChatError(typeof signal.reason === 'string' ? signal.reason : undefined);
     }
 }
 
@@ -433,6 +477,18 @@ export interface GenerateReplyOptions {
     jobId?: string;
     deadlineAt?: number;
     progressLifecycleManaged?: boolean;
+    /**
+     * #1059: AbortSignal para cancelamento cooperativo. Quando acionado:
+     *   - `postChatCompletion` aborta o axios + corta o loop de retry (sem esperar backoff).
+     *   - o loop do worker quebra no próximo checkpoint (topo do `while`), mapeia o
+     *     `AbortChatError` em `text='Cancelado'` e propaga o erro tipado.
+     *
+     * Conveniência: se `jobId` está setado e `signal` ausente, o provider consulta
+     * `aiJobService.getSignal(jobId)` (lazily) para casar com o controller do job —
+     * assim o caller não precisa conhecer o `aiJobService` para receber cancelamento.
+     * Passar `signal` explicitamente tem precedência sobre o registry.
+     */
+    signal?: AbortSignal;
 }
 
 // #1408: mensagem EXPLÍCITA de teto de tool-calls atingido. Antes o loop caía em síntese
@@ -1267,10 +1323,16 @@ export class LocalProvider implements AIProvider {
     // fallback, com esperas 2s→4s→8s... até o DEADLINE de re-tentativas. Não é um loop infinito:
     // quando o deadline estoura, desiste e passa para o fallback (se houver) ou lança.
     // Não toca o fallback em erro não-recuperável (4xx exceto 429, JSON inválido, etc.).
-    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string; deadlineAt?: number }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
+    //
+    // #1059: `signal` (AbortSignal) — quando acionado, ABORTA axios (lib nativa), encerra
+    // o loop de retry SEM esperar o backoff e lança AbortChatError. O caller
+    // (`generateReply`) traduz o erro em `error='cancelled'` no registry, e o SSE handler
+    // emite o evento terminal `cancelled` para o cliente fechar a UI.
+    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string; deadlineAt?: number; signal?: AbortSignal }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
         const buildBody = (model: string) => ({ model, messages, temperature });
         const primaryModel = options?.model || this.modelName;
         const origin = options?.origin;
+        const signal = options?.signal;
         const configuredPrimaryTimeoutMs = config.llmPrimaryTimeoutMs ?? PRIMARY_CALL_TIMEOUT_MS;
         const configuredRetryDeadlineMs = config.llmRetryDeadlineMs ?? RETRY_DEADLINE_MS;
         const primaryTimeoutMs = Math.max(1, Math.min(configuredPrimaryTimeoutMs, PRIMARY_CALL_TIMEOUT_MS));
@@ -1279,6 +1341,8 @@ export class LocalProvider implements AIProvider {
         const t0 = Date.now();
         const requestTimeout = (capMs: number) => {
             assertWithinDeadline(options?.deadlineAt);
+            // #1059: também rejeita se o signal foi acionado entre uma chamada e outra.
+            assertNotAborted(signal);
             return options?.deadlineAt === undefined
                 ? capMs
                 : Math.max(1, Math.min(capMs, options.deadlineAt - Date.now()));
@@ -1289,12 +1353,26 @@ export class LocalProvider implements AIProvider {
 
         // Tenta o primário com backoff exponencial dentro do deadline.
         while (true) {
+            // #1059: signal acionado antes mesmo da 1ª tentativa → rejeita imediatamente.
+            // Sem essa checagem, o request abortaria (axios com signal) mas perderíamos a
+            // tradução canônica para `AbortChatError` no caminho de retorno do while.
+            assertNotAborted(signal);
             try {
-                const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: requestTimeout(primaryTimeoutMs) });
+                const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: requestTimeout(primaryTimeoutMs), ...(signal ? { signal } : {}) });
                 clearQuotaExhausted(); // sucesso -> cota OK
                 llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: true, latencyMs: Date.now() - t0, origin, totalTokens: r.data?.usage?.total_tokens });
                 return { data: r.data, modelUsed: primaryModel, fellBack: false };
             } catch (err: any) {
+                // #1059: erro do axios quando o signal é acionado durante a request —
+                // axios marca `err.name === 'CanceledError'` (em versões recentes) OU
+                // `err.code === 'ABORTED'`/`'ERR_CANCELED'`. Normalizamos para o nosso tipo
+                // canônico aqui, de modo que o caller (generateReply) veja um único erro.
+                if (isAbortError(err) || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
+                    const reason = signal?.reason;
+                    const abortReason = typeof reason === 'string' ? reason : (err?.message || undefined);
+                    log.info(`LLM primário (${this.modelName}) cancelado pelo signal (reason=${abortReason || 'n/a'})`);
+                    throw new AbortChatError(abortReason);
+                }
                 if (err instanceof DeadlineExceededError || (options?.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
                     throw new DeadlineExceededError();
                 }
@@ -1309,6 +1387,10 @@ export class LocalProvider implements AIProvider {
 
                 const reason = err?.response?.status || err?.code || err?.message || 'erro';
                 assertWithinDeadline(options?.deadlineAt);
+                // #1059: encerra retry loop se o signal foi acionado durante a request.
+                // Sem isto, o backoff de 32s atrasaria o cancel em até 32s — acima do SLA
+                // de 2s do critério #1575.
+                assertNotAborted(signal);
                 const remaining = retryDeadline - Date.now();
 
                 // Cota ESGOTADA no primário não melhora com backoff: um 1310 "Weekly/Monthly
@@ -1326,6 +1408,8 @@ export class LocalProvider implements AIProvider {
                     // Ainda há tempo dentro do deadline — aguarda backoff e tenta de novo.
                     log.warn(`LLM primário (${this.modelName}) falhou [${reason}] — backoff ${retryDelay}ms (deadline restante: ${Math.round(remaining / 1000)}s)`);
                     await awaitWithinDeadline(new Promise<void>((res) => setTimeout(res, retryDelay)), options?.deadlineAt);
+                    // #1059: rejeita se o signal foi acionado durante o backoff (acima corta o SLA).
+                    assertNotAborted(signal);
                     retryDelay = Math.min(retryDelay * 2, 32000); // cap em 32s
                 } else {
                     // Deadline esgotado: passa para fallback (se houver) ou lança.
@@ -1342,18 +1426,29 @@ export class LocalProvider implements AIProvider {
             throw primaryErr;
         }
 
+        // #1059: também passa o signal para o fallback — o cancel deve valer para qualquer
+        // chamada HTTP que esteja em vôo, não só a do primário.
+        assertNotAborted(signal);
         // Fallback (MiniMax M3)
         const fbHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
         if (this.fallbackConfig!.apiKey) fbHeaders['Authorization'] = `Bearer ${this.fallbackConfig!.apiKey}`;
         const tFb = Date.now();
         try {
             assertWithinDeadline(options?.deadlineAt);
-            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: requestTimeout(FALLBACK_CALL_TIMEOUT_MS) });
+            assertNotAborted(signal);
+            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: requestTimeout(FALLBACK_CALL_TIMEOUT_MS), ...(signal ? { signal } : {}) });
             log.info(`LLM fallback OK: ${this.fallbackConfig!.model} respondeu no lugar de ${this.modelName}`);
             clearQuotaExhausted(); // fallback respondeu -> ainda há cota (no MiniMax)
             llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: true, latencyMs: Date.now() - tFb, origin, errorDetail: `primário ${primaryModel}: ${this.errDetail(primaryErr)}`.slice(0, 300), totalTokens: resp.data?.usage?.total_tokens });
             return { data: resp.data, modelUsed: this.fallbackConfig!.model, fellBack: true };
         } catch (fbErr: any) {
+            // #1059: mesma normalização do primário. axios com signal cancelado → AbortChatError.
+            if (isAbortError(fbErr) || fbErr?.name === 'CanceledError' || fbErr?.code === 'ERR_CANCELED') {
+                const reason = signal?.reason;
+                const abortReason = typeof reason === 'string' ? reason : (fbErr?.message || undefined);
+                log.info(`LLM fallback (${this.fallbackConfig!.model}) cancelado pelo signal (reason=${abortReason || 'n/a'})`);
+                throw new AbortChatError(abortReason);
+            }
             if (fbErr instanceof DeadlineExceededError || (options?.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
                 throw new DeadlineExceededError();
             }
@@ -1418,6 +1513,13 @@ export class LocalProvider implements AIProvider {
         const isAdminExplicit = (options?.isAdmin ?? getToolContext().isAdmin) === true;
         const toolsPrompt = getToolsPrompt({ isAdmin: isAdminExplicit });
         const ctxWindow = getContextWindow(options?.model || this.modelName);
+
+        // #1059: resolve o signal ativo do job. Precedência: `options.signal` (caller
+        // explícito) > `aiJobService.getSignal(jobId)` (controller registrado pelo enqueue).
+        // Sem `jobId`, callers legacy simplesmente não recebem cancelamento — fail-safe.
+        const explicitSignal = options?.signal;
+        const resolvedSignal: AbortSignal | undefined = explicitSignal
+            ?? (options?.jobId ? aiJobService.getSignal(options.jobId) : undefined);
 
         let currentHistory = [...conversationHistory];
         const chainState = options?.chainState;
@@ -1530,6 +1632,14 @@ export class LocalProvider implements AIProvider {
                 log.warn(`Agente: orçamento de contexto atingido (${lastPromptTokens} >= ${contextBudgetTokens} tokens) — sintetizando com os dados coletados.`);
                 break;
             }
+            // #1059: cancelamento cooperativo — verifica o signal no TOPO de cada iteração.
+            // Se o usuário clicou em cancelar, o loop quebra AGORA (sem gastar mais 1 chamada
+            // ao LLM) e o `AbortChatError` propaga para o `aiJobService`, que mapeia em
+            // `error='cancelled'`. O handler SSE emite o evento terminal `cancelled`.
+            if (resolvedSignal?.aborted) {
+                log.info(`Agente: AbortSignal acionado no topo do loop (iter=${iterations}) — encerrando.`);
+                throw new AbortChatError(typeof resolvedSignal.reason === 'string' ? resolvedSignal.reason : undefined);
+            }
             emitThinking(options?.jobId, 'iteration', iterations);
             const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
@@ -1546,7 +1656,11 @@ export class LocalProvider implements AIProvider {
             }
 
             try {
-                const { data, modelUsed, fellBack } = await this.postChatCompletion(messages, 0.5, options);
+                // #1059: propaga o signal para axios + retry loop. Quando o signal é acionado
+                // durante a chamada, o axios cancela a request e o `postChatCompletion` lança
+                // `AbortChatError` (catch abaixo). Sem signal, `options.signal` é undefined e
+                // o comportamento legado é preservado.
+                const { data, modelUsed, fellBack } = await this.postChatCompletion(messages, 0.5, { ...options, signal: resolvedSignal });
                 lastModelUsed = modelUsed;
                 lastFellBack = fellBack;
 
@@ -1707,7 +1821,11 @@ export class LocalProvider implements AIProvider {
                 finalMessages.splice(1, 1);
             }
             emitThinking(options?.jobId, 'synthesis', iterations);
-            const { data: finalData, modelUsed: finalModel, fellBack: finalFellBack } = await this.postChatCompletion(finalMessages, 0.3, options);
+            // #1059: propaga o signal também na síntese final — se o cancel chegou perto
+            // do fim do loop, a síntese também precisa abortar. O catch abaixo re-lança
+            // `AbortChatError` (não engole cancelamento) para o `withTurnProgress` emitir
+            // o terminal `cancelled`; outros erros caem no texto fallback.
+            const { data: finalData, modelUsed: finalModel, fellBack: finalFellBack } = await this.postChatCompletion(finalMessages, 0.3, { ...options, signal: resolvedSignal });
             accumulate(finalData?.usage);
             let finalText = stripReasoning(finalData?.choices?.[0]?.message?.content || '');
             // #955: se a síntese vier como tool-calls cruas (o M3 às vezes ignora o "sem
@@ -1723,6 +1841,10 @@ export class LocalProvider implements AIProvider {
                 return { text: finalText, usage: accUsage, contextWindow: ctxWindow, model: finalModel, fellBack: finalFellBack };
             }
         } catch (e: any) {
+            // #1059: abort NÃO é engolido pelo fallback — precisa propagar para o
+            // `withTurnProgress` fechar o stream com o terminal `cancelled {status, reason}`
+            // (contrato SSE desta issue) em vez de um `done` com texto de fallback.
+            if (e instanceof AbortChatError || isAbortError(e)) throw e;
             log.error('Local LLM final-answer fallback error', e?.message || e);
         }
         return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };

@@ -5,6 +5,26 @@ import { getAiJobLivenessExpiresAt, MAX_CHAINED_CALLS } from './aiJobBudget';
 
 const log = createLogger('AiJob');
 
+/**
+ * Erro tipado de cancelamento (#1059) — propagado por `postChatCompletion` e o loop
+ * do agente quando o `AbortSignal` é acionado pelo `aiJobService.cancel()`. Convenções:
+ *   - `name === 'AbortError'` (alinhado com a Web Platform — `fetch`, `AbortController`).
+ *   - `code === 'aborted'` (escrito como `e.code` pelo axios quando o request é cancelado).
+ *   - `reason` carrega a string opcional passada para `abortController.abort(reason)`.
+ *
+ * O SSE consumer (`chatRoutes`) checa `err.name === 'AbortError'` para devolver o
+ * evento terminal `cancelled { status, reason }` ao cliente sem cair em 500 genérico.
+ */
+export class AiJobAbortError extends Error {
+    readonly code = 'aborted';
+    readonly reason?: string;
+    constructor(reason?: string) {
+        super(typeof reason === 'string' && reason ? reason : 'aborted');
+        this.name = 'AbortError';
+        this.reason = reason;
+    }
+}
+
 // Job assíncrono do assistente: o POST do chat enfileira e responde na hora com um jobId
 // (não segura a conexão → mata o 524 do Cloudflare em jobs longos). O agente roda em background
 // até concluir ou atingir o deadline global; o cliente faz polling de GET /jobs/:id.
@@ -40,6 +60,12 @@ export interface AiJob {
     currentProvider?: string | null;
     /** #1011: progresso 0..100 reportado pelo agente. */
     progressPct?: number;
+    /** #1059: dono do job (Dolibarr userId/login). Setado no enqueue; usado em cancel p/
+     *  o handler rejeitar tentativas cross-user (403). Persistido para auditoria após restart.
+     */
+    ownerUserId?: string;
+    /** #1059: login do dono (audit / mensagem 403). */
+    ownerUserLogin?: string;
 }
 
 /** Resultado do lookup de um job: distingue 'expirado' de 'inexistente' (GET 404). */
@@ -53,6 +79,25 @@ export type AiJobLookup =
  * corpo 200, pois um job expirado já não está "vivo" para reportar metadados.
  */
 export type AiJobStatusExternal = 'pending' | 'running' | 'done' | 'failed' | 'expired';
+
+/**
+ * #1059: resultado público de `aiJobService.cancel(jobId)`. Discriminado por `cancelled`
+ * para o caller distinguir:
+ *   - { cancelled: true, status: 'queued' }  → removido da fila serial antes de rodar
+ *   - { cancelled: true, status: 'running' } → AbortSignal acionado no controller
+ *   - { cancelled: false, reason: ... }     → não pôde cancelar (já terminal / inexistente / expirado)
+ */
+export type AiJobCancelResult =
+    | { cancelled: true; status: 'queued' | 'running'; reason?: string }
+    | { cancelled: false; reason: 'missing' | 'expired' | 'already_terminal' | 'not_cancellable' };
+
+/** #1059: identidade do "dono" de um job — usada na rota para checagem de propriedade. */
+export interface AiJobOwner {
+    /** ID do usuário Dolibarr (string) ou login (fallback para usuários sem id resolvido). */
+    userId: string;
+    /** Login do usuário (audit / mensagem de erro). */
+    userLogin: string;
+}
 
 /** #1011: metadados leves do job (sem o `result` completo) para /ai-jobs/:id/status. */
 export interface AiJobStatusInfo {
@@ -79,6 +124,20 @@ const MAX_CONCURRENT = 3;
 let running = 0;
 const queue: Array<() => void> = [];
 const deadlineTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * #1059: registry de AbortControllers para jobs em execução. Setado quando o job
+ * entra em `running` (sincronizado com `patchJob({status:'running'})`) e removido
+ * quando o terminal resolve (finally). `aiJobService.cancel(jobId)` aciona o controller
+ * aqui — o axios + o loop do agente leem o signal e abortam em ≤2s (alinhado com
+ * o critério #1575 do agentLoop).
+ */
+const abortControllers = new Map<string, AbortController>();
+
+/** Snapshot imutável do status atual (p/ decisões de cancel). Evita acoplamento com .get(). */
+function getJobSnapshot(id: string): AiJob | undefined {
+    return jobs.get(id);
+}
 
 // #1011: timestamp do último write-through por job (setJob). Base para o cálculo
 // lastHeartbeat = max(lastWrite, now) no reportProgress — nunca retrocede o heartbeat.
@@ -221,6 +280,10 @@ function restore(): void {
                 job.expiresAt = job.expiresAt ?? now + TTL_MS;
                 saveJob(job);
             }
+            // #1059: reidratar metadados de ownership quando persistidos por uma versão
+            // mais nova do serviço. Versões antigas não gravam esses campos — ficam undefined.
+            job.ownerUserId = raw.ownerUserId;
+            job.ownerUserLogin = raw.ownerUserLogin;
             jobs.set(job.id, job);
             // #1011: lastWrite base para reportProgress em jobs restaurados (terminais
             // não emitem progresso, mas mantemos o ts consistente caso o estado mude).
@@ -235,12 +298,20 @@ function restore(): void {
 
 export const aiJobService = {
     /** Enfileira um job; retorna o jobId imediatamente. `fn` roda em background. */
-    enqueue(fn: () => Promise<any>, label?: string): string {
+    enqueue(fn: () => Promise<any>, label?: string, owner?: AiJobOwner): string {
         cleanup();
         const id = randomUUID();
         const createdAt = Date.now();
         const livenessExpiresAt = getAiJobLivenessExpiresAt(createdAt);
-        const job: AiJob = { id, status: 'queued', createdAt, livenessExpiresAt, label };
+        const job: AiJob = {
+            id,
+            status: 'queued',
+            createdAt,
+            livenessExpiresAt,
+            label,
+            ownerUserId: owner?.userId,
+            ownerUserLogin: owner?.userLogin,
+        };
         setJob(job);
         scheduleDeadline(job);
         log.info('Job de IA criado', {
@@ -251,14 +322,37 @@ export const aiJobService = {
             totalBudgetMs: Date.parse(livenessExpiresAt) - createdAt,
         });
 
+        // #1059: cada job recebe UM AbortController. Vive entre `running` -> terminal.
+        // Cancelamentos acionados aqui propagam o `signal` adiante (axios + loop do worker).
+        const controller = new AbortController();
+        const { signal } = controller;
+
         const run = () => {
             const current = jobs.get(id);
             if (!current || current.status === 'error' || current.status === 'done') {
+                // #1059: cancel pré-execução (chegou antes do job pegar a vaga). O controller
+                // já foi criado — descarta sem nunca publicar no registry `abortControllers`,
+                // porque o job NUNCA chegou a ficar `running`.
+                pump();
+                return;
+            }
+            // #1059: se o signal já estiver abortado (cancel pré-start), termina como cancelled.
+            if (signal.aborted) {
+                const finishedAt = Date.now();
+                clearDeadline(id);
+                patchJob(id, {
+                    status: 'error',
+                    error: 'cancelled',
+                    finishedAt,
+                    expiresAt: finishedAt + TTL_MS,
+                });
+                log.info(`Job ${id} cancelado antes de iniciar (signal já aborted)`);
                 pump();
                 return;
             }
             running++;
             const startedAt = Date.now();
+            abortControllers.set(id, controller);
             patchJob(id, { status: 'running', startedAt, lastHeartbeat: startedAt });
             Promise.resolve()
                 .then(fn)
@@ -277,9 +371,16 @@ export const aiJobService = {
                     if (!currentJob || currentJob.status === 'error') return;
                     const finishedAt = Date.now();
                     clearDeadline(id);
-                    const error = e?.code === 'deadline_exceeded' || e?.message === 'deadline_exceeded'
+                    // #1059: AbortError do axios (e.code==='aborted' OU e.name==='AbortError')
+                    // é mapeado para 'cancelled' — distinto de erro genérico para o cliente
+                    // atualizar a UI sem alarme vermelho. O signal.reason vira parte da string.
+                    const isAbort = e?.name === 'AbortError' || e?.code === 'aborted' ||
+                        (e instanceof AiJobAbortError);
+                    const error = !isAbort && (e?.code === 'deadline_exceeded' || e?.message === 'deadline_exceeded')
                         ? 'deadline_exceeded'
-                        : (e?.message || String(e));
+                        : isAbort
+                            ? `cancelled${e?.reason ? `:${e.reason}` : ''}`
+                            : (e?.message || String(e));
                     patchJob(id, {
                         status: 'error',
                         error,
@@ -288,10 +389,21 @@ export const aiJobService = {
                     });
                     log.warn(`Job ${id} falhou: ${error}`);
                 })
-                .finally(() => { running--; cleanup(); pump(); });
+                .finally(() => {
+                    abortControllers.delete(id);
+                    queueRunByJob.delete(id);
+                    running--;
+                    cleanup();
+                    pump();
+                });
         };
 
-        if (running < MAX_CONCURRENT) run(); else queue.push(run);
+        if (running < MAX_CONCURRENT) run(); else {
+            queue.push(run);
+            // #1059: índice reverso para `cancel(queued)` achar e remover este run
+            // sem precisar percorrer a fila inteira. Removido no `.finally()`.
+            queueRunByJob.set(id, run);
+        }
         return id;
     },
 
@@ -301,7 +413,7 @@ export const aiJobService = {
      * o listener de tool-calls do aiService é global, então toda chamada LLM de longa
      * duração deve passar por aqui.
      */
-    runAndWait<T>(fn: () => Promise<T>, label?: string): Promise<T> {
+    runAndWait<T>(fn: () => Promise<T>, label?: string, owner?: AiJobOwner): Promise<T> {
         return new Promise<T>((resolve, reject) => {
             this.enqueue(async () => {
                 try {
@@ -312,7 +424,7 @@ export const aiJobService = {
                     reject(e);
                     throw e;
                 }
-            }, label);
+            }, label, owner);
         });
     },
 
@@ -372,6 +484,161 @@ export const aiJobService = {
     restore() {
         restore();
     },
+
+    /**
+     * #1059: cancela um job do assistente, propagando um AbortSignal até a chamada HTTP
+     * da OpenAI/GLM/MiniMax. Critério de aceite:
+     *   - status='queued' → remove da fila serial (`#960`) e marca como error='cancelled'.
+     *     Sem nunca rodar — libera a vaga para o próximo job pegar.
+     *   - status='running' → aciona `abortController.abort(reason)` (axios + retry loop
+     *     detectam o signal em ≤2s). A rejeição é mapeada para 'cancelled' pelo `.catch()`
+     *     de `enqueue`, então o `GET /jobs/:id` final devolve `status:'error', error:'cancelled'`.
+     *   - status='done' | 'error' (já terminal) → no-op + `{cancelled:false, reason:'already_terminal'}`.
+     *   - id desconhecido / expirado (TTL purgado) → `{cancelled:false, reason:'missing'|'expired'}`.
+     *
+     * Idempotente: chamadas repetidas no mesmo id não mudam o estado. `abortController.abort()`
+     * em um signal já abortado é silencioso (no-op pela spec).
+     *
+     * Quem pode chamar: o DONO do job (ownerUserId/ownerUserLogin) OU admin. Cross-user
+     * cancel vira `{cancelled:false, reason:'not_cancellable'}` — o handler HTTP traduz
+     * em 403.
+     */
+    cancel(jobId: string, opts: { reason?: string; actor?: AiJobOwner } = {}): AiJobCancelResult {
+        const job = getJobSnapshot(jobId);
+        if (!job) {
+            return { cancelled: false, reason: 'missing' };
+        }
+        if (isExpired(job)) {
+            return { cancelled: false, reason: 'expired' };
+        }
+        // #1059: checagem de propriedade. Admin (caller desconhecido OU owner vazio) é
+        // tolerado; chamado NÃO-admin precisa casar com ownerUserId ou ownerUserLogin.
+        // Job SEM owner registrado (enqueued por uma rota legada) só pode ser cancelado
+        // pelo admin — fail-closed contra takeover.
+        const actor = opts.actor;
+        const actorIsAdmin = !actor; // sem actor (chamada interna) => admin implícito
+        if (!actorIsAdmin) {
+            const hasOwnerId = !!job.ownerUserId;
+            const hasOwnerLogin = !!job.ownerUserLogin;
+            if (!hasOwnerId && !hasOwnerLogin) {
+                // Job sem dono registrado: fail-closed para não-admin. Quem enfileirou
+                // sem owner é uma rota legada — só admin cancela até migrar todas as
+                // entradas (enqueue de chat/forecast já passam owner).
+                log.warn(`Cancel de job sem owner registrado (${jobId}) por não-admin (actor=${actor.userLogin || actor.userId}) — negado.`);
+                return { cancelled: false, reason: 'not_cancellable' };
+            }
+            const matchesId = hasOwnerId && !!actor.userId && actor.userId === job.ownerUserId;
+            const matchesLogin = hasOwnerLogin && !!actor.userLogin && actor.userLogin === job.ownerUserLogin;
+            if (!matchesId && !matchesLogin) {
+                log.warn(`Tentativa de cross-user cancel do job ${jobId}: actor=${actor.userLogin} owner=${job.ownerUserLogin}`);
+                return { cancelled: false, reason: 'not_cancellable' };
+            }
+        }
+        if (job.status === 'queued') {
+            // Remove da fila serial. O efeito é: o `run` correspondente nunca é invocado
+            // porque já consumimos o slot do array. Como o `run` é um closure sem efeito
+            // colateral até `running++`, podemos simplesmente marcar o job como terminal
+            // (o `run` checa `status === 'done'|'error'` no topo e bail).
+            // Aqui NÃO há controller criado (só na transição para running), então basta
+            // marcar como error/cancelled.
+            const finishedAt = Date.now();
+            clearDeadline(jobId);
+            patchJob(jobId, {
+                status: 'error',
+                error: `cancelled${opts.reason ? `:${opts.reason}` : ''}`,
+                finishedAt,
+                expiresAt: finishedAt + TTL_MS,
+            });
+            log.info(`Job ${jobId} removido da fila serial (status=cancelled)`);
+            // IMPORTANTE: o `run` correspondente a este job está em `queue[]` — quando
+            // for shift()-eado, ele checa `status==='error'/'done'` e bail. O próximo
+            // job em fila já pode pegar a vaga (pump() é chamado pelo `.finally()`).
+            // Para liberar a vaga IMEDIATAMENTE (sem esperar o shift), filtramos o array:
+            removeFromQueue(jobId);
+            pump();
+            return { cancelled: true, status: 'queued', reason: opts.reason };
+        }
+        if (job.status === 'running') {
+            const controller = abortControllers.get(jobId);
+            if (!controller) {
+                // Defesa em profundidade: race entre `mark running` e `cancel`. Controller
+                // deve existir — se não, o job está entre transições e o cancel é "tardio".
+                return { cancelled: false, reason: 'not_cancellable' };
+            }
+            try {
+                controller.abort(opts.reason);
+            } catch {
+                // `abort()` é idempotente — qualquer exceção é ignorada (defesa).
+            }
+            log.info(`Job ${jobId} abortado (signal acionado, reason=${opts.reason || 'n/a'})`);
+            // #1059: marca o job como terminal DIRETAMENTE aqui. O `fn` que o enqueue está
+            // rodando pode ser signal-cooperativo (lança AbortError → .catch cuida) OU não
+            // (ex.: `() => new Promise(() => {})` num teste). Em ambos os casos o usuário
+            // precisa ver o job como cancelled IMEDIATAMENTE no `GET /jobs/:id` — não
+            // esperar a Promise raiz rejeitar (que pode nunca acontecer). O `.catch` do
+            // enqueue é NO-OP aqui porque `status === 'error'` já foi setado.
+            const finishedAt = Date.now();
+            clearDeadline(jobId);
+            patchJob(jobId, {
+                status: 'error',
+                error: `cancelled${opts.reason ? `:${opts.reason}` : ''}`,
+                finishedAt,
+                expiresAt: finishedAt + TTL_MS,
+            });
+            return { cancelled: true, status: 'running', reason: opts.reason };
+        }
+        // done | error | (defesa: status desconhecido)
+        return { cancelled: false, reason: 'already_terminal' };
+    },
+
+    /**
+     * #1059: devolve o `AbortSignal` ATIVO do job (setado quando o job entra em running
+     * e removido no `.finally()` do enqueue). Consumidores (ex.: `postChatCompletion`)
+     * aceitam `options.signal` E/OU consultam aqui — esta função é o atalho que amarra
+     * o signal ao jobId sem precisar expor o controller.
+     *
+     * Retorna `undefined` se o job não existe, está expirado, ou já não está running
+     * (controller descartado). O caller trata `undefined` como "sem signal".
+     */
+    getSignal(jobId: string): AbortSignal | undefined {
+        const job = getJobSnapshot(jobId);
+        if (!job || isExpired(job)) return undefined;
+        if (job.status !== 'running') return undefined;
+        return abortControllers.get(jobId)?.signal;
+    },
+
+    /**
+     * #1059: devolve o `AiJobOwner` registrado no enqueue, ou undefined se ausente.
+     * Usado pela rota de cancel para mensagens 403 com nome do dono.
+     */
+    getOwner(jobId: string): AiJobOwner | undefined {
+        const job = getJobSnapshot(jobId);
+        if (!job || (!job.ownerUserId && !job.ownerUserLogin)) return undefined;
+        return {
+            userId: job.ownerUserId || '',
+            userLogin: job.ownerUserLogin || '',
+        };
+    },
 };
+
+/**
+ * #1059: varre a fila serial removendo o `run` correspondente a `jobId`. Necessário
+ * porque `queue: Array<() => void>` é um array genérico sem identidade por job —
+ * usamos um marker (símbolo `JOB_ID_MARKER`) injetado em cada `run` via closure
+ * auxiliar. Aqui comparamos o id registrado em `jobs` para achar o índice.
+ *
+ * Implementação simples: como cada `run` é criado pelo `enqueue`, ganhamos um hook:
+ * o `run` é registrado em `queueRunByJob` ANTES de entrar na fila. Aqui apenas
+ * removemos a entrada e o `run` correspondente.
+ */
+const queueRunByJob = new Map<string, () => void>();
+
+function removeFromQueue(jobId: string): void {
+    const run = queueRunByJob.get(jobId);
+    if (!run) return;
+    const idx = queue.indexOf(run);
+    if (idx >= 0) queue.splice(idx, 1);
+    queueRunByJob.delete(jobId);
+}
 
 restore(); // read-on-startup: roda na primeira importação do módulo

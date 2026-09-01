@@ -371,9 +371,11 @@ export class ProgressStream {
 
     /**
      * Atalho: emite `cancelled` e fecha o job. Equivalente a `close(jobId, 'cancelled')`.
+     * #1059: payload inclui `{ status: 'cancelled', reason }` — o frontend usa esse
+     * contrato para atualizar a UI sem precisar consultar `GET /jobs/:id`.
      */
     cancel(jobId: string, reason: string = 'cancelled'): void {
-        this.close(jobId, 'cancelled', { reason });
+        this.close(jobId, 'cancelled', { status: 'cancelled', reason });
     }
 
     /**
@@ -671,6 +673,17 @@ export async function withTurnProgress<T extends { text: string }>(
         stream.close(jobId, 'done', { result: result.text });
         return result;
     } catch (error) {
+        // #1059: AbortError → evento terminal `cancelled { status, reason }` em vez de
+        // `error { message }`. O SSE consumer (frontend) distingue os dois terminais
+        // sem precisar inspecionar o status do job via GET — `event: cancelled` + payload
+        // `{ status: 'cancelled', reason }` é o contrato desta issue. Outros erros
+        // continuam mapeando para `error { message }`.
+        if (error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError') {
+            const reason = (error as { reason?: unknown }).reason;
+            const reasonStr = typeof reason === 'string' && reason ? reason : 'cancelled';
+            stream.close(jobId, 'cancelled', { status: 'cancelled', reason: reasonStr });
+            throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         stream.close(jobId, 'error', { message });
         throw error;

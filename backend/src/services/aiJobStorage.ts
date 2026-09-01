@@ -31,6 +31,10 @@ export interface PersistedJob {
     currentProvider?: string | null;
     /** #1011: progresso 0..100 reportado pelo agente. */
     progressPct?: number;
+    /** #1059: dono do job (Dolibarr userId). Setado por enqueue; usado em cancel cross-user (403). */
+    ownerUserId?: string;
+    /** #1059: login do dono (audit / mensagem 403). */
+    ownerUserLogin?: string;
 }
 
 /**
